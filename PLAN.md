@@ -23,7 +23,7 @@ desktop at idle), Linux Mint. Game budget ~3 GB RAM. Vulkan 1.4 via Mesa 25.2 wo
 | 0 | Benchmark scene + HUD, Mobile vs Compatibility decision with numbers | done: Mobile (docs/phase0_results.md) |
 | 1 | C++ physics core + CLI tests (cornering, braking distance, weight transfer) | done (docs/physics.md) |
 | 2 | GDExtension wrapper, placeholder car on a flat test area | done (docs/godot_integration.md) |
-| 3 | Debug overlay, keyboard input smoothing, assists (TC/ABS/stability/steering) | |
+| 3 | Debug overlay, keyboard input smoothing, assists (TC/ABS/stability/steering) | done (docs/physics.md section 9) |
 | 4 | Original street circuit, baked lighting, hero car at budget, re-benchmark | visual slice done early (docs/visual_slice_results.md) |
 | 5 | Handling tuning with real-car reference data (needs feel-testing) | |
 

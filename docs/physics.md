@@ -95,3 +95,41 @@ balance, applied at the axles (so it pitches the car).
   0.64 locked the rears first (unstable); 0.70 under-used the rears.
 - Wider rear tyres (285 vs 245) + 0.12 deg/kN front compliance: with identical tyres the car
   was almost neutral (0.13 deg/g) because cornering stiffness scales with load.
+
+## 9. Assists and controls (Phase 3). All toggleable, all in the core
+Order each physics tick: raw device input -> `rs::Controls` -> `rs::Vehicle` (ABS/TC/ESC inside).
+
+**Controls (input side)**
+- Keyboard: digital keys become ramps (steer 2.2/s in, 4.0/s back to centre; throttle 3/s up,
+  6/s down; brake 5/s up, 8/s down).
+- Gamepad: deadzone 0.08, response curve `y = (1-c) x + c x^3` (c = 0.5), 40 ms low-pass.
+- Wheel: 1:1, no filtering, no speed scaling.
+- Speed-sensitive steering (keyboard/gamepad): full input commands at most
+  `delta_max(v) = L mu g / v^2 + 0.10 rad` (Ackermann angle at the grip-limited radius plus
+  room for front slip angle), never below 15 % of lock. At 150 km/h: 21 % of lock.
+- Countersteer assist: `delta += 0.8 * beta` (sideslip) when sliding.
+- Auto gearbox: up at 95 % of redline (on throttle), down below 3200 rpm if the lower gear
+  stays under 85 % of redline; 0.6 s / 0.4 s anti-hunting cool-downs; first gear when stopped.
+- Auto-clutch: engagement rises with rpm above idle (centrifugal-clutch behaviour).
+
+**Vehicle side**
+- ABS: per wheel, integral control on slip, `p += h * 30 * (kappa + 0.10)`, p in [0, 1] scales
+  the driver's brake pressure. Runs at the ~1 kHz sub-step rate.
+- TC: engine torque cut `clamp((kappa_driven - 0.10) * 14, 0, 1)`, 30 ms filter.
+  (Gain 6 left a steady-state slip of 0.19; raised to 14 -> 0.15.)
+- ESC: reference yaw rate `r_ref = v delta / (L + K v^2)`, K = 0.0028 s^2/m (matches the car's
+  measured 1.57 deg/g), capped at `mu g / v`. Oversteer (|r| > |r_ref| + band, or |beta| > 0.12 rad)
+  -> brake the outer front wheel and cut 30 % throttle. Understeer -> brake the inner rear, cut 50 %.
+
+**Validation (headless, `core/tests/test_assists.cpp`)**
+| check | result | criterion |
+|---|---|---|
+| ABS 100-0 km/h full pedal (0.2 s rise) | 37.7 m, no lock > 0 s | <= threshold (37.1) + 2 m; no-ABS 50.1 m |
+| ABS steer while braking from 80 km/h | 50.8 deg vs 15.6 deg without | >= 2.5x |
+| TC floored launch, mean rear slip | 0.15 (no TC 2.57) | 0.05-0.18 |
+| TC 0-60 km/h | 2.90 s (no TC 3.80 s) | faster than wheelspin |
+| ESC, FMVSS 126 sine with dwell @80 km/h | yaw 1 s after 0 %, 1.75 s 0 %, lateral 3.92 m | <= 35 %, <= 20 %, >= 1.83 m |
+| same manoeuvre, ESC off | 56 % at 1 s | fails the regulation (why ESC matters) |
+| ESC in a normal 0.5 g corner | 0 s intervention | <= 0.2 s |
+| keyboard floored, auto box + TC | 0-100 4.57 s, 3 upshifts, 0 downshifts | no hunting, no stall |
+In Godot (`--autotest`): ABS full pedal from 100 km/h = 33.6 m (fixed 0.78 pedal: 34.4 m).
