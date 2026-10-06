@@ -13,7 +13,9 @@ Keep this current as phases land.
 ## Engine-specific (rebuild per engine)
 | Area | Godot implementation | Unreal equivalent to build |
 |---|---|---|
-| Wheel raycasts + force application | `godot_ext/` (GDExtension) | C++ actor component calling the core |
+| Wheel raycasts + force application | `godot_ext/src/rs_vehicle.cpp` (RSVehicle : RigidBody3D, 240 Hz Jolt) | C++ actor component calling the core |
+| Car assembly from data (model, CG offset, collision box, wheel nodes) | `game/scripts/car_factory.gd` + `data/cars/*.visual.json` | Blueprint/factory reading the same visual JSON |
+| Surface type lookup | collider meta `surface` (set by track import) | physical material / tag on the collider |
 | Axis conversion (core Z-up RH <-> engine) | one function in `godot_ext/` | one function in the Unreal component |
 | Scenes, camera, input mapping, UI, debug overlay | `game/` (GDScript) | Blueprints/UMG |
 | Materials, lightmaps, reflection probes, post-process | Godot resources, regenerable | Re-author from `assets_source/` |
@@ -26,11 +28,13 @@ Keep this current as phases land.
 | Scene assembly (env, probes, LightmapGI) | `game/tools/build_harbour_scene.gd` | Unreal level setup |
 | Attract-mode car driving (throwaway, pre-physics) | `game/scripts/showcase.gd` | Replaced by the C++ core in Phase 2 |
 
-## Temporary rule exceptions (to fix in Phase 2)
-- Axis conversion core->Godot `(x, y, z) -> (x, z, -y)` currently lives in TWO places:
-  `build_harbour_scene.gd::core_to_godot` and `showcase.gd::_load_track`. Phase 2 moves it into
-  the GDExtension wrapper as the single conversion point.
-- The track JSON is read by GDScript for the attract mode. Phase 2: the core reads it.
+## Axis conversion (single point)
+`godot_ext/src/axes.hpp` is the only implementation. Scripts call `RSVehicle.core_to_godot()` /
+`godot_to_core()`, which wrap it. Unreal needs its own equivalent (Unreal is Z-up left-handed, cm).
+
+## Remaining rule exception
+- The attract-mode showcase still reads the track JSON in GDScript to drive scripted cars. It goes
+  away when AI driving moves into the core.
 
 ## Asset pipeline (all regenerable)
 `tools/build_assets.sh` = textures -> car -> track (Blender, headless) -> Godot import -> scene -> bake.
