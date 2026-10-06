@@ -1,0 +1,7 @@
+# Version-controlled on purpose: plans + physics/math docs only.
+# Everything else (code, assets, tools, builds) is ignored for now.
+/*
+!.gitignore
+!PLAN.md
+!PORTING.md
+!docs/
