@@ -133,3 +133,37 @@ Order each physics tick: raw device input -> `rs::Controls` -> `rs::Vehicle` (AB
 | ESC in a normal 0.5 g corner | 0 s intervention | <= 0.2 s |
 | keyboard floored, auto box + TC | 0-100 4.57 s, 3 upshifts, 0 downshifts | no hunting, no stall |
 In Godot (`--autotest`): ABS full pedal from 100 km/h = 33.6 m (fixed 0.78 pedal: 34.4 m).
+
+## 10. Crash damage (Phase 4). `core/src/damage.cpp`
+- Energy from impulse: a body of mass m receiving impulse J loses kinetic energy `E = J^2 / (2 m)`
+  (exact for a full stop against a rigid wall). Godot reports per-tick contact impulses; they are
+  accumulated per crash event (same object, < 0.15 s apart) and damage is charged on the energy
+  increment `dE = E(J_acc + j) - E(J_acc)`, minus a 600 N s threshold (~1.5 km/h).
+- Pushing is not crashing: per-tick contact force `F = j / dt` below 3 g (`3 m g`) is ignored.
+  A car pushing a wall at full throttle is < 1 g; real impacts are tens of g. Test: 10 s of 0.8 g
+  pushing -> 0 kJ.
+- Zones: front/rear if `|x| > 1.2 |y|` at the impact point (body frame), else left/right.
+  `zone += dE / 90 kJ`; front hits also damage the engine (60 %); wheels within 1 m of the impact
+  take `(1 - d) dE / 25 kJ`.
+- Effects: engine power x(1 - 0.85 engine), drag x(1 + 0.5 mean zone), spring rate x(1 - 0.5 wheel),
+  toe-out up to 4 deg per wheel (car pulls), tyre grip x(1 - 0.2 wheel).
+- Validation: 50 km/h wall -> 132 kJ (= theory), front zone 1.0, engine power x0.25; 8 km/h bump
+  -> 2.6 %; bent front-left wheel -> 19 deg heading drift in 4 s hands-off (intact: 0.00 deg).
+
+## 11. AI street racer (Phase 4). `core/src/ai.cpp`
+- Path: pure pursuit to a point `Ld = clamp(3.5 + 0.4 v, 5, 30)` m ahead on the route + lane
+  offset; steer `delta = atan(2 L sin(eta) / Ld)`.
+- Speed profile: `v = sqrt(a_lat / |k|)`, `a_lat = skill * 0.82 * mu g * width_factor`
+  (width_factor 0.7 in a 4.6 m alley .. 1.0 on >= 8 m roads), braking pass `a = 0.85 skill mu g`,
+  power-limited acceleration pass `a = min(0.8 g, P / (m v))`.
+- Traffic, judged in ROUTE space (works through 90-degree junctions): a car is "ahead" if it is
+  further along the route, on the road near that point, and either in our lane or where the road
+  is too narrow for two cars (lanes merge: the rear car yields).
+- Reaction time: perceptions are queued and used `reaction_time` later.
+- Emergency braking compares stopping distances: room = `gap + v_lead^2 / (2 a_lead) - 2 m`
+  (a_lead estimated from the delayed perceived speeds), needed `a = v^2 / (2 room)`; above
+  `2 + 4 aggression` m/s^2 -> full brake; swerve if the road has room.
+- Validation: careful follower (0.4 s, 0.6 s headway) stops 3.5 m behind a car braking from
+  90 km/h; aggressive follower (0.8 s, 0.15 s headway) on a single lane hits it at 41 km/h.
+- Recovery: stuck 2 s with throttle -> 1.6 s reverse. Race rule (core RaceTracker): upside down
+  3 s or < 1 km/h for 10 s -> respawn 15 m back on the route, damage kept.
