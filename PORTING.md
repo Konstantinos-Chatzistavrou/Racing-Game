@@ -4,6 +4,8 @@ Keep this current as phases land.
 
 ## Portable as-is (no engine dependency)
 - `core/`: vehicle physics, tires, drivetrain, assists, lap timing, race rules, AI, damage rules
+  (Phase 1 done: `rs_core` static lib + headless tests; build with CMake, no engine needed.
+  Unreal: link `rs_core`, call `wheel_rays()` / `update()` from a component each physics tick.)
 - `data/`: car and track JSON + schemas
 - `assets_source/`: Blender files, full-res textures
 - `docs/`: physics maths
