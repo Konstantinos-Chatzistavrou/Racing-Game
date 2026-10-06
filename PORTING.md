@@ -26,15 +26,20 @@ Keep this current as phases land.
 | Night sky | `game/shaders/night_sky.gdshader` | Unreal sky material |
 | Lightmap bake automation | `game/addons/autobake` (presses the editor button) | Unreal Lightmass build |
 | Scene assembly (env, probes, LightmapGI) | `game/tools/build_harbour_scene.gd` | Unreal level setup |
-| Attract-mode car driving (throwaway, pre-physics) | `game/scripts/showcase.gd` | Replaced by the C++ core in Phase 2 |
+| Race scene assembly, HUD, cameras, parked cars | `game/scripts/race.gd`, `camera_rig.gd` | Unreal game mode + UMG |
+| Damage visuals (dents, detaching parts, smoke, sparks) | `game/scripts/damage_visuals.gd` (reads core damage zones) | Unreal: same rules from `DamageReport`, Chaos for debris |
+| Lamp grid for road reflections, car-only lights | `game/scripts/city_lights.gd` | Unreal material + light channels |
+| City import fix-ups | `game/import/city_import.gd` | Unreal import pipeline |
+| Route / race handles | `godot_ext/src/rs_route.cpp` (RSRoute, RSRace) | thin UObject wrappers |
 
 ## Axis conversion (single point)
 `godot_ext/src/axes.hpp` is the only implementation. Scripts call `RSVehicle.core_to_godot()` /
 `godot_to_core()`, which wrap it. Unreal needs its own equivalent (Unreal is Z-up left-handed, cm).
 
-## Remaining rule exception
-- The attract-mode showcase still reads the track JSON in GDScript to drive scripted cars. It goes
-  away when AI driving moves into the core.
+## Game logic location
+AI driving, damage rules, race progress/laps/positions and the respawn rule are all in the core
+(`rs::AIDriver`, `rs::DamageModel`, `rs::RaceTracker`). The engine only gathers what the AI can see
+(other cars' positions/velocities) and executes teleports/visuals.
 
 ## Asset pipeline (all regenerable)
 `tools/build_assets.sh` = textures -> car -> track (Blender, headless) -> Godot import -> scene -> bake.

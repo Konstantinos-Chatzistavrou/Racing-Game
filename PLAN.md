@@ -24,7 +24,7 @@ desktop at idle), Linux Mint. Game budget ~3 GB RAM. Vulkan 1.4 via Mesa 25.2 wo
 | 1 | C++ physics core + CLI tests (cornering, braking distance, weight transfer) | done (docs/physics.md) |
 | 2 | GDExtension wrapper, placeholder car on a flat test area | done (docs/godot_integration.md) |
 | 3 | Debug overlay, keyboard input smoothing, assists (TC/ABS/stability/steering) | done (docs/physics.md section 9) |
-| 4 | Original street circuit, baked lighting, hero car at budget, re-benchmark | visual slice done early (docs/visual_slice_results.md) |
+| 4 | Night city street race (was: circuit), damage, AI rivals, baked lighting, re-benchmark | done (docs/phase4_city.md) |
 | 5 | Handling tuning with real-car reference data (needs feel-testing) | |
 
 ## Budgets (starting values, adjust only from measured data)
@@ -38,6 +38,9 @@ unless a benchmark proves it affordable. One directional light with 2 cascades; 
 casters limited to headlights (4-6 total).
 
 ## Decisions log
+- 2026-10-06: Setting changed to an illegal night street race in a city (no racing infrastructure):
+  mostly narrow one-lane-each-way streets, some one-way alleys, a few boulevards. Crash damage and
+  AI rivals that can pile up (reaction time) added in Phase 4 on request.
 - 2026-10-06: Godot 4.7.2 (latest stable 4.x). Keyboard first for input. nlohmann/json vendored in
   core for JSON parsing (header-only, MIT).
 - 2026-10-06: Git tracks planning and physics/maths docs only (see `.gitignore` whitelist).
