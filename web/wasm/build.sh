@@ -11,7 +11,7 @@ em++ -std=c++17 -O3 -flto -fexceptions \
   "$core"/src/*.cpp "$here/bridge.cpp" \
   -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createRsCore -sENVIRONMENT=web,node \
   -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=33554432 \
-  -sEXPORTED_FUNCTIONS=_rs_create,_rs_last_error,_rs_buffer,_rs_info,_rs_reset_motion,_rs_rays,_rs_step,_malloc,_free \
+  -sEXPORTED_FUNCTIONS=_rs_create,_rs_last_error,_rs_buffer,_rs_info,_rs_reset_motion,_rs_rays,_rs_step,_rs_contact,_rs_damage,_rs_repair,_malloc,_free \
   -sEXPORTED_RUNTIME_METHODS=HEAPF64,stringToNewUTF8,UTF8ToString \
   -o "$out/rs_core.js"
 echo "built $out/rs_core.js + rs_core.wasm"

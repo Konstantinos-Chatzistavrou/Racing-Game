@@ -1,5 +1,6 @@
 // Keyboard + gamepad -> core RawInput (shaping happens in the core's Controls, not here).
 import type { AssistToggles, RawInput } from './physics/core';
+import type { TouchControls } from './touch';
 
 export class Input {
   readonly raw: RawInput = { steer: 0, throttle: 0, brake: 0, clutch: 0, handbrake: 0, shiftUp: false, shiftDown: false, device: 0 };
@@ -9,6 +10,9 @@ export class Input {
   private padPrev: boolean[] = [];
   /** After a spawn the car is held on the brake until the first throttle input (start on a hill). */
   hold = true;
+  touch: TouchControls | null = null;
+  private source: 'keys' | 'pad' | 'touch' = 'keys';
+  onAnyInput = () => {};
   onReset = () => {};
   onCamera = () => {};
   onHud = () => {};
@@ -17,6 +21,8 @@ export class Input {
     addEventListener('keydown', (e) => {
       if (e.repeat) return;
       this.keys.add(e.code);
+      this.source = 'keys';
+      this.onAnyInput();
       switch (e.code) {
         case 'KeyE': this.pending.up = true; break;
         case 'KeyQ': this.pending.down = true; break;
@@ -39,8 +45,18 @@ export class Input {
     const k = (c: string) => this.keys.has(c);
     const r = this.raw;
     const pad = navigator.getGamepads?.().find((p) => p && p.connected);
-    if (pad && (Math.abs(pad.axes[0]) > 0.08 || pad.buttons[7]?.value > 0.05 || pad.buttons[6]?.value > 0.05)) r.device = 1;
-    if (r.device === 1 && pad) {
+    if (pad && (Math.abs(pad.axes[0]) > 0.08 || pad.buttons[7]?.value > 0.05 || pad.buttons[6]?.value > 0.05)) this.source = 'pad';
+    const t = this.touch?.state;
+    if (t?.active) { this.source = 'touch'; t.active = false; }   // a new touch: touch drives until keys/pad
+    r.device = this.source === 'keys' ? 0 : 1;
+    if (this.source === 'touch' && this.touch) {
+      // analog steering pad -> gamepad-style shaping in the core; pedals are full on/off
+      const ts = this.touch.state;
+      r.steer = ts.steer; r.throttle = ts.throttle; r.brake = ts.brake; r.handbrake = ts.handbrake; r.clutch = 0;
+      const sh = this.touch.takeShifts();
+      if (sh.up) this.pending.up = true;
+      if (sh.down) this.pending.down = true;
+    } else if (this.source === 'pad' && pad) {
       const dz = (x: number) => (Math.abs(x) < 0.06 ? 0 : x);
       r.steer = -dz(pad.axes[0]);
       r.throttle = pad.buttons[7]?.value ?? 0;
@@ -51,9 +67,7 @@ export class Input {
       if (up && !this.padPrev[0]) this.pending.up = true;
       if (down && !this.padPrev[2]) this.pending.down = true;
       this.padPrev[0] = up; this.padPrev[2] = down;
-      if (this.keys.size) r.device = 0;
-    }
-    if (r.device === 0) {
+    } else {
       r.steer = (k('KeyA') || k('ArrowLeft') ? 1 : 0) - (k('KeyD') || k('ArrowRight') ? 1 : 0);
       r.throttle = k('KeyW') || k('ArrowUp') ? 1 : 0;
       r.brake = k('KeyS') || k('ArrowDown') ? 1 : 0;

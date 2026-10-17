@@ -5,7 +5,12 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three/webgpu';
 import { CoreCar, OUT, type AssistToggles, type RawInput } from './core';
 
-export const DT = 1 / 240;   // same tick as the Godot build (physics_ticks_per_second = 240)
+export const DT = 1 / 240;
+
+// Collision groups ((membership << 16) | filter): cars never collide with their own debris, so a
+// bumper that breaks off inside the car's hull doesn't register as a second crash.
+export const GROUP_CAR = (0x0001 << 16) | 0xfffd;
+export const GROUP_DEBRIS = (0x0002 << 16) | 0xfffe;   // same tick as the Godot build (physics_ticks_per_second = 240)
 
 export async function loadRapier() { await RAPIER.init(); }
 
@@ -55,6 +60,10 @@ export class CarBody {
   private contacts = new Float64Array(32);
   private a = new THREE.Vector3();
   private b = new THREE.Vector3();
+  readonly collider: RAPIER.Collider;
+  private prevV = new THREE.Vector3();
+  private prevF = new THREE.Vector3();
+  private hasPrev = false;
 
   constructor(private pw: PhysicsWorld, readonly core: CoreCar, shape: CarShape, cgInModel: THREE.Vector3) {
     const { mass, inertia } = core.info;
@@ -73,8 +82,9 @@ export class CarBody {
         pts.push(cx + px - cgInModel.x, py - cgInModel.y, cz + pz - cgInModel.z);
       }
     }
-    const hull = RAPIER.ColliderDesc.convexHull(new Float32Array(pts))!.setDensity(0).setFriction(0.3).setRestitution(0.1);
-    pw.world.createCollider(hull, this.body);
+    const hull = RAPIER.ColliderDesc.convexHull(new Float32Array(pts))!.setDensity(0).setFriction(0.3).setRestitution(0.1)
+      .setCollisionGroups(GROUP_CAR).setActiveEvents(RAPIER.ActiveEvents.NONE);
+    this.collider = pw.world.createCollider(hull, this.body);
   }
 
   place(pos: THREE.Vector3, yaw: number, speed = 0) {
@@ -85,6 +95,7 @@ export class CarBody {
     this.body.setLinvel(fwd, true);
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
     this.core.resetMotion(speed, speed > 0 ? 3 : -1);
+    this.hasPrev = false;
   }
 
   /** One physics tick: rays -> contacts -> core forces -> applied to the body (world steps after). */
@@ -107,11 +118,53 @@ export class CarBody {
       c[o + 4] = hit.normal.x; c[o + 5] = hit.normal.y; c[o + 6] = hit.normal.z;
       c[o + 7] = this.pw.surface(hit.collider);
     }
+    this.feedCrash(v);
     const out = this.core.step(c, raw, assists, DT);
     this.body.resetForces(false);
     this.body.resetTorques(false);
     this.body.addForce({ x: out[OUT.force], y: out[OUT.force + 1], z: out[OUT.force + 2] }, true);
     this.body.addTorque({ x: out[OUT.torque], y: out[OUT.torque + 1], z: out[OUT.torque + 2] }, true);
     this.out = out;
+    this.prevF.set(out[OUT.force], out[OUT.force + 1], out[OUT.force + 2]);
+  }
+
+  /**
+   * Crash impulse from the car's own motion (same method as the Godot build): the velocity change
+   * since last tick that the known forces (core output + gravity) do NOT explain was caused by
+   * collisions:  J = m |v_now - (v_prev + (F_prev / m + g) dt)|. Rapier's contacts only say WHERE
+   * and WITH WHAT. (Engine-reported contact impulses over-count crash energy: measured in Godot.)
+   */
+  private feedCrash(v: { x: number; y: number; z: number }) {
+    const m = this.core.info.mass;
+    const ex = this.prevV.x + (this.prevF.x / m) * DT;
+    const ey = this.prevV.y + (this.prevF.y / m - 9.81) * DT;
+    const ez = this.prevV.z + (this.prevF.z / m) * DT;
+    const j = m * Math.hypot(v.x - ex, v.y - ey, v.z - ez);
+    const first = !this.hasPrev;
+    this.prevV.set(v.x, v.y, v.z);
+    this.hasPrev = true;
+    if (first || j < 150) return;   // the core ignores < 600 N s per event anyway; skip the query
+    // Contact points after the step live in the manifold in each collider's LOCAL frame (the
+    // solver-point list is empty by then). The car hull sits at the body origin, so body pose
+    // maps them to world.
+    let best: THREE.Vector3 | null = null, bestI = -1, other = 0;
+    const w = this.pw.world;
+    const t = this.body.translation(), r = this.body.rotation();
+    const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);
+    w.contactPairsWith(this.collider, (o) => {
+      w.contactPair(this.collider, o, (man, flipped) => {
+        for (let i = 0; i < man.numContacts(); i++) {
+          if (man.contactDist(i) > 0.05) continue;   // predicted contact, not touching
+          const imp = man.contactImpulse(i);
+          if (imp < bestI) continue;
+          const lp = flipped ? man.localContactPoint2(i) : man.localContactPoint1(i);
+          if (!lp) continue;
+          best = new THREE.Vector3(lp.x, lp.y, lp.z).applyQuaternion(q).add(t as THREE.Vector3);
+          bestI = imp;
+          other = o.handle + 1;
+        }
+      });
+    });
+    if (best) this.core.contact(best, j, other);
   }
 }

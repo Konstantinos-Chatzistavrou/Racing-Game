@@ -15,6 +15,9 @@ interface RsModule {
   _rs_reset_motion(id: number, speed: number, gear: number): void;
   _rs_rays(id: number): void;
   _rs_step(id: number, dt: number): void;
+  _rs_contact(id: number, x: number, y: number, z: number, impulse: number, other: number): void;
+  _rs_damage(id: number): void;
+  _rs_repair(id: number): void;
 }
 
 let mod: RsModule | null = null;
@@ -58,6 +61,23 @@ export class CoreCar {
 
   resetMotion(speed: number, gear = -1) { mod!._rs_reset_motion(this.id, speed, gear); }
 
+  /** Crash input for the current tick: point in three world, impulse N s, other object id. */
+  contact(p: { x: number; y: number; z: number }, impulse: number, other: number) {
+    mod!._rs_contact(this.id, p.x, p.y, p.z, impulse, other);
+  }
+
+  repair() { mod!._rs_repair(this.id); }
+
+  damage(): Damage {
+    mod!._rs_damage(this.id);
+    const b = this.buf;
+    const a = (o: number) => [b[o], b[o + 1], b[o + 2], b[o + 3]];
+    return {
+      crush: a(200), zone: a(204), wheel: a(208), engine: b[212], lastKj: b[213],
+      lastPoint: [b[214], b[215], b[216]], lastZone: b[217], impacts: b[218], totaled: b[219] > 0.5, totalKj: b[220],
+    };
+  }
+
   /** state: pos(3) quat xyzw(4) vel(3) angvel(3). Returns ray from/to per wheel (FL, FR, RL, RR). */
   rays(state: ArrayLike<number>): Float64Array {
     const b = this.buf;
@@ -76,6 +96,11 @@ export class CoreCar {
     mod!._rs_step(this.id, dt);
     return b;
   }
+}
+
+export interface Damage {
+  crush: number[]; zone: number[]; wheel: number[]; engine: number; lastKj: number;
+  lastPoint: [number, number, number]; lastZone: number; impacts: number; totaled: boolean; totalKj: number;
 }
 
 // Output offsets (bridge.cpp, rs_step)

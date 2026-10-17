@@ -2,13 +2,16 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#05070b" />
+  <meta name="mobile-web-app-capable" content="yes" />
   <title>Night Run</title>
   <link rel="stylesheet" href="/src/style.css" />
 </head>
 <body>
   <canvas id="view"></canvas>
   <div id="loading">Loading…</div>
+  <div id="rotate">Rotate your phone to landscape ↻</div>
   <div id="hud" hidden>
     <div id="perf"></div>
     <div id="dash">
@@ -16,8 +19,9 @@
       <div id="speed">0</div><div id="unit">km/h</div>
       <div id="gear">N</div>
       <div id="assists"></div>
+      <div id="damage"></div>
     </div>
-    <div id="help">W/S throttle · brake &nbsp; A/D steer &nbsp; Q/E shift &nbsp; Space handbrake &nbsp; R reset &nbsp; C camera &nbsp; 1 ABS · 2 TC · 3 ESC · 5 auto gears &nbsp; H hide</div>
+    <div id="help">W/S throttle · brake &nbsp; A/D steer &nbsp; Q/E shift &nbsp; Space handbrake &nbsp; R reset/repair &nbsp; C camera &nbsp; 1 ABS · 2 TC · 3 ESC · 5 auto gears &nbsp; H hide</div>
   </div>
   <script type="module" src="/src/main.ts"></script>
 </body>
