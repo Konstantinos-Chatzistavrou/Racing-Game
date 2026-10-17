@@ -14,6 +14,9 @@ import { CarVisual, type CarVisualConfig } from './scene/car';
 import { CameraRig } from './camera';
 import { Input } from './input';
 import { Hud } from './hud';
+import { DamageVisuals } from './scene/damage';
+import { CrashAudio } from './audio';
+import { TouchControls, wantsTouch } from './touch';
 
 const params = new URLSearchParams(location.search);
 const num = (k: string, d: number) => (params.has(k) ? Number(params.get(k)) : d);
@@ -37,7 +40,10 @@ async function main() {
   }
   const canvas = document.getElementById('view') as HTMLCanvasElement;
   const renderer = new THREE.WebGPURenderer({ canvas, antialias: false, forceWebGL });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 1) * num('scale', 1));
+  const baseRatio = Math.min(devicePixelRatio, 1);
+  let scale = num('scale', 1);
+  const adaptive = !params.has('scale');   // ?scale=x pins the resolution
+  renderer.setPixelRatio(baseRatio * scale);
   renderer.setSize(innerWidth, innerHeight);
   renderer.toneMapping = THREE.AgXToneMapping;
   renderer.toneMappingExposure = 1.1;
@@ -113,7 +119,23 @@ async function main() {
   const input = new Input();
   const rig = new CameraRig(camera, pw, car.body);
   const hud = new Hud();
-  input.onReset = () => { spawn(); input.hold = true; };
+  const audio = new CrashAudio();
+  const damage = new DamageVisuals(visual, visualCfg, pw, scene);
+  damage.onImpact = (kj, glass) => audio.impact(kj, glass);
+  input.onAnyInput = () => audio.unlock();
+  input.onReset = () => { spawn(); core.repair(); damage.repair(); input.hold = true; };
+  const enableTouch = () => {
+    if (input.touch) return;
+    document.body.classList.add('touch');
+    input.touch = new TouchControls({
+      reset: () => input.onReset(),
+      camera: () => rig.toggle(),
+      toggleGearbox: () => (input.assists.autoGearbox = !input.assists.autoGearbox),
+      unlockAudio: () => audio.unlock(),
+    });
+  };
+  if (wantsTouch()) enableTouch();
+  addEventListener('touchstart', enableTouch, { once: true, passive: true });
   input.onCamera = () => rig.toggle();
   input.onHud = () => hud.toggle();
 
@@ -136,10 +158,10 @@ async function main() {
   hud.extra = `${backend} · ${renderer.domElement.width}×${renderer.domElement.height} · ${cityLights.mode}`;
 
   // --- loop: fixed 240 Hz physics, render every frame -----------------------------------------
-  let acc = 0, prev = performance.now(), ticks = 0;
+  let acc = 0, prev = performance.now(), ticks = 0, lastScaleCheck = performance.now() + 4000;   // skip shader warm-up
   const trace: unknown[] = [];
   const g = window as unknown as { __game: object };
-  g.__game = { trace, car, core, input, renderer, camera, scene, info: () => ({ pos: car.body.translation(), speed: car.out[OUT.speed], rpm: car.out[OUT.rpm], gear: car.out[OUT.gear] }) };
+  g.__game = { rig, damage, trace, car, core, input, renderer, camera, scene, info: () => ({ pos: car.body.translation(), speed: car.out[OUT.speed], rpm: car.out[OUT.rpm], gear: car.out[OUT.gear] }) };
 
   if (import.meta.env.DEV) {
     const report = (msg: string) => fetch('/__telemetry', { method: 'POST', body: msg }).catch(() => {});
@@ -168,11 +190,25 @@ async function main() {
     const t = car.body.translation(), r = car.body.rotation();
     pos.set(t.x, t.y, t.z);
     quat.set(r.x, r.y, r.z, r.w);
+    const lv = car.body.linvel();
+    visual.velocity.set(lv.x, lv.y, lv.z);
     visual.update(pos, quat, car.out);
+    damage.update(frame, () => core.damage());
     rig.update(frame, pos, quat, car.out[OUT.speed]);
     cityLights.update(frame, camera);
     pipeline.render();
-    hud.update(now, car.out, core.info, input.assists);
+    hud.update(now, car.out, core.info, input.assists, damage.last);
+    // Adaptive resolution: hold >= ~28 fps (phones vary a lot); recover when there's headroom.
+    if (adaptive && now - lastScaleCheck > 2000) {
+      const fps = hud.fps;
+      lastScaleCheck = now;
+      const next = fps < 28 ? Math.max(0.5, scale - 0.1) : fps > 50 ? Math.min(1, scale + 0.1) : scale;
+      if (next !== scale) {
+        scale = next;
+        renderer.setPixelRatio(baseRatio * scale);
+        hud.extra = `${backend} · ${renderer.domElement.width}×${renderer.domElement.height} · ${cityLights.mode}`;
+      }
+    }
   });
 }
 

@@ -17,6 +17,7 @@
 
 #include "rs/config.hpp"
 #include "rs/controls.hpp"
+#include "rs/damage.hpp"
 #include "rs/vehicle.hpp"
 
 namespace {
@@ -197,6 +198,38 @@ EMSCRIPTEN_KEEPALIVE void rs_step(int id, double dt) {
         o[10] = w.angular_velocity;
         o[11] = contacts[i].surface;
     }
+}
+
+// Crash input (call during a tick, after rs_rays): contact point in three world, impulse N s
+// (measured from the car's own motion, see world.ts), id of the other object.
+EMSCRIPTEN_KEEPALIVE void rs_contact(int id, double x, double y, double z, double impulse, double other) {
+    Car& c = *g_cars[id];
+    const rs::Vec3 body = c.cs.orientation.inv_rotate(to_core(x, y, z) - c.cs.position);
+    c.vehicle->add_contact(std::uint64_t(other), body, impulse);
+}
+
+// Damage report -> buf[200..]: crush m (front, rear, left, right) [200..203], zone 0..1 [204..207],
+// wheel 0..1 FL FR RL RR [208..211], engine 0..1 [212], last impact kJ [213],
+// last impact point in the car's LOCAL three frame (X left, Y up, Z fwd; origin CG) [214..216],
+// last zone [217], impacts [218], totaled [219], total kJ [220]
+EMSCRIPTEN_KEEPALIVE void rs_damage(int id) {
+    Car& c = *g_cars[id];
+    const rs::DamageReport& d = c.out.damage;
+    double* b = c.buf.data() + 200;
+    for (int i = 0; i < 4; ++i) { b[i] = d.crush[i]; b[4 + i] = d.zone[i]; b[8 + i] = d.wheel[i]; }
+    b[12] = d.engine;
+    b[13] = d.last_impact_kj;
+    const rs::Vec3& p = d.last_impact_point;   // core body: x fwd, y left, z up
+    b[14] = p.y; b[15] = p.z; b[16] = p.x;
+    b[17] = d.last_zone;
+    b[18] = d.impacts;
+    b[19] = d.totaled ? 1 : 0;
+    b[20] = d.total_energy_kj;
+}
+
+EMSCRIPTEN_KEEPALIVE void rs_repair(int id) {
+    g_cars[id]->vehicle->damage_model().repair();
+    g_cars[id]->out.damage = rs::DamageReport{};
 }
 
 }  // extern "C"

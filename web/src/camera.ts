@@ -8,6 +8,7 @@ export class CameraRig {
   private pos = new THREE.Vector3();
   private look = new THREE.Vector3();
   private first = true;
+  private lastFlat = new THREE.Vector3(0, 0, 1);
 
   constructor(readonly camera: THREE.PerspectiveCamera, private pw: PhysicsWorld, private car: RAPIER.RigidBody) {}
 
@@ -23,12 +24,17 @@ export class CameraRig {
       cam.updateProjectionMatrix();
       return;
     }
-    const flat = new THREE.Vector3(fwd.x, 0, fwd.z).normalize();
+    // Heading on the ground plane. A car on its nose/tail (after a crash) has none: keep the last.
+    const flat = new THREE.Vector3(fwd.x, 0, fwd.z);
+    if (flat.lengthSq() > 0.04) this.lastFlat.copy(flat.normalize()); else flat.copy(this.lastFlat);
     const want = carPos.clone().addScaledVector(flat, -6.4).add(new THREE.Vector3(0, 2.1, 0));
     // Keep the camera out of walls: pull it in along the car->camera line.
     const head = carPos.clone().add(new THREE.Vector3(0, 1.0, 0));
     const hit = this.pw.raycast(head, want, this.car);
-    if (hit) want.copy(head).lerp(want, Math.max(0.15, (hit.toi - 0.4) / head.distanceTo(want)));
+    if (hit) {
+      const f = Math.max(0.15, Math.min(1, (hit.toi - 0.4) / head.distanceTo(want)));   // measure BEFORE moving want
+      want.lerpVectors(head, want, f);
+    }
     // Follow stiffly along the car's travel (no lag-induced zoom-out at speed), softly sideways/up.
     const k = this.first ? 1 : 1 - Math.exp(-dt * 7);
     const along = this.first ? 1 : 1 - Math.exp(-dt * 25);

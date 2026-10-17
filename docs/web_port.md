@@ -43,3 +43,26 @@ Verified adapter with the flags: vendor intel, architecture gen-12lp. Without fl
 |---|---|---|---|
 | WebGPU | 192 (clustered) | 46-53 | 28-37 ms |
 | WebGL 2 (debug) | 12 nearest | 54-61 | 23-30 ms |
+
+## Crash damage (port of game/scripts/damage_visuals.gd)
+The core's damage model decides everything (crush per zone from crash energy, engine, wheels,
+totaled; bent toe up to 1.5 deg, weaker springs, power loss). The web side only feeds it and shows it:
+- Crash input: J = m |v_now - (v_prev + (F_prev/m + g) dt)| per tick (same as Godot); contact point
+  from Rapier's manifold LOCAL points (solver points are empty after the step).
+- Visuals: dents at the impact point (one panel per frame), bumpers/mirrors break off as 6 kg Rapier
+  debris (own collision group: never hits its car), lights die, smoke from engine damage 0.25,
+  sparks above 2 kJ, synthesized crash audio (thud + metal clanks + glass). R repairs everything.
+- Traps found: (1) hiding a light (visible = false) changes the scene's light set and recompiles
+  EVERY lit material: 300 ms freeze on impact -> set intensity 0 instead; (2) a new material type
+  mid-race compiles a pipeline -> clone the existing material; (3) camera wall pull-in divided by a
+  distance it had just zeroed -> NaN camera, black screen after crashes.
+- Test: `node web/tools/drive.mjs <url> <out> crash` (93 km/h into the buildings): 3-7 impacts,
+  ~500 kJ, totaled, 3 parts off, worst frame 31.8 ms (was 383 ms).
+
+## Phones and tablets
+Touch controls appear on coarse-pointer devices or on the first touch: analog steering pad (left,
+relative drag, 90 px = full lock), GAS/BRAKE/handbrake (right), reset/camera/gearbox/fullscreen
+(top; fullscreen also locks landscape on Android). Phones in portrait get a rotate prompt.
+Adaptive resolution keeps >= ~28 fps (steps of 10 % down to 50 %); `?scale=x` pins it.
+Test: `drive.mjs <url> <out> mobile` emulates a 915x412 phone with multi-touch (gas + steer).
+Real-phone frame rates are NOT measured yet (emulation runs on this laptop's GPU).

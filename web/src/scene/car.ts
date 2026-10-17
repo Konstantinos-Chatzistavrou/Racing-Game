@@ -4,7 +4,9 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OUT } from '../physics/core';
 import { materialsOf } from './city';
 
-export interface CarVisualConfig {
+import type { DamageVisualConfig } from './damage';
+
+export interface CarVisualConfig extends DamageVisualConfig {
   model: string;
   cg_in_model_m: [number, number, number];
   wheel_nodes: { fl: string; fr: string; rl: string; rr: string };
@@ -23,8 +25,10 @@ export class CarVisual {
   private qb = new THREE.Quaternion();
   readonly cg: THREE.Vector3;
   headlights: THREE.SpotLight[] = [];
+  readonly headlightIntensity = 900;
+  readonly velocity = new THREE.Vector3();   // m/s, world (for debris)
 
-  private constructor(readonly cfg: CarVisualConfig, model: THREE.Object3D) {
+  private constructor(readonly cfg: CarVisualConfig, readonly model: THREE.Object3D) {
     this.cg = new THREE.Vector3(...cfg.cg_in_model_m);
     model.position.copy(this.cg).negate();
     this.root.add(model);
@@ -53,7 +57,7 @@ export class CarVisual {
     });
     // Headlights: two shadow-casting spots (the only dynamic shadows in the scene).
     for (const [i, hp] of cfg.headlights.entries()) {
-      const s = new THREE.SpotLight(0xfff3e0, 900, 70, 0.42, 0.45, 2);
+      const s = new THREE.SpotLight(0xfff3e0, this.headlightIntensity, 70, 0.42, 0.45, 2);
       s.position.set(hp[0], hp[1], hp[2]).sub(this.cg);
       s.target.position.copy(s.position).add(new THREE.Vector3(0, -1.1, 14));
       s.castShadow = i === 0;
