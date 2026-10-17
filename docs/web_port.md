@@ -66,3 +66,22 @@ relative drag, 90 px = full lock), GAS/BRAKE/handbrake (right), reset/camera/gea
 Adaptive resolution keeps >= ~28 fps (steps of 10 % down to 50 %); `?scale=x` pins it.
 Test: `drive.mjs <url> <out> mobile` emulates a 915x412 phone with multi-touch (gas + steer).
 Real-phone frame rates are NOT measured yet (emulation runs on this laptop's GPU).
+
+## Presentation ("AAA feel")
+- Camera (`web/src/camera.ts`): spring-damper on the camera's offset RELATIVE to the car
+  (omega 5 rad/s, zeta 0.75, lag capped at 1.6 m), driven by the car's acceleration: pulls back
+  under power, surges in under braking, swings wide in corners. A world-space spring would trail
+  ~9 m behind at 144 km/h. Shake from the core's suspension compression rate (kerbs, landings,
+  crashes) + redline buzz, as rotations only. FOV +0..14 deg above 60 km/h.
+- Audio (`web/src/audio.ts`, all synthesized): engine pitch = rpm/60 * cylinders/2 (V8 assumed:
+  the data has no cylinder count); filter opens with throttle; tyre squeal from the core's slip
+  angle (> 6 deg) / slip ratio (> 12 %) weighted by load; wind ~ speed^2. No blow-off valve: the
+  engine model is naturally aspirated. Verified: osc 383 Hz at 5720 rpm (expected 381).
+- Post (`web/src/post.ts`): high = TRAA + motion blur (velocity MRT); low = SMAA. Both: bloom,
+  AgX, teal/orange grade, edge-only chromatic aberration (0.12), vignette. Default high on desktop,
+  low on touch; `?quality=`. No depth of field (blurs the lit city, expensive).
+  Trap: `chromaticAberration(c, s, null)` -> null node -> TSL build error, black screen: pass vec2(0.5).
+- HUD: SVG dial (needle eased toward true speed, rev ring red past 92 %), lap panel and a fading
+  lap card from the core's RaceTracker (`Route::parse` added for JSON text).
+- Cost on the laptop (1236x613): low 49-60 fps, high 44-48 fps; GPU-bound (CPU profile: 27 % idle,
+  no hot spot in game code). Adaptive resolution covers full screen.

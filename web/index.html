@@ -14,8 +14,21 @@
   <div id="rotate">Rotate your phone to landscape ↻</div>
   <div id="hud" hidden>
     <div id="perf"></div>
+    <div id="laps">
+      <div class="row"><span class="k">LAP</span><span id="lapno">1</span></div>
+      <div class="row big"><span id="lapcur">0:00.000</span></div>
+      <div class="row"><span class="k">LAST</span><span id="laplast">—</span></div>
+      <div class="row"><span class="k">BEST</span><span id="lapbest">—</span></div>
+    </div>
+    <div id="toast"></div>
     <div id="dash">
-      <div id="rpmbar"><div id="rpmfill"></div></div>
+      <svg id="gauge" viewBox="0 0 240 240" aria-hidden="true">
+        <g id="ticks"></g>
+        <path id="revtrack" fill="none" stroke-width="5" />
+        <path id="revfill" fill="none" stroke-width="5" />
+        <line id="needle" x1="120" y1="120" x2="120" y2="34" />
+        <circle cx="120" cy="120" r="7" class="hub" />
+      </svg>
       <div id="speed">0</div><div id="unit">km/h</div>
       <div id="gear">N</div>
       <div id="assists"></div>

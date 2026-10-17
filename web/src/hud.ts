@@ -1,31 +1,84 @@
-import { OUT, type AssistToggles, type CarInfo, type Damage } from './physics/core';
+import { OUT, type AssistToggles, type CarInfo, type Damage, type LapInfo } from './physics/core';
 
 const $ = (id: string) => document.getElementById(id)!;
+const NS = 'http://www.w3.org/2000/svg';
+
+// Dial geometry: 270 degree sweep, 0 km/h at the lower left, 320 km/h at the lower right.
+const MAX_KMH = 320, A0 = -225, SWEEP = 270, CX = 120, CY = 120;
+const ang = (f: number) => ((A0 + SWEEP * f) * Math.PI) / 180;
+const at = (f: number, r: number) => [CX + Math.cos(ang(f)) * r, CY + Math.sin(ang(f)) * r] as const;
+function arc(f0: number, f1: number, r: number) {
+  const [x0, y0] = at(f0, r), [x1, y1] = at(f1, r);
+  return `M ${x0} ${y0} A ${r} ${r} 0 ${SWEEP * (f1 - f0) > 180 ? 1 : 0} 1 ${x1} ${y1}`;
+}
+
+export function formatLap(t: number) {
+  if (!(t > 0)) return '—';
+  const m = Math.floor(t / 60), s = t - m * 60;
+  return `${m}:${s.toFixed(3).padStart(6, '0')}`;
+}
 
 export class Hud {
   private frames: number[] = [];
   private last = 0;
+  private needle = 0;            // smoothed needle position, km/h
+  private rev = 0;
+  private lapsSeen = 0;
+  private toastTimer = 0;
   extra = '';
   fps = 60;
+
+  constructor() {
+    const ticks = $('ticks');
+    for (let v = 0; v <= MAX_KMH; v += 10) {
+      const f = v / MAX_KMH, major = v % 40 === 0;
+      const [x0, y0] = at(f, major ? 88 : 93), [x1, y1] = at(f, 100);
+      const l = document.createElementNS(NS, 'line');
+      l.setAttribute('x1', `${x0}`); l.setAttribute('y1', `${y0}`); l.setAttribute('x2', `${x1}`); l.setAttribute('y2', `${y1}`);
+      l.setAttribute('class', major ? 'tick major' : 'tick');
+      ticks.appendChild(l);
+      if (major) {
+        const [tx, ty] = at(f, 76);
+        const t = document.createElementNS(NS, 'text');
+        t.setAttribute('x', `${tx}`); t.setAttribute('y', `${ty}`); t.setAttribute('class', 'lbl');
+        t.textContent = String(v);
+        ticks.appendChild(t);
+      }
+    }
+    $('revtrack').setAttribute('d', arc(0, 1, 110));
+  }
 
   show() { ($('hud') as HTMLElement).hidden = false; $('loading').remove(); }
   toggle() { const h = $('hud') as HTMLElement; h.hidden = !h.hidden; }
 
-  update(now: number, out: Float64Array, info: CarInfo, assists: AssistToggles, dmg: Damage | null) {
+  /** Every frame: the dial animates at frame rate; text updates at 10 Hz. */
+  update(now: number, dt: number, out: Float64Array, info: CarInfo, assists: AssistToggles, dmg: Damage | null, lap: LapInfo | null) {
     this.frames.push(now);
     while (this.frames.length && this.frames[0] < now - 1000) this.frames.shift();
-    if (now - this.last < 100) return;   // DOM updates at 10 Hz
+
+    // dial: the needle eases toward the true speed (critically damped feel, no ticking)
+    const kmh = Math.abs(out[OUT.speed]) * 3.6;
+    this.needle += (kmh - this.needle) * (1 - Math.exp(-dt * 14));
+    this.rev += (Math.min(1, out[OUT.rpm] / info.redline) - this.rev) * (1 - Math.exp(-dt * 20));
+    const f = Math.min(1, this.needle / MAX_KMH);
+    const [nx, ny] = at(f, 86);
+    const needle = $('needle');
+    needle.setAttribute('x2', nx.toFixed(1));
+    needle.setAttribute('y2', ny.toFixed(1));
+    const rf = $('revfill');
+    rf.setAttribute('d', this.rev > 0.002 ? arc(0, this.rev, 110) : '');
+    rf.classList.toggle('red', this.rev > 0.92);
+
+    if (lap) this.updateLaps(lap, dt);
+
+    if (now - this.last < 100) return;   // DOM text at 10 Hz
     this.last = now;
     const fps = (this.fps = this.frames.length);
     const worst = this.frames.reduce((m, t, i, a) => (i ? Math.max(m, t - a[i - 1]) : m), 0);
     $('perf').textContent = `${fps} fps   worst ${worst.toFixed(1)} ms\n${this.extra}`;
-    $('speed').textContent = Math.round(Math.abs(out[OUT.speed]) * 3.6).toString();
+    $('speed').textContent = Math.round(kmh).toString();
     const g = out[OUT.gear];
     $('gear').textContent = g === 0 ? 'R' : g === 1 ? 'N' : String(g - 1);
-    const f = Math.min(1, out[OUT.rpm] / info.redline);
-    const fill = $('rpmfill');
-    fill.style.width = `${(f * 100).toFixed(1)}%`;
-    fill.classList.toggle('red', f > 0.92);
     const on = (n: string, v: boolean, act = false) => (v ? `<b>${act ? '● ' : ''}${n}</b>` : n);
     $('assists').innerHTML = [
       on('ABS', assists.abs, out[OUT.abs] > 0), on('TC', assists.tc, out[OUT.tc] > 0.01),
@@ -39,4 +92,22 @@ export class Hud {
       ? 'TOTALED · press R'
       : `DAMAGE  body ${pct(Math.max(...dmg.zone))}%  engine ${pct(dmg.engine)}%  wheels ${pct(Math.max(...dmg.wheel))}%`;
   }
+
+  private updateLaps(lap: LapInfo, dt: number) {
+    $('lapno').textContent = String(lap.laps + 1);
+    $('lapcur').textContent = formatLap(lap.current) === '—' ? '0:00.000' : formatLap(lap.current);
+    $('laplast').textContent = formatLap(lap.last);
+    $('lapbest').textContent = formatLap(lap.best);
+    if (lap.laps > this.lapsSeen) {          // a lap just finished: fade a card in, then out
+      this.lapsSeen = lap.laps;
+      const best = lap.last > 0 && Math.abs(lap.last - lap.best) < 1e-6;
+      const t = $('toast');
+      t.innerHTML = `LAP ${lap.laps}${best ? ' · <span class="best">BEST</span>' : ''}<b>${formatLap(lap.last)}</b>`;
+      t.classList.add('show');
+      this.toastTimer = 3;
+    }
+    if (this.toastTimer > 0 && (this.toastTimer -= dt) <= 0) $('toast').classList.remove('show');
+  }
+
+  resetLaps() { this.lapsSeen = 0; this.toastTimer = 0; $('toast').classList.remove('show'); }
 }
