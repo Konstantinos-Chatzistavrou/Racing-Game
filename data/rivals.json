@@ -1,0 +1,70 @@
+{
+  "schema": "rivals/1",
+  "notes": "AI rival personalities, one per grid slot (slot k uses entry k; the player's slot is skipped). skill = fraction of grip the AI dares to use, reaction_time s, headway s, aggression 0..1, lane_offset m (+ = left).",
+  "rivals": [
+    {
+      "name": "Vex",
+      "skill": 0.97,
+      "reaction_time": 0.35,
+      "headway": 0.45,
+      "aggression": 0.8,
+      "lane_offset": 1.2
+    },
+    {
+      "name": "Nomad",
+      "skill": 0.93,
+      "reaction_time": 0.45,
+      "headway": 0.6,
+      "aggression": 0.4,
+      "lane_offset": -1.2
+    },
+    {
+      "name": "Kite",
+      "skill": 0.95,
+      "reaction_time": 0.7,
+      "headway": 0.25,
+      "aggression": 0.95,
+      "lane_offset": 0.6
+    },
+    {
+      "name": "Rook",
+      "skill": 0.9,
+      "reaction_time": 0.4,
+      "headway": 0.7,
+      "aggression": 0.3,
+      "lane_offset": -0.6
+    },
+    {
+      "name": "Jinx",
+      "skill": 0.96,
+      "reaction_time": 0.55,
+      "headway": 0.35,
+      "aggression": 0.7,
+      "lane_offset": 1.0
+    },
+    {
+      "name": "Blitz",
+      "skill": 0.92,
+      "reaction_time": 0.5,
+      "headway": 0.5,
+      "aggression": 0.5,
+      "lane_offset": -1.0
+    },
+    {
+      "name": "Ash",
+      "skill": 0.94,
+      "reaction_time": 0.6,
+      "headway": 0.3,
+      "aggression": 0.85,
+      "lane_offset": 0.0
+    },
+    {
+      "name": "Duke",
+      "skill": 0.97,
+      "reaction_time": 0.35,
+      "headway": 0.45,
+      "aggression": 0.8,
+      "lane_offset": 1.2
+    }
+  ]
+}

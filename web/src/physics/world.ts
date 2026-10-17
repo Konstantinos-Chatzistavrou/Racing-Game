@@ -1,0 +1,117 @@
+// Rigid-body world (Rapier): integrates the chassis, answers wheel raycasts against the city's
+// collision meshes and resolves crashes. Mirrors godot_ext/src/rs_vehicle.cpp: the core computes
+// tyre/suspension/aero forces, this file applies them and moves the body.
+import RAPIER from '@dimforge/rapier3d-compat';
+import * as THREE from 'three/webgpu';
+import { CoreCar, OUT, type AssistToggles, type RawInput } from './core';
+
+export const DT = 1 / 240;   // same tick as the Godot build (physics_ticks_per_second = 240)
+
+export async function loadRapier() { await RAPIER.init(); }
+
+export class PhysicsWorld {
+  readonly world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+  private surfaceOf = new Map<number, number>();   // collider handle -> core surface index
+
+  constructor() { this.world.timestep = DT; }
+
+  /** Static trimesh from a mesh already placed in the world (uses its world matrix). */
+  addStaticMesh(mesh: THREE.Mesh, surface: number) {
+    mesh.updateWorldMatrix(true, false);
+    const g = mesh.geometry;
+    const pos = g.getAttribute('position');
+    const v = new Float32Array(pos.count * 3);
+    const t = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+      t.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld);
+      v[3 * i] = t.x; v[3 * i + 1] = t.y; v[3 * i + 2] = t.z;
+    }
+    const idx = g.index ? new Uint32Array(g.index.array) : Uint32Array.from({ length: pos.count }, (_, i) => i);
+    const col = this.world.createCollider(RAPIER.ColliderDesc.trimesh(v, idx).setFriction(0.4).setRestitution(0.05));
+    this.surfaceOf.set(col.handle, surface);
+  }
+
+  surface(c: RAPIER.Collider): number { return this.surfaceOf.get(c.handle) ?? 0; }
+
+  /** First hit along a segment, ignoring one body (the car itself). */
+  raycast(from: THREE.Vector3, to: THREE.Vector3, exclude?: RAPIER.RigidBody) {
+    const d = to.clone().sub(from);
+    const len = d.length();
+    if (len < 1e-6) return null;
+    d.divideScalar(len);
+    const hit = this.world.castRayAndGetNormal(new RAPIER.Ray(from, d), len, true, undefined, undefined, undefined, exclude);
+    if (!hit) return null;
+    return { toi: hit.timeOfImpact, normal: hit.normal, collider: hit.collider };
+  }
+}
+
+export interface CarShape { boxSize: [number, number, number]; boxCentre: [number, number, number]; endLift: number; endLiftStart: number }
+
+/** One car: core vehicle + Rapier body. Origin of the body = centre of gravity. */
+export class CarBody {
+  readonly body: RAPIER.RigidBody;
+  out: Float64Array = new Float64Array(256);
+  private state = new Float64Array(13);
+  private contacts = new Float64Array(32);
+  private a = new THREE.Vector3();
+  private b = new THREE.Vector3();
+
+  constructor(private pw: PhysicsWorld, readonly core: CoreCar, shape: CarShape, cgInModel: THREE.Vector3) {
+    const { mass, inertia } = core.info;
+    this.body = pw.world.createRigidBody(
+      RAPIER.RigidBodyDesc.dynamic()
+        .setAdditionalMassProperties(mass, { x: 0, y: 0, z: 0 }, { x: inertia[0], y: inertia[1], z: inertia[2] }, { x: 0, y: 0, z: 0, w: 1 })
+        .setCcdEnabled(true)
+        .setCanSleep(false),
+    );
+    // Convex hull: flat underside between +-endLiftStart, rising endLift to each bumper (see car visual json).
+    const [sx, sy, sz] = shape.boxSize, [cx, cy, cz] = shape.boxCentre;
+    const x = sx / 2, y0 = cy - sy / 2, y1 = cy + sy / 2, z = sz / 2, zs = shape.endLiftStart;
+    const pts: number[] = [];
+    for (const px of [-x, x]) {
+      for (const [pz, py] of [[-z, y0 + shape.endLift], [-zs, y0], [zs, y0], [z, y0 + shape.endLift], [-z, y1], [z, y1]] as const) {
+        pts.push(cx + px - cgInModel.x, py - cgInModel.y, cz + pz - cgInModel.z);
+      }
+    }
+    const hull = RAPIER.ColliderDesc.convexHull(new Float32Array(pts))!.setDensity(0).setFriction(0.3).setRestitution(0.1);
+    pw.world.createCollider(hull, this.body);
+  }
+
+  place(pos: THREE.Vector3, yaw: number, speed = 0) {
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+    this.body.setTranslation(pos, true);
+    this.body.setRotation(q, true);
+    const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(q).multiplyScalar(speed);
+    this.body.setLinvel(fwd, true);
+    this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    this.core.resetMotion(speed, speed > 0 ? 3 : -1);
+  }
+
+  /** One physics tick: rays -> contacts -> core forces -> applied to the body (world steps after). */
+  tick(raw: RawInput, assists: AssistToggles) {
+    const t = this.body.translation(), r = this.body.rotation(), v = this.body.linvel(), w = this.body.angvel();
+    const s = this.state;
+    s[0] = t.x; s[1] = t.y; s[2] = t.z; s[3] = r.x; s[4] = r.y; s[5] = r.z; s[6] = r.w;
+    s[7] = v.x; s[8] = v.y; s[9] = v.z; s[10] = w.x; s[11] = w.y; s[12] = w.z;
+    const rays = this.core.rays(s);
+    const c = this.contacts;
+    for (let i = 0; i < 4; i++) {
+      this.a.set(rays[6 * i], rays[6 * i + 1], rays[6 * i + 2]);
+      this.b.set(rays[6 * i + 3], rays[6 * i + 4], rays[6 * i + 5]);
+      const hit = this.pw.raycast(this.a, this.b, this.body);
+      const o = 8 * i;
+      if (!hit) { c[o] = 0; continue; }
+      const dir = this.b.sub(this.a).normalize();
+      c[o] = 1;
+      c[o + 1] = this.a.x + dir.x * hit.toi; c[o + 2] = this.a.y + dir.y * hit.toi; c[o + 3] = this.a.z + dir.z * hit.toi;
+      c[o + 4] = hit.normal.x; c[o + 5] = hit.normal.y; c[o + 6] = hit.normal.z;
+      c[o + 7] = this.pw.surface(hit.collider);
+    }
+    const out = this.core.step(c, raw, assists, DT);
+    this.body.resetForces(false);
+    this.body.resetTorques(false);
+    this.body.addForce({ x: out[OUT.force], y: out[OUT.force + 1], z: out[OUT.force + 2] }, true);
+    this.body.addTorque({ x: out[OUT.torque], y: out[OUT.torque + 1], z: out[OUT.torque + 2] }, true);
+    this.out = out;
+  }
+}

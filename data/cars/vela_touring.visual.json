@@ -1,0 +1,123 @@
+{
+  "schema": "car_visual/1",
+  "name": "Vela GT Touring",
+  "physics": "cars/vela_touring.json",
+  "model": "res://assets/cars/car_gt.glb",
+  "notes": "Godot model space: +X left, +Y up, +Z forward, origin on the ground at the model centre.",
+  "cg_in_model_m": [
+    0.0,
+    0.47,
+    -0.078
+  ],
+  "wheel_nodes": {
+    "fl": "wheel_FL",
+    "fr": "wheel_FR",
+    "rl": "wheel_RL",
+    "rr": "wheel_RR"
+  },
+  "collision_box": {
+    "size_m": [
+      1.84,
+      0.88,
+      4.4
+    ],
+    "centre_in_model_m": [
+      0.0,
+      0.76,
+      0.0
+    ],
+    "end_lift_m": 0.13,
+    "end_lift_start_m": 1.5,
+    "note": "convex hull: flat underside at 0.32 m between +-1.5 m, rising 0.13 m to each bumper (approach angle ~10 deg); wheels are raycasts"
+  },
+  "paint_material": "paint",
+  "default_paint": [
+    0.75,
+    0.75,
+    0.78
+  ],
+  "headlights": [
+    [
+      -0.62,
+      0.55,
+      2.42
+    ],
+    [
+      0.62,
+      0.55,
+      2.42
+    ]
+  ],
+  "panels": {
+    "front": [
+      "bumper_front",
+      "hood",
+      "grille",
+      "headlight_L",
+      "headlight_R",
+      "drl_L",
+      "drl_R",
+      "beam_L",
+      "beam_R",
+      "intake_L",
+      "intake_R",
+      "splitter"
+    ],
+    "rear": [
+      "bumper_rear",
+      "trunk",
+      "taillight_bar",
+      "diffuser",
+      "exhaust_L",
+      "exhaust_R"
+    ],
+    "left": [
+      "door_L",
+      "mirror_L",
+      "mirror_stalk_L",
+      "handle_L",
+      "mirror_glass_L"
+    ],
+    "right": [
+      "door_R",
+      "mirror_R",
+      "mirror_stalk_R",
+      "handle_R",
+      "mirror_glass_R"
+    ]
+  },
+  "detachable": {
+    "bumper_front": [
+      "front",
+      0.7
+    ],
+    "bumper_rear": [
+      "rear",
+      0.7
+    ],
+    "mirror_L": [
+      "left",
+      0.45
+    ],
+    "mirror_R": [
+      "right",
+      0.45
+    ]
+  },
+  "front_lights": [
+    "drl_L",
+    "drl_R",
+    "beam_L",
+    "beam_R"
+  ],
+  "rear_lights": [
+    "taillight_bar"
+  ],
+  "engine_smoke_in_model_m": [
+    0.0,
+    0.85,
+    1.35
+  ],
+  "lod_model": "res://assets/cars/car_gt_lod.glb",
+  "lod_distance_m": 30.0
+}

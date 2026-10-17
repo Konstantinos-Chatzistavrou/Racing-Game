@@ -1,0 +1,118 @@
+[gd_scene format=3]
+
+[ext_resource type="PackedScene" path="res://assets/track/track_harbour.glb" id="1_afwbw"]
+[ext_resource type="Shader" path="res://shaders/night_sky.gdshader" id="2_ium2l"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_df76a"]
+shader = ExtResource("2_ium2l")
+shader_parameter/zenith_color = null
+shader_parameter/horizon_color = null
+shader_parameter/ground_color = null
+shader_parameter/glow_height = null
+shader_parameter/star_density = null
+shader_parameter/star_brightness = null
+
+[sub_resource type="Sky" id="Sky_2k57j"]
+sky_material = SubResource("ShaderMaterial_df76a")
+radiance_size = 2
+
+[sub_resource type="Environment" id="Environment_cglxm"]
+background_mode = 2
+sky = SubResource("Sky_2k57j")
+ambient_light_source = 3
+ambient_light_energy = 0.6
+reflected_light_source = 2
+tonemap_mode = 4
+tonemap_exposure = 1.1
+glow_enabled = true
+glow_levels/2 = 0.0
+glow_levels/3 = 1.0
+glow_levels/4 = 1.0
+glow_levels/5 = 1.0
+glow_intensity = 0.7
+glow_bloom = 0.03
+glow_blend_mode = 2
+fog_enabled = true
+fog_light_color = Color(0.05, 0.05, 0.065, 1)
+fog_density = 0.0035
+fog_sky_affect = 0.2
+adjustment_enabled = true
+adjustment_contrast = 1.08
+adjustment_saturation = 1.08
+
+[node name="HarbourNight" type="Node3D" unique_id=777198605]
+
+[node name="Track" type="Node3D" parent="." unique_id=1029509531 instance=ExtResource("1_afwbw")]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=2052632270]
+environment = SubResource("Environment_cglxm")
+
+[node name="Moon" type="DirectionalLight3D" parent="." unique_id=1643763435]
+transform = Transform3D(-0.76604444, -0.39573961, 0.5065236, 0, 0.7880108, 0.6156615, -0.64278764, 0.47162408, -0.6036513, 0, 0, 0)
+light_color = Color(0.62, 0.72, 1, 1)
+light_energy = 0.12
+directional_shadow_mode = 1
+directional_shadow_max_distance = 60.0
+
+[node name="LightmapGI" type="LightmapGI" parent="." unique_id=1425198004]
+quality = 0
+bounces = 2
+max_texture_size = 4096
+
+[node name="ReflectionProbes" type="Node3D" parent="." unique_id=896178470]
+
+[node name="Probe_00" type="ReflectionProbe" parent="ReflectionProbes" unique_id=1017442053]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.004, 7.803, 0.072)
+max_distance = 220.0
+size = Vector3(150, 40, 150)
+box_projection = true
+cull_mask = 1048573
+ambient_mode = 0
+
+[node name="Probe_01" type="ReflectionProbe" parent="ReflectionProbes" unique_id=529442205]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 254.082, 7.228, 0)
+max_distance = 220.0
+size = Vector3(150, 40, 150)
+box_projection = true
+cull_mask = 1048573
+ambient_mode = 0
+
+[node name="Probe_02" type="ReflectionProbe" parent="ReflectionProbes" unique_id=127990221]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 407.485, 7.213, 112.69)
+max_distance = 220.0
+size = Vector3(150, 40, 150)
+box_projection = true
+cull_mask = 1048573
+ambient_mode = 0
+
+[node name="Probe_03" type="ReflectionProbe" parent="ReflectionProbes" unique_id=344394365]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 363.596, 0.222, 356.093)
+max_distance = 220.0
+size = Vector3(150, 40, 150)
+box_projection = true
+cull_mask = 1048573
+ambient_mode = 0
+
+[node name="Probe_04" type="ReflectionProbe" parent="ReflectionProbes" unique_id=182515830]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 111.491, 0.76, 363.098)
+max_distance = 220.0
+size = Vector3(150, 40, 150)
+box_projection = true
+cull_mask = 1048573
+ambient_mode = 0
+
+[node name="Probe_05" type="ReflectionProbe" parent="ReflectionProbes" unique_id=399666180]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -26.507, 0.781, 240.728)
+max_distance = 220.0
+size = Vector3(150, 40, 150)
+box_projection = true
+cull_mask = 1048573
+ambient_mode = 0
+
+[node name="Probe_06" type="ReflectionProbe" parent="ReflectionProbes" unique_id=1089014103]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.987, 7.752, 0.19)
+max_distance = 220.0
+size = Vector3(150, 40, 150)
+box_projection = true
+cull_mask = 1048573
+ambient_mode = 0

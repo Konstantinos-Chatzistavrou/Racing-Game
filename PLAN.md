@@ -25,7 +25,7 @@ desktop at idle), Linux Mint. Game budget ~3 GB RAM. Vulkan 1.4 via Mesa 25.2 wo
 | 2 | GDExtension wrapper, placeholder car on a flat test area | done (docs/godot_integration.md) |
 | 3 | Debug overlay, keyboard input smoothing, assists (TC/ABS/stability/steering) | done (docs/physics.md section 9) |
 | 4 | Night city street race (was: circuit), damage, AI rivals, baked lighting, re-benchmark | done (docs/phase4_city.md) |
-| 5 | Handling tuning with real-car reference data (needs feel-testing) | |
+| 5 | Handling tuning with real-car reference data (needs feel-testing) | numbers match Corvette C7 Z51 (docs/handling_reference.md); feel test pending |
 
 ## Budgets (starting values, adjust only from measured data)
 Visible per frame 400-600k tris and <700 draw calls (**to be revised by Phase 0 data**).
@@ -38,6 +38,12 @@ unless a benchmark proves it affordable. One directional light with 2 cascades; 
 casters limited to headlights (4-6 total).
 
 ## Decisions log
+- 2026-10-17: Moved to the WEB: three.js r186 WebGPURenderer + Rapier + the C++ core compiled to
+  WebAssembly (`web/`, see docs/web_port.md). WebGPU required. Godot build kept as reference only.
+- 2026-10-17: Godot + this laptop are a test bench, not the final game. Work now goes into what moves
+  to Unreal unchanged: the C++ core (handling, AI, damage, race and setup logic), data, Blender
+  sources, docs. Garage tuning, spec sheet, rival difficulty and race events moved from GDScript
+  into the core (`rs/setup.hpp`). Image quality: user accepts ~30 fps (MSAA 2x at 100 %).
 - 2026-10-06: Setting changed to an illegal night street race in a city (no racing infrastructure):
   mostly narrow one-lane-each-way streets, some one-way alleys, a few boulevards. Crash damage and
   AI rivals that can pile up (reaction time) added in Phase 4 on request.

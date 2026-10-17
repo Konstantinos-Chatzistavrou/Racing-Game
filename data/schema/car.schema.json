@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "car/1",
+  "title": "Car physics config (schema car/1). SI units. Body frame: x forward, y left, z up.",
+  "type": "object",
+  "required": ["schema", "name", "chassis", "front_axle", "rear_axle", "tire_front", "brakes", "engine", "drivetrain", "aero", "surface_grip"],
+  "properties": {
+    "schema": { "const": "car/1" },
+    "name": { "type": "string" },
+    "chassis": {
+      "type": "object",
+      "required": ["mass_kg", "cg_height_m", "weight_front", "wheelbase_m", "inertia_roll_kgm2", "inertia_pitch_kgm2", "inertia_yaw_kgm2"],
+      "properties": {
+        "mass_kg": { "type": "number", "exclusiveMinimum": 0 },
+        "cg_height_m": { "type": "number", "exclusiveMinimum": 0 },
+        "weight_front": { "type": "number", "minimum": 0, "maximum": 1 },
+        "wheelbase_m": { "type": "number", "exclusiveMinimum": 0 },
+        "inertia_roll_kgm2": { "type": "number", "exclusiveMinimum": 0 },
+        "inertia_pitch_kgm2": { "type": "number", "exclusiveMinimum": 0 },
+        "inertia_yaw_kgm2": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "front_axle": { "$ref": "#/$defs/axle" },
+    "rear_axle": { "$ref": "#/$defs/axle" },
+    "tire_front": { "$ref": "#/$defs/tire" },
+    "tire_rear": { "$ref": "#/$defs/tire" },
+    "brakes": {
+      "type": "object", "required": ["max_total_torque_nm", "bias_front"],
+      "properties": { "max_total_torque_nm": { "type": "number" }, "bias_front": { "type": "number", "minimum": 0, "maximum": 1 } }
+    },
+    "engine": {
+      "type": "object",
+      "required": ["torque_curve", "idle_rpm", "redline_rpm", "inertia_kgm2", "friction_const_nm", "friction_linear_nm_per_radps"],
+      "properties": { "torque_curve": { "type": "array", "minItems": 2, "items": { "type": "array", "prefixItems": [{ "type": "number" }, { "type": "number" }] } } }
+    },
+    "drivetrain": {
+      "type": "object",
+      "required": ["layout", "gear_ratios", "final_drive", "efficiency", "clutch_max_torque_nm", "driveline_inertia_kgm2"],
+      "properties": {
+        "layout": { "enum": ["rwd", "fwd", "awd"] },
+        "gear_ratios": { "type": "array", "description": "[reverse (<0), 0 = neutral, 1st, 2nd, ...]" },
+        "front_diff": { "$ref": "#/$defs/diff" }, "rear_diff": { "$ref": "#/$defs/diff" }, "centre_diff": { "$ref": "#/$defs/diff" },
+        "awd_front_split": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "aero": { "type": "object", "required": ["drag_area_m2", "downforce_area_m2", "front_balance"] },
+    "surface_grip": { "type": "object", "additionalProperties": { "type": "number" } }
+  },
+  "$defs": {
+    "axle": {
+      "type": "object",
+      "properties": { "steer_compliance_deg_per_kn": { "type": "number", "minimum": 0 } },
+      "required": ["track_m", "spring_rate_n_per_m", "spring_rest_length_m", "max_compression_m", "damper_bump_ns_per_m", "damper_rebound_ns_per_m", "anti_roll_rate_n_per_m", "roll_centre_height_m"]
+    },
+    "tire": {
+      "type": "object",
+      "required": ["radius_m", "inertia_kgm2", "fz0_n", "longitudinal", "lateral", "combined", "relaxation_length_long_m", "relaxation_length_lat_m", "rolling_resistance"]
+    },
+    "diff": {
+      "type": "object",
+      "properties": { "type": { "enum": ["open", "locked", "lsd"] }, "preload_nm": { "type": "number" }, "power_ramp": { "type": "number" }, "coast_ramp": { "type": "number" } }
+    }
+  }
+}
