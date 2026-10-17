@@ -18,6 +18,10 @@ interface RsModule {
   _rs_contact(id: number, x: number, y: number, z: number, impulse: number, other: number): void;
   _rs_damage(id: number): void;
   _rs_repair(id: number): void;
+  _rs_race_create(json: number, laps: number): number;
+  _rs_race_buffer(): number;
+  _rs_race_add(x: number, y: number, z: number): number;
+  _rs_race_update(car: number, x: number, y: number, z: number, time: number): void;
 }
 
 let mod: RsModule | null = null;
@@ -109,3 +113,21 @@ export const OUT = {
   throttle: 107, brake: 108, steer: 109, abs: 113, tc: 114, esc: 115,
   wheel: (i: number) => 120 + 12 * i,   // centre xyz, steer, spin, contact, load, slipRatio, slipAngle, compression, angVel, surface
 } as const;
+
+export interface LapInfo { laps: number; current: number; last: number; best: number; distance: number; position: number; finished: boolean; routeLength: number }
+
+/** Core RaceTracker: progress along the route, laps and lap times (game logic stays in the core). */
+export class CoreRace {
+  constructor(routeJson: string, laps = 0) {
+    const p = mod!.stringToNewUTF8(routeJson);
+    const r = mod!._rs_race_create(p, laps);
+    mod!._free(p);
+    if (r < 0) throw new Error('route: ' + mod!.UTF8ToString(mod!._rs_last_error()));
+  }
+  addCar(p: { x: number; y: number; z: number }): number { return mod!._rs_race_add(p.x, p.y, p.z); }
+  update(car: number, p: { x: number; y: number; z: number }, time: number): LapInfo {
+    mod!._rs_race_update(car, p.x, p.y, p.z, time);
+    const b = new Float64Array(mod!.HEAPF64.buffer, mod!._rs_race_buffer(), 16);
+    return { laps: b[0], current: b[1], last: b[2], best: b[3], distance: b[4], position: b[5], finished: b[6] > 0.5, routeLength: b[7] };
+  }
+}

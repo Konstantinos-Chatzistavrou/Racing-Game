@@ -18,6 +18,8 @@
 #include "rs/config.hpp"
 #include "rs/controls.hpp"
 #include "rs/damage.hpp"
+#include "rs/race.hpp"
+#include "rs/route.hpp"
 #include "rs/vehicle.hpp"
 
 namespace {
@@ -230,6 +232,45 @@ EMSCRIPTEN_KEEPALIVE void rs_damage(int id) {
 EMSCRIPTEN_KEEPALIVE void rs_repair(int id) {
     g_cars[id]->vehicle->damage_model().repair();
     g_cars[id]->out.damage = rs::DamageReport{};
+}
+
+// ---- race (laps, lap times, positions): one race at a time --------------------------------
+namespace {
+std::unique_ptr<rs::Route> g_route;
+std::unique_ptr<rs::RaceTracker> g_race;
+std::vector<double> g_race_buf(16, 0.0);
+}
+
+// Route JSON (schema route/1) + lap count (0 = free run, laps counted forever). Returns 0 or -1.
+EMSCRIPTEN_KEEPALIVE int rs_race_create(const char* route_json, int laps) {
+    try {
+        g_race.reset();
+        g_route = std::make_unique<rs::Route>(rs::Route::parse(route_json));
+        g_race = std::make_unique<rs::RaceTracker>(*g_route, laps > 0 ? laps : 1000000);
+        return 0;
+    } catch (const std::exception& e) {
+        g_error = e.what();
+        return -1;
+    }
+}
+EMSCRIPTEN_KEEPALIVE double* rs_race_buffer() { return g_race_buf.data(); }
+EMSCRIPTEN_KEEPALIVE int rs_race_add(double x, double y, double z) { return g_race->add_car(to_core(x, y, z)); }
+
+// Position in three world, race time s. Writes buf: [0] laps done, [1] current lap time,
+// [2] last lap, [3] best lap, [4] distance m, [5] position, [6] finished, [7] route length m
+EMSCRIPTEN_KEEPALIVE void rs_race_update(int car, double x, double y, double z, double time) {
+    g_race->update(car, to_core(x, y, z), time);
+    g_race->rank();
+    const rs::RaceProgress& p = g_race->progress(car);
+    double* b = g_race_buf.data();
+    b[0] = p.lap;
+    b[1] = time - p.lap_start_time;
+    b[2] = p.last_lap;
+    b[3] = p.best_lap;
+    b[4] = p.distance;
+    b[5] = p.position;
+    b[6] = p.finished ? 1 : 0;
+    b[7] = g_route->length();
 }
 
 }  // extern "C"

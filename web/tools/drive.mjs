@@ -23,6 +23,7 @@ const chrome = spawn('google-chrome', [
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let ws, seq = 0;
 const pending = new Map();
+const seen = new Set();
 function send(method, params = {}) {
   const id = ++seq;
   ws.send(JSON.stringify({ id, method, params }));
@@ -51,6 +52,11 @@ try {
   await new Promise((r) => (ws.onopen = r));
   ws.onmessage = (m) => {
     const d = JSON.parse(m.data);
+    if (d.method === 'Runtime.consoleAPICalled' && /error|warning/.test(d.params.type)) {
+      const msg = d.params.args.map((a) => a.value ?? a.description ?? '').join(' ').slice(0, 400);
+      if (!seen.has(msg)) { seen.add(msg); console.log(`[page ${d.params.type}]`, msg); }
+    }
+    if (d.method === 'Runtime.exceptionThrown') console.log('[page exception]', (d.params.exceptionDetails.exception?.description ?? d.params.exceptionDetails.text).slice(0, 600));
     if (d.id && pending.has(d.id)) { const p = pending.get(d.id); pending.delete(d.id); d.error ? p.rej(new Error(d.error.message)) : p.res(d.result); }
   };
   await send('Page.enable');
@@ -79,6 +85,24 @@ try {
   await sleep(4000);
   console.log('idle  ', JSON.stringify(await evaluate(info)));
   if (process.env.PROBE) console.log('probe', await evaluate(fs.readFileSync(process.env.PROBE, 'utf8')));
+  if (scenario === 'profile') {
+    await key('keyDown', 'KeyW', 'w');
+    await sleep(1500);
+    await send('Profiler.enable');
+    await send('Profiler.setSamplingInterval', { interval: 200 });
+    await send('Profiler.start');
+    await sleep(4000);
+    const { profile } = await send('Profiler.stop');
+    await key('keyUp', 'KeyW', 'w');
+    const self = new Map(), byId = new Map(profile.nodes.map((n) => [n.id, n]));
+    const dts = profile.timeDeltas; let total = 0;
+    profile.samples.forEach((id, i) => {
+      const n = byId.get(id), f = n.callFrame, k = `${f.functionName || '(anon)'} ${f.url.split('/').pop()}:${f.lineNumber + 1}`;
+      self.set(k, (self.get(k) ?? 0) + (dts[i] ?? 0)); total += dts[i] ?? 0;
+    });
+    console.log('main-thread total', (total / 1000).toFixed(0), 'ms over 4 s');
+    [...self.entries()].sort((a, b) => b[1] - a[1]).slice(0, 22).forEach(([k, v]) => console.log(((v / total) * 100).toFixed(1).padStart(5) + '%', k));
+  }
   if (scenario === 'crash') {
     const dmg = `(() => { const d = window.__game.core.damage(); return { kj: +d.totalKj.toFixed(1), last: +d.lastKj.toFixed(1), crush: d.crush.map(x => +x.toFixed(2)), engine: +d.engine.toFixed(2), wheel: d.wheel.map(x => +x.toFixed(2)), impacts: d.impacts, totaled: d.totaled }; })()`;
     await key('keyDown', 'KeyW', 'w');
@@ -129,6 +153,10 @@ try {
   await shot('1_start.png');
   await key('keyDown', 'KeyW', 'w');
   for (let s = 1; s <= 7; s++) { await sleep(1000); console.log(`t=${s}s `, JSON.stringify(await evaluate(info))); }
+  console.log('audio ', await evaluate(`(() => { const a = window.__game.audio, c = a.ctx, e = a.eng, o = window.__game.car.out;
+    if (!c) return 'no context';
+    return JSON.stringify({ state: c.state, rpm: Math.round(o[103]), expectedHz: Math.round(o[103] / 60 * 4), oscHz: Math.round(e.o1.frequency.value),
+      engineGain: +e.g.gain.value.toFixed(3), windGain: +a.wind.g.gain.value.toFixed(3), tyreGain: +a.tyre.g.gain.value.toFixed(3) }); })()`));
   await shot('2_speed.png');
   await key('keyUp', 'KeyW', 'w');
   await key('keyDown', 'KeyS', 's');

@@ -24,8 +24,16 @@ Route Route::load(const std::string& path) {
     if (!f) throw std::runtime_error("route: cannot open " + path);
     std::stringstream ss;
     ss << f.rdbuf();
-    nlohmann::json j = nlohmann::json::parse(ss.str());
-    if (j.value("schema", "") != "route/1") throw std::runtime_error("route: expected schema route/1 in " + path);
+    try {
+        return parse(ss.str());
+    } catch (const std::exception& e) {
+        throw std::runtime_error(std::string(e.what()) + " (" + path + ")");
+    }
+}
+
+Route Route::parse(const std::string& json_text) {
+    nlohmann::json j = nlohmann::json::parse(json_text);
+    if (j.value("schema", "") != "route/1") throw std::runtime_error("route: expected schema route/1");
     std::vector<RouteSample> v;
     for (const auto& e : j.at("samples")) {
         RouteSample r;

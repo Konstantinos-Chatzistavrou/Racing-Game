@@ -1,13 +1,11 @@
 // Night Run (web build): three.js WebGPU renderer + Rapier rigid bodies + the rs_core physics
 // compiled to WebAssembly. WebGPU required. URL options: ?scale=0.75 (render resolution), ?webgl=1 (debug only),
-// ?bloom=0, ?aa=0, ?shadows=0, ?lights=12 (WebGL 2 light pool size).
+// ?quality=high|low (default: high on desktop, low on touch devices), ?bloom=0, ?aa=0, ?shadows=0, ?lights=12 (WebGL 2 light pool size).
 import * as THREE from 'three/webgpu';
-import { pass, renderOutput } from 'three/tsl';
-import { smaa } from 'three/addons/tsl/display/SMAANode.js';
-import { bloom } from 'three/addons/tsl/display/BloomNode.js';
+import { Post, type Quality } from './post';
 import { ClusteredLighting } from 'three/addons/lighting/ClusteredLighting.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { CoreCar, OUT, loadCore } from './physics/core';
+import { CoreCar, CoreRace, OUT, loadCore, type LapInfo } from './physics/core';
 import { CarBody, DT, PhysicsWorld, loadRapier } from './physics/world';
 import { CityLighting, loadCity } from './scene/city';
 import { CarVisual, type CarVisualConfig } from './scene/car';
@@ -15,7 +13,7 @@ import { CameraRig } from './camera';
 import { Input } from './input';
 import { Hud } from './hud';
 import { DamageVisuals } from './scene/damage';
-import { CrashAudio } from './audio';
+import { GameAudio } from './audio';
 import { TouchControls, wantsTouch } from './touch';
 
 const params = new URLSearchParams(location.search);
@@ -115,15 +113,27 @@ async function main() {
   };
   spawn();
 
+  // Laps: the core's RaceTracker on the city route (free run: laps counted forever).
+  const routeJson = JSON.stringify(route);
+  let race = new CoreRace(routeJson, 0);
+  let raceCar = race.addCar(car.body.translation());
+  let raceT0 = 0, lap: LapInfo | null = null;
+
   const pos = new THREE.Vector3(), quat = new THREE.Quaternion();
   const input = new Input();
   const rig = new CameraRig(camera, pw, car.body);
   const hud = new Hud();
-  const audio = new CrashAudio();
+  const audio = new GameAudio();
   const damage = new DamageVisuals(visual, visualCfg, pw, scene);
   damage.onImpact = (kj, glass) => audio.impact(kj, glass);
   input.onAnyInput = () => audio.unlock();
-  input.onReset = () => { spawn(); core.repair(); damage.repair(); input.hold = true; };
+  input.onReset = () => {
+    spawn(); core.repair(); damage.repair(); input.hold = true;
+    race = new CoreRace(routeJson, 0);
+    raceCar = race.addCar(car.body.translation());
+    raceT0 = ticks * DT;
+    hud.resetLaps();
+  };
   const enableTouch = () => {
     if (input.touch) return;
     document.body.classList.add('touch');
@@ -140,28 +150,21 @@ async function main() {
   input.onHud = () => hud.toggle();
 
   // --- post-processing ------------------------------------------------------------------------
-  const pipeline = new THREE.RenderPipeline(renderer);
-  const scenePass = pass(scene, camera);
-  const color = scenePass.getTextureNode('output');
-  const lit = params.get('bloom') === '0' ? color : color.add(bloom(color, 0.35, 0.15, 1.2));
-  // Anti-aliasing runs on the tone-mapped image (SMAA expects display-referred colour).
-  if (params.get('aa') !== '0') {
-    pipeline.outputColorTransform = false;
-    pipeline.outputNode = smaa(renderOutput(lit));
-  } else pipeline.outputNode = lit;
+  const quality: Quality = params.get('quality') === 'low' || (params.get('quality') !== 'high' && !!input.touch) ? 'low' : 'high';
+  const post = new Post(renderer, scene, camera, { quality, bloom: params.get('bloom') !== '0', aa: params.get('aa') !== '0' });
 
-  rig.update(1, pos.copy(car.body.translation() as THREE.Vector3), quat.copy(car.body.rotation() as THREE.Quaternion), 0);
+  rig.update(1, pos.copy(car.body.translation() as THREE.Vector3), quat.copy(car.body.rotation() as THREE.Quaternion), new THREE.Vector3(), car.out, core.info.redline);
   cityLights.update(1, camera);
   say('Compiling shaders…');
   await renderer.compileAsync(scene, camera);
   hud.show();
-  hud.extra = `${backend} · ${renderer.domElement.width}×${renderer.domElement.height} · ${cityLights.mode}`;
+  hud.extra = `${backend} · ${quality} · ${renderer.domElement.width}×${renderer.domElement.height} · ${cityLights.mode}`;
 
   // --- loop: fixed 240 Hz physics, render every frame -----------------------------------------
   let acc = 0, prev = performance.now(), ticks = 0, lastScaleCheck = performance.now() + 4000;   // skip shader warm-up
   const trace: unknown[] = [];
   const g = window as unknown as { __game: object };
-  g.__game = { rig, damage, trace, car, core, input, renderer, camera, scene, info: () => ({ pos: car.body.translation(), speed: car.out[OUT.speed], rpm: car.out[OUT.rpm], gear: car.out[OUT.gear] }) };
+  g.__game = { audio, rig, damage, trace, car, core, input, renderer, camera, scene, info: () => ({ pos: car.body.translation(), speed: car.out[OUT.speed], rpm: car.out[OUT.rpm], gear: car.out[OUT.gear] }) };
 
   if (import.meta.env.DEV) {
     const report = (msg: string) => fetch('/__telemetry', { method: 'POST', body: msg }).catch(() => {});
@@ -178,7 +181,8 @@ async function main() {
     while (acc >= DT && steps < 24) {
       car.tick(input.poll(), input.assists);
       pw.world.step();
-      if (trace.length < 300 && ++ticks % 4 === 0) {
+      ticks++;   // simulation clock (race timing): every tick, not just while tracing
+      if (trace.length < 300 && ticks % 4 === 0) {
         const r = car.body.rotation(), t = car.body.translation(), o = car.out;
         trace.push([ticks, +(Math.atan2(2 * (r.w * r.y + r.x * r.z), 1 - 2 * (r.y * r.y + r.x * r.x)) * 57.2958).toFixed(2), +t.y.toFixed(3),
           [0, 1, 2, 3].map((i) => Math.round(o[OUT.wheel(i) + 6])).join('/'), +frame.toFixed(3)]);
@@ -194,10 +198,12 @@ async function main() {
     visual.velocity.set(lv.x, lv.y, lv.z);
     visual.update(pos, quat, car.out);
     damage.update(frame, () => core.damage());
-    rig.update(frame, pos, quat, car.out[OUT.speed]);
+    audio.update(car.out, car.out[OUT.speed]);
+    rig.update(frame, pos, quat, visual.velocity, car.out, core.info.redline);
     cityLights.update(frame, camera);
-    pipeline.render();
-    hud.update(now, car.out, core.info, input.assists, damage.last);
+    post.render();
+    lap = race.update(raceCar, car.body.translation(), ticks * DT - raceT0);
+    hud.update(now, frame, car.out, core.info, input.assists, damage.last, lap);
     // Adaptive resolution: hold >= ~28 fps (phones vary a lot); recover when there's headroom.
     if (adaptive && now - lastScaleCheck > 2000) {
       const fps = hud.fps;
@@ -206,7 +212,7 @@ async function main() {
       if (next !== scale) {
         scale = next;
         renderer.setPixelRatio(baseRatio * scale);
-        hud.extra = `${backend} · ${renderer.domElement.width}×${renderer.domElement.height} · ${cityLights.mode}`;
+        hud.extra = `${backend} · ${quality} · ${renderer.domElement.width}×${renderer.domElement.height} · ${cityLights.mode}`;
       }
     }
   });

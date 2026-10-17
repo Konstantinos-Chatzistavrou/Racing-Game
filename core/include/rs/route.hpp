@@ -19,6 +19,7 @@ struct RouteSample {
 class Route {
 public:
     static Route load(const std::string& path);                 // throws std::runtime_error
+    static Route parse(const std::string& json_text);           // same, from JSON text (web build)
     static Route from_samples(std::vector<RouteSample> s, bool closed);
 
     struct Projection {
