@@ -1,7 +1,25 @@
-# Version-controlled on purpose: plans + physics/math docs only.
-# Everything else (code, assets, tools, builds) is ignored for now.
-/*
-!.gitignore
-!PLAN.md
-!PORTING.md
-!docs/
+# Everything is published except downloaded programs, dependencies, caches and build outputs.
+
+# Downloaded programs (Blender, Godot): too large for GitHub, not ours
+/tools/blender/
+/tools/godot/
+# Benchmark raw outputs (summaries live in docs/)
+/tools/results/
+
+# Third-party / generated (see README: how to fetch)
+/godot_ext/godot-cpp/
+/godot_ext/api/
+/godot_ext/build/
+/godot_ext/build_config.log
+
+# Build outputs and caches
+/core/build/
+/game/.godot/
+/game/bin/
+*.unwrap_cache
+/web/node_modules/
+/web/dist/
+
+# Local tooling
+/.playwright-mcp/
+.DS_Store

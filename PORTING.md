@@ -6,7 +6,11 @@ Keep this current as phases land.
 - `core/`: vehicle physics, tires, drivetrain, assists, lap timing, race rules, AI, damage rules
   (Phase 1 done: `rs_core` static lib + headless tests; build with CMake, no engine needed.
   Unreal: link `rs_core`, call `wheel_rays()` / `update()` from a component each physics tick.)
-- `data/`: car and track JSON + schemas
+- Player-facing setup logic (`core/include/rs/setup.hpp`, tests in `core/tests/test_setup.cpp`):
+  garage tuning (writes a tuned car JSON), car spec sheet, rival roster + difficulty, race events
+  (mode/laps/rivals/grid -> grid size and start slot). Unreal: call the same functions from the
+  menu/garage code; only labels and hint text live in the UI.
+- `data/`: car and track JSON + schemas, `data/rivals.json` (AI personalities and names)
 - `assets_source/`: Blender files, full-res textures
 - `docs/`: physics maths
 
@@ -31,6 +35,9 @@ Keep this current as phases land.
 | Lamp grid for road reflections, car-only lights | `game/scripts/city_lights.gd` | Unreal material + light channels |
 | City import fix-ups | `game/import/city_import.gd` | Unreal import pipeline |
 | Route / race handles | `godot_ext/src/rs_route.cpp` (RSRoute, RSRace) | thin UObject wrappers |
+| Setup calls (tuning, stats, rivals, events) | `godot_ext/src/rs_setup.cpp` (RSSetup, static) | Blueprint function library |
+| Front end: menu, garage, settings, pause, results | `game/scripts/main_menu.gd` etc. (layout + text only) | UMG; reuse the page/flow design |
+| Car cosmetics (paint, finish, rims, calipers, tint) | `game/scripts/garage.gd` material overrides | material instance parameters |
 
 ## Axis conversion (single point)
 `godot_ext/src/axes.hpp` is the only implementation. Scripts call `RSVehicle.core_to_godot()` /

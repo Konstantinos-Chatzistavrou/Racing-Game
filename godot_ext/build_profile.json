@@ -1,0 +1,14 @@
+{
+	"enabled_classes": [
+		"Engine",
+		"OS",
+		"Node3D",
+		"RigidBody3D",
+		"PhysicsDirectBodyState3D",
+		"PhysicsDirectSpaceState3D",
+		"PhysicsRayQueryParameters3D",
+		"ProjectSettings",
+		"SceneTree",
+		"RefCounted"
+	]
+}

@@ -1,0 +1,128 @@
+[gd_scene format=3 uid="uid://brqlts40fdruy"]
+
+[ext_resource type="PackedScene" uid="uid://816fhh2g6rs1" path="res://assets/city/city.glb" id="1_i1hls"]
+[ext_resource type="Shader" uid="uid://51wo37rfg0yr" path="res://shaders/night_sky.gdshader" id="2_qys3e"]
+[ext_resource type="LightmapGIData" uid="uid://dnr5tfrd3si4c" path="res://scenes/city_night.lmbake" id="3_qys3e"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_3uflh"]
+shader = ExtResource("2_qys3e")
+shader_parameter/zenith_color = Color(0.002, 0.003, 0.008, 1)
+shader_parameter/horizon_color = Color(0.025, 0.018, 0.015, 1)
+shader_parameter/ground_color = Color(0.005, 0.005, 0.006, 1)
+shader_parameter/glow_height = 0.2
+shader_parameter/star_density = 0.002
+shader_parameter/star_brightness = 0.3
+
+[sub_resource type="Sky" id="Sky_xkurr"]
+sky_material = SubResource("ShaderMaterial_3uflh")
+radiance_size = 2
+
+[sub_resource type="Environment" id="Environment_stn3w"]
+background_mode = 2
+sky = SubResource("Sky_xkurr")
+ambient_light_source = 3
+ambient_light_energy = 0.04
+reflected_light_source = 2
+tonemap_mode = 4
+tonemap_exposure = 0.7
+glow_enabled = true
+glow_levels/2 = 0.0
+glow_levels/3 = 1.0
+glow_levels/4 = 1.0
+glow_levels/5 = 1.0
+glow_intensity = 0.4
+glow_bloom = 0.01
+glow_blend_mode = 2
+fog_enabled = true
+fog_light_color = Color(0.01, 0.01, 0.015, 1)
+fog_density = 0.012
+fog_sky_affect = 0.05
+adjustment_enabled = true
+adjustment_contrast = 1.15
+adjustment_saturation = 1.08
+
+[node name="CityNight" type="Node3D" unique_id=1753591979]
+
+[node name="City" parent="." unique_id=1390837941 instance=ExtResource("1_i1hls")]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1009433344]
+environment = SubResource("Environment_stn3w")
+
+[node name="Moon" type="DirectionalLight3D" parent="." unique_id=1603108434]
+transform = Transform3D(-0.76604444, -0.39573961, 0.5065236, 0, 0.7880108, 0.6156615, -0.64278764, 0.47162408, -0.6036513, 0, 0, 0)
+light_color = Color(0.62, 0.72, 1, 1)
+light_energy = 0.02
+directional_shadow_mode = 1
+directional_shadow_max_distance = 60.0
+
+[node name="LightmapGI" type="LightmapGI" parent="." unique_id=178489049]
+quality = 0
+bounces = 2
+max_texture_size = 4096
+light_data = ExtResource("3_qys3e")
+
+[node name="ReflectionProbes" type="Node3D" parent="." unique_id=2048170755]
+
+[node name="Probe_00" type="ReflectionProbe" parent="ReflectionProbes" unique_id=1631244489]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 13, 8.26, -78)
+max_distance = 220.0
+size = Vector3(130, 45, 130)
+box_projection = true
+cull_mask = 1048573
+ambient_mode = 0
+
+[node name="Probe_01" type="ReflectionProbe" parent="ReflectionProbes" unique_id=560375192]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 163, 8.935, -78)
+max_distance = 220.0
+size = Vector3(130, 45, 130)
+box_projection = true
+cull_mask = 1048573
+ambient_mode = 0
+
+[node name="Probe_02" type="ReflectionProbe" parent="ReflectionProbes" unique_id=1123440266]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 308.964, 7.627, -86.983)
+max_distance = 220.0
+size = Vector3(130, 45, 130)
+box_projection = true
+cull_mask = 1048573
+ambient_mode = 0
+
+[node name="Probe_03" type="ReflectionProbe" parent="ReflectionProbes" unique_id=233036148]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 318.4, 3.938, -229.8)
+max_distance = 220.0
+size = Vector3(130, 45, 130)
+box_projection = true
+cull_mask = 1048573
+ambient_mode = 0
+
+[node name="Probe_04" type="ReflectionProbe" parent="ReflectionProbes" unique_id=417457607]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 372.6, 0.456, -305.6)
+max_distance = 220.0
+size = Vector3(130, 45, 130)
+box_projection = true
+cull_mask = 1048573
+ambient_mode = 0
+
+[node name="Probe_05" type="ReflectionProbe" parent="ReflectionProbes" unique_id=2046868195]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 222.6, 5.706, -305.6)
+max_distance = 220.0
+size = Vector3(130, 45, 130)
+box_projection = true
+cull_mask = 1048573
+ambient_mode = 0
+
+[node name="Probe_06" type="ReflectionProbe" parent="ReflectionProbes" unique_id=1942487720]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 77.8, 4.59, -296.8)
+max_distance = 220.0
+size = Vector3(130, 45, 130)
+box_projection = true
+cull_mask = 1048573
+ambient_mode = 0
+
+[node name="Probe_07" type="ReflectionProbe" parent="ReflectionProbes" unique_id=937603602]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 59, 5.807, -164)
+max_distance = 220.0
+size = Vector3(130, 45, 130)
+box_projection = true
+cull_mask = 1048573
+ambient_mode = 0
