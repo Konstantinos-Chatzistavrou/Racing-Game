@@ -13,7 +13,10 @@ const port = 9334;
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'chrome-webgpu-'));
 const chrome = spawn('google-chrome', [
   `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
-  '--enable-unsafe-webgpu', '--enable-features=Vulkan', '--window-size=1280,800', 'about:blank',
+  '--enable-unsafe-webgpu', '--enable-features=Vulkan', '--window-size=1280,800',
+  // other windows (e.g. a full-screen Chrome) must not throttle the test window's frame rate
+  '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling',
+  'about:blank',
 ], { stdio: 'ignore' });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -50,6 +53,7 @@ try {
     if (d.id && pending.has(d.id)) { const p = pending.get(d.id); pending.delete(d.id); d.error ? p.rej(new Error(d.error.message)) : p.res(d.result); }
   };
   await send('Page.enable');
+  await send('Page.bringToFront');
   await send('Runtime.enable');
   await send('Page.navigate', { url });
   for (let i = 0; i < 240; i++) {
