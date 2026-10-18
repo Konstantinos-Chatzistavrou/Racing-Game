@@ -16,6 +16,7 @@ export class Input {
   onReset = () => {};
   onCamera = () => {};
   onHud = () => {};
+  onLights = () => {};
 
   constructor() {
     addEventListener('keydown', (e) => {
@@ -29,6 +30,7 @@ export class Input {
         case 'KeyR': this.onReset(); break;
         case 'KeyC': this.onCamera(); break;
         case 'KeyH': this.onHud(); break;
+        case 'KeyL': this.onLights(); break;
         case 'Digit1': this.assists.abs = !this.assists.abs; break;
         case 'Digit2': this.assists.tc = !this.assists.tc; break;
         case 'Digit3': this.assists.esc = !this.assists.esc; break;

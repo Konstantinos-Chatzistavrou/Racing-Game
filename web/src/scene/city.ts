@@ -35,7 +35,11 @@ export async function loadCity(scene: THREE.Scene, pw: PhysicsWorld, surfaces: C
   root.traverse((o) => { if (o.name.endsWith('-colonly')) o.visible = false; });
 
   // Exported lamps are physical spot lights in Blender units: replaced by point lights (see
-  // CityLighting). Street lamps: warm, short range; neon signs: tinted, very short.
+  // CityLighting). Street lamps: warm, short range; neon signs: tinted, very short. Both kept LOW:
+  // a faint pool on the road and a little bounce, not floodlit facades (at 260/26 m they lit the
+  // street like dusk and the headlights stopped mattering). Range cut with intensity, so fewer
+  // lights overlap each cluster (cheaper on WebGPU).
+  // The lamp heads and neon tubes themselves stay bright (emissive materials).
   const out: CityLight[] = [];
   let lamps = 0, neon = 0;
   for (const l of lights) {
@@ -43,7 +47,7 @@ export async function loadCity(scene: THREE.Scene, pw: PhysicsWorld, surfaces: C
     l.getWorldPosition(p);
     const isLamp = l.name.startsWith('lamp_light');
     if (isLamp) { p.y -= 0.6; lamps++; } else neon++;
-    out.push({ pos: p, color: l.color.clone(), intensity: isLamp ? 260 : 60, range: isLamp ? 26 : 12 });
+    out.push({ pos: p, color: l.color.clone(), intensity: isLamp ? 40 : 15, range: isLamp ? 18 : 8 });
     l.removeFromParent();
   }
   scene.add(root);

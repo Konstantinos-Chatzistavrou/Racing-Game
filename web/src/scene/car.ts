@@ -27,6 +27,9 @@ export class CarVisual {
   readonly cg: THREE.Vector3;
   headlights: THREE.SpotLight[] = [];
   readonly headlightIntensity = 900;
+  /** Headlight switch (L). Off = intensity 0, never visible = false (that recompiles every material). */
+  lightsOn = true;
+  lightsBroken = false;
   readonly velocity = new THREE.Vector3();   // m/s, world (for debris)
 
   private constructor(readonly cfg: CarVisualConfig, readonly model: THREE.Object3D) {
@@ -68,6 +71,11 @@ export class CarVisual {
       this.root.add(s, s.target);
       this.headlights.push(s);
     }
+  }
+
+  /** Spot intensity from the switch and the damage state. */
+  applyHeadlights() {
+    for (const s of this.headlights) s.intensity = this.lightsOn && !this.lightsBroken ? this.headlightIntensity : 0;
   }
 
   static async load(cfg: CarVisualConfig): Promise<CarVisual> {

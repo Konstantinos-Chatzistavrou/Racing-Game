@@ -148,7 +148,8 @@ export class DamageVisuals {
       this.killLights(this.cfg.front_lights);
       // intensity 0, NOT visible = false: changing the scene's light set recompiles every lit
       // material (a ~300 ms freeze on impact)
-      for (const s of this.car.headlights) s.intensity = 0;
+      this.car.lightsBroken = true;
+      this.car.applyHeadlights();
     }
     if (d.crush[1] > LIGHTS_CRUSH && !this.lightsOff.rear) {
       this.lightsOff.rear = glass = true;
@@ -334,7 +335,8 @@ export class DamageVisuals {
     this.detached.clear();
     for (const [m, mat] of this.lightMats) m.material = mat;
     this.lightMats.clear();
-    for (const s of this.car.headlights) s.intensity = this.car.headlightIntensity;
+    this.car.lightsBroken = false;
+    this.car.applyHeadlights();
     this.lightsOff = { front: false, rear: false };
     this.applied = [0, 0, 0, 0];
     this.dentQueue = [];
