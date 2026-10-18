@@ -12,6 +12,18 @@
 // sides are softer with far less room before the cabin.
 //   front: bumper/lights 0-0.15 m, radiator 0.15-0.35 m, ENGINE from 0.35 m (wrecked by 0.65 m)
 //   side:  doors; cabin intrusion from 0.25 m, car totaled at 0.40 m (no one drives on after that)
+//
+// NEVER IMMOVABLE (game rule). "Totaled" is a report flag (race DNF, HUD), not a dead car: the
+// engine keeps a limp-home floor of limp_power and the controls are never cut, so the player can
+// always crawl forward (or reverse) after any amount of damage. R repairs.
+//
+// FIRE AND BRAKES. Severity s = max(engine damage, total crash energy / severity_kj). From
+// s >= fire_severity the engine bay smoulders (smoke only) for smoulder_s, then catches fire;
+// the flames grow 0 -> 1 over fire_grow_s. Heat cooks the brakes (pads glaze, fluid boils):
+//   d(wear)/dt = max(0, s - fade_severity) / (1 - fade_severity) / fade_damage_s + fire / fade_fire_s
+//   brake effectiveness = 1 - 0.7 wear   while wear < 1   (fade: down to 30 %)
+//                       = 0               once wear >= 1  (fluid boiled: pedal to the floor)
+// No explosion. Everything resets on repair.
 #pragma once
 #include <array>
 #include <cstdint>
@@ -36,6 +48,14 @@ struct DamageParams {
     double min_force_g = 3.0;              // per-tick contact force below this is not a crash
     double max_toe_deg = 1.5;              // bent steering arm at a destroyed wheel
     double totaled_engine = 0.9;           // engine damage at which the car is totaled
+    double limp_power = 0.25;              // engine power floor: the car can ALWAYS drive on
+    double severity_kj = 900.0;            // total crash energy that counts as "wrecked" (s = 1)
+    double fire_severity = 0.6;            // severity at which the engine bay starts to smoulder
+    double smoulder_s = 10.0;              // smoke-only phase before flames
+    double fire_grow_s = 45.0;             // flames grow from nothing to full over this
+    double fade_severity = 0.5;            // brakes start to fade above this severity
+    double fade_damage_s = 90.0;           // s to brake failure from damage alone at s = 1
+    double fade_fire_s = 25.0;             // s to brake failure in a full fire (adds to damage)
 };
 
 struct DamageReport {
@@ -50,6 +70,10 @@ struct DamageReport {
     int impacts = 0;                   // crash events that caused damage
     bool totaled = false;
     std::string totaled_reason;        // "engine", "cabin", "wheels"
+    double smoulder = 0;               // 0..1 progress of the smoke phase before ignition
+    double fire = 0;                   // 0 = no fire, (0..1] flame size (grows over time)
+    double brakes = 1;                 // brake effectiveness 1..0.3, 0 once failed
+    bool brakes_failed = false;
 };
 
 class DamageModel {
@@ -63,14 +87,18 @@ public:
 
     const DamageReport& report() const { return r_; }
     const DamageParams& params() const { return p_; }
-    void repair() { r_ = DamageReport{}; events_.clear(); zone_energy_ = {}; }
+    void repair() { r_ = DamageReport{}; events_.clear(); zone_energy_ = {}; brake_wear_ = 0; }
+    // Time-driven effects (fire, brake fade). Call once per physics tick.
+    void update(double dt);
+    double severity() const;                    // 0..1, see FIRE AND BRAKES above
 
     // Physical consequences (fed into Vehicle each tick):
-    double engine_power_factor() const;         // 1 .. 0.3, and 0 once totaled (engine dead)
+    double engine_power_factor() const;         // 1 .. 0.3 from engine damage, never below limp_power
     double drag_factor() const;                 // 1 .. 1.3 (crumpled body, open panels)
     double suspension_factor(int wheel) const;  // 1 .. 0.6 spring stiffness
     double toe_offset(int wheel) const;         // rad, bent steering/suspension arm
     double grip_factor(int wheel) const;        // 1 .. 0.9 (misaligned tyre)
+    double brake_factor() const { return r_.brakes; }   // 1 .. 0 (fade, then failure)
 
 private:
     struct Event { double j_acc = 0, last_time = -1; };
@@ -80,6 +108,7 @@ private:
     DamageReport r_;
     std::array<double, 4> zone_energy_{};   // J absorbed per zone
     std::map<std::uint64_t, Event> events_;
+    double brake_wear_ = 0;                 // 0..1, 1 = brakes failed
 };
 
 }  // namespace rs
