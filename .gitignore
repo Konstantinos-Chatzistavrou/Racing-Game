@@ -24,3 +24,4 @@
 # Local tooling
 /.playwright-mcp/
 .DS_Store
+/.claude/worktrees/
