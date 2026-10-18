@@ -1,6 +1,6 @@
 // Drives the game in the system Chrome with WebGPU enabled (Linux needs the flags) through the
 // DevTools protocol: load, idle, full throttle, brake. Prints telemetry + fps, saves screenshots.
-// Usage: node tools/drive.mjs [url] [outdir] [straight|crash|mobile]
+// Usage: node tools/drive.mjs [url] [outdir] [straight|crash|mobile|bench|profile|night]   (CDP_PORT=9334 to change the DevTools port)
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -10,7 +10,7 @@ const url = process.argv[2] ?? 'http://127.0.0.1:5173/';
 const out = process.argv[3] ?? path.join(os.tmpdir(), 'drive');
 const scenario = process.argv[4] ?? 'straight';
 fs.mkdirSync(out, { recursive: true });
-const port = 9334;
+const port = Number(process.env.CDP_PORT ?? 9334);
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'chrome-webgpu-'));
 const chrome = spawn('google-chrome', [
   `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
@@ -108,6 +108,38 @@ try {
     });
     console.log('main-thread total', (total / 1000).toFixed(0), 'ms over 4 s');
     [...self.entries()].sort((a, b) => b[1] - a[1]).slice(0, 22).forEach(([k, v]) => console.log(((v / total) * 100).toFixed(1).padStart(5) + '%', k));
+  }
+  if (scenario === 'night') {
+    // Night lighting test (use with ?blackcar=1): AI cars parked in front of the player (one from
+    // behind at 11 m, one side-on at 20 m, one facing the player at 32 m), screenshots with the
+    // player's headlights on and off, then a short drive among the moving AI cars for frame pacing.
+    const fps = `new Promise((res) => { const ft = []; let p = performance.now(); const f = (t) => { ft.push(t - p); p = t; if (ft.length < 150) requestAnimationFrame(f); else { const a = ft.slice(5).sort((x, y) => x - y); res('median ' + a[a.length >> 1].toFixed(1) + ' ms (' + (1000 / a[a.length >> 1]).toFixed(0) + ' fps)  p95 ' + a[Math.floor(a.length * 0.95)].toFixed(1) + '  max ' + a[a.length - 1].toFixed(1)); } }; requestAnimationFrame(f); })`;
+    await evaluate(`(() => { const g = window.__game, t = g.car.body.translation(), r = g.car.body.rotation();
+      const yaw = Math.atan2(2 * (r.w * r.y + r.x * r.z), 1 - 2 * (r.y * r.y + r.x * r.x)), y = t.y - g.core.info.cgHeight - 0.05;
+      const at = (d, side) => ({ x: t.x + Math.sin(yaw) * d - Math.cos(yaw) * side, y, z: t.z + Math.cos(yaw) * d + Math.sin(yaw) * side });
+      g.ai.park(0, 0, { pos: at(11, 0), yaw });
+      g.ai.park(1, 0, { pos: at(20, 2.5), yaw: yaw + Math.PI / 2 });
+      g.ai.park(2, 0, { pos: at(32, -2.5), yaw: yaw + Math.PI });
+      return 1; })()`);
+    await sleep(1500);
+    console.log('lights on ', await evaluate(fps));
+    await shot('night_on.png');
+    await key('keyDown', 'KeyL', 'l'); await key('keyUp', 'KeyL', 'l');
+    await sleep(800);
+    console.log('lights off', await evaluate(fps));
+    await shot('night_off.png');
+    await key('keyDown', 'KeyL', 'l'); await key('keyUp', 'KeyL', 'l');
+    await evaluate(`(window.__game.ai.reset(), 1)`);
+    await evaluate(`(() => { window.__ft = []; let p = performance.now(); const f = (t) => { window.__ft.push(t - p); p = t; if (window.__ft.length < 2000) requestAnimationFrame(f); }; requestAnimationFrame(f); return 1; })()`);
+    await key('keyDown', 'KeyW', 'w');
+    await sleep(3500);
+    await key('keyUp', 'KeyW', 'w');
+    await sleep(2500);
+    await shot('night_drive.png');
+    console.log('drive ', JSON.stringify(await evaluate(info)));
+    console.log('ai    ', await evaluate(`JSON.stringify(window.__game.ai.cars.map((c) => ({ s: +c.s.toFixed(1), kmh: Math.round(c.v * 3.6) })))`));
+    console.log('pacing', await evaluate(`(() => { const a = window.__ft.slice(5).sort((x, y) => x - y), q = (p) => a[Math.min(a.length - 1, Math.floor(p * a.length))].toFixed(1);
+      return 'frames ' + a.length + '  median ' + q(0.5) + ' ms  p95 ' + q(0.95) + '  p99 ' + q(0.99) + '  max ' + a[a.length - 1].toFixed(1) + '  >50ms: ' + a.filter((x) => x > 50).length; })()`));
   }
   if (scenario === 'crash') {
     const dmg = `(() => { const d = window.__game.core.damage(); return { kj: +d.totalKj.toFixed(1), last: +d.lastKj.toFixed(1), crush: d.crush.map(x => +x.toFixed(2)), engine: +d.engine.toFixed(2), wheel: d.wheel.map(x => +x.toFixed(2)), impacts: d.impacts, totaled: d.totaled }; })()`;
