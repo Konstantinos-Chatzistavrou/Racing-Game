@@ -165,9 +165,14 @@ async function main() {
   // --- loop: fixed 240 Hz physics, render every frame -----------------------------------------
   let acc = 0, prev = performance.now(), ticks = 0, lastScaleCheck = performance.now() + 3000, calibrationSteps = 0, bad = 0;   // skip shader warm-up
   const frameTimes: number[] = [];
+  let stepMs = 0;
   const trace: unknown[] = [];
   const g = window as unknown as { __game: object };
-  g.__game = { audio, rig, damage, trace, car, core, input, renderer, camera, scene, info: () => ({ pos: car.body.translation(), speed: car.out[OUT.speed], rpm: car.out[OUT.rpm], gear: car.out[OUT.gear] }) };
+  g.__game = { audio, rig, damage, trace, car, core, input, renderer, camera, scene, 
+    // Rapier cost per step + what it simulates (static city colliders have no body: never integrated)
+    physics: () => ({ stepMs, bodies: pw.world.bodies.len(), colliders: pw.world.colliders.len(),
+      list: pw.world.bodies.getAll().map((b) => `${b === car.body ? 'car' : 'debris'}:${b.isSleeping() ? 'asleep' : 'awake'}`).join(' ') }),
+    info: () => ({ pos: car.body.translation(), speed: car.out[OUT.speed], rpm: car.out[OUT.rpm], gear: car.out[OUT.gear] }) };
 
   if (import.meta.env.DEV) {
     const report = (msg: string) => fetch('/__telemetry', { method: 'POST', body: msg }).catch(() => {});
@@ -200,7 +205,9 @@ async function main() {
       prevPos.copy(physPos);
       prevQuat.copy(physQuat);
       car.tick(input.poll(), input.assists);
+      const t0 = performance.now();
       pw.world.step();
+      stepMs += (performance.now() - t0 - stepMs) * 0.01;   // Rapier cost per 240 Hz step, smoothed
       readBody(physPos, physQuat);
       // car acceleration for the camera spring, from the physics (low-passed ~25 ms)
       const v = car.body.linvel();

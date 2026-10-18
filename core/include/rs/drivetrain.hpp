@@ -11,6 +11,7 @@ struct DrivetrainInput {
     double throttle = 0, clutch = 0, brake = 0, handbrake = 0;
     int gear = 1;
     double engine_power_scale = 1.0;            // damage hook
+    double brake_power_scale = 1.0;             // damage hook: brake fade / failure (all brakes)
     std::array<double, 4> brake_scale{1, 1, 1, 1};   // ABS: fraction of driver brake pressure
     std::array<double, 4> extra_brake{};             // ESC: added brake torque, N m
 };

@@ -10,7 +10,7 @@ const url = process.argv[2] ?? 'http://127.0.0.1:5173/';
 const out = process.argv[3] ?? path.join(os.tmpdir(), 'drive');
 const scenario = process.argv[4] ?? 'straight';
 fs.mkdirSync(out, { recursive: true });
-const port = 9334;
+const port = Number(process.env.CDP_PORT ?? 9334);   // distinct ports let parallel runs coexist
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'chrome-webgpu-'));
 const chrome = spawn('google-chrome', [
   `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
@@ -85,6 +85,7 @@ try {
   await sleep(Number(process.env.SETTLE ?? 4000));
   console.log('idle  ', JSON.stringify(await evaluate(info)));
   if (process.env.PROBE) console.log('probe', await evaluate(fs.readFileSync(process.env.PROBE, 'utf8')));
+  if (process.env.PROBE) await shot('probe.png');
   if (scenario === 'bench') {
     await sleep(2000);
     const r = await evaluate(`new Promise((res) => { const ft = []; let p = performance.now(); const f = (t) => { ft.push(t - p); p = t; if (ft.length < 240) requestAnimationFrame(f); else res(ft); }; requestAnimationFrame(f); })`);
@@ -109,8 +110,70 @@ try {
     console.log('main-thread total', (total / 1000).toFixed(0), 'ms over 4 s');
     [...self.entries()].sort((a, b) => b[1] - a[1]).slice(0, 22).forEach(([k, v]) => console.log(((v / total) * 100).toFixed(1).padStart(5) + '%', k));
   }
+  const dmg = `(() => { const d = window.__game.core.damage(); return { kj: +d.totalKj.toFixed(1), last: +d.lastKj.toFixed(1), crush: d.crush.map(x => +x.toFixed(2)), engine: +d.engine.toFixed(2), wheel: d.wheel.map(x => +x.toFixed(2)), impacts: d.impacts, totaled: d.totaled,
+    smoulder: +d.smoulder.toFixed(2), fire: +d.fire.toFixed(3), brakes: +d.brakes.toFixed(2), noBrakes: d.brakesFailed, dents: window.__game.damage.dents.count,
+    warn: document.getElementById('warn').textContent }; })()`;
+  const phys = `JSON.stringify(window.__game.physics(), (k, v) => typeof v === 'number' ? +v.toFixed(3) : v)`;
+  if (scenario === 'crash' || scenario === 'damage') console.log('physics idle', await evaluate(phys));
+  if (scenario === 'damage') {
+    // Brake test on the open start straight: relaunch at 72 km/h, stand on the brake for 1 s.
+    await evaluate(`(() => { const g = window.__game, t = g.car.body.translation(), r = g.car.body.rotation();
+      window.__sp = { p: { x: t.x, y: t.y, z: t.z }, yaw: Math.atan2(2 * (r.w * r.y + r.x * r.z), 1 - 2 * (r.y * r.y + r.x * r.x)) }; return 1; })()`);
+    const brakeTest = async (what) => {
+      await evaluate(`(() => { const g = window.__game; g.input.hold = false; g.car.place(window.__sp.p, window.__sp.yaw, 20); return 1; })()`);
+      await sleep(300);
+      const v0 = (await evaluate(info)).kmh;
+      await key('keyDown', 'KeyS', 's'); await sleep(1000);
+      const v1 = (await evaluate(info)).kmh;
+      await key('keyUp', 'KeyS', 's');
+      console.log(`brake test (${what}): ${v0} km/h -> ${v1} km/h after 1 s on the brake`);
+      await sleep(3000);
+    };
+    // Reverse, then a wreck (still drives forward? headlights flicker? fire grows? brakes fade?), repair.
+    const lights = `window.__game.scene.getObjectsByProperty('isSpotLight', true).map(s => Math.round(s.intensity)).join('/')`;
+    await key('keyDown', 'KeyW', 'w'); await sleep(2500); await key('keyUp', 'KeyW', 'w');
+    console.log('W 2.5 s', JSON.stringify(await evaluate(info)));
+    await key('keyDown', 'KeyS', 's');
+    await sleep(1500);
+    console.log('S 1.5 s (stop)', JSON.stringify(await evaluate(info)));
+    await sleep(1500);
+    console.log('S 3 s (reverse)', JSON.stringify(await evaluate(info)));
+    await key('keyUp', 'KeyS', 's');
+    await key('keyDown', 'KeyW', 'w'); await sleep(2000);
+    console.log('W 2 s (brake from reverse, then 1st)', JSON.stringify(await evaluate(info)));
+    await key('keyUp', 'KeyW', 'w');
+    await key('keyDown', 'KeyS', 's'); await sleep(300); await key('keyUp', 'KeyS', 's');   // short: stop, no reverse
+    await sleep(1500);
+    // Wreck it: inject a 90 km/h frontal crash impulse at the nose (reproducible, no city geometry
+    // luck) -> engine wrecked, totaled, headlights flicker, smoulder -> fire -> brakes cook.
+    console.log('inject 90 km/h frontal', await evaluate(`(() => { const g = window.__game, t = g.car.body.translation(), r = g.car.body.rotation();
+      const q = { x: r.x, y: r.y, z: r.z, w: r.w }, f = [2 * (q.x * q.z + q.w * q.y), 2 * (q.y * q.z - q.w * q.x), 1 - 2 * (q.x * q.x + q.y * q.y)];
+      for (let i = 0; i < 3; i++) g.core.contact({ x: t.x + f[0] * 2.2, y: t.y + 0.1, z: t.z + f[2] * 2.2 }, g.core.info.mass * 25 / 3, 777);
+      const d = g.core.damage(); return JSON.stringify({ engine: d.engine, totaled: d.totaled, kj: Math.round(d.totalKj) }); })()`));
+    const flick = [];
+    for (let i = 0; i < 16; i++) { await sleep(150); flick.push(await evaluate(lights)); }
+    console.log('headlights after the hit (every 150 ms):', flick.join('  '));
+    await shot('dmg_0_wreck.png');
+    await key('keyDown', 'KeyW', 'w');
+    await sleep(4000);
+    console.log('W 4 s (totaled wreck must still drive forward)', JSON.stringify(await evaluate(info)));
+    await key('keyUp', 'KeyW', 'w');
+    for (let i = 0; i < 11; i++) {
+      await sleep(4000);
+      console.log(`t+${(i + 1) * 4}s`, JSON.stringify(await evaluate(dmg)), '| fireLight', await evaluate(`Math.round(window.__game.damage.fireLight.intensity)`), '|', (await evaluate(info)).perf);
+      if (i === 3) await shot('dmg_1_fire.png');
+      if (i === 8) await brakeTest('cooked brakes');
+    }
+    await shot('dmg_2_fire_big.png');
+    await key('keyDown', 'KeyR', 'r'); await key('keyUp', 'KeyR', 'r');
+    await sleep(800);
+    console.log('after R', JSON.stringify(await evaluate(dmg)), '| lights', await evaluate(lights), '| physics', await evaluate(phys));
+    await brakeTest('repaired');
+    await sleep(3000);
+    console.log('physics after repair (debris asleep/removed?)', await evaluate(phys));
+    if (process.env.PROBE) console.log('probe log', await evaluate('(window.__dlog || []).join(" || ")'));
+  }
   if (scenario === 'crash') {
-    const dmg = `(() => { const d = window.__game.core.damage(); return { kj: +d.totalKj.toFixed(1), last: +d.lastKj.toFixed(1), crush: d.crush.map(x => +x.toFixed(2)), engine: +d.engine.toFixed(2), wheel: d.wheel.map(x => +x.toFixed(2)), impacts: d.impacts, totaled: d.totaled }; })()`;
     await key('keyDown', 'KeyW', 'w');
     await sleep(4000);
     console.log('speed ', JSON.stringify(await evaluate(info)));

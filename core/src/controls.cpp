@@ -1,5 +1,6 @@
 #include "rs/controls.hpp"
 #include <cmath>
+#include <utility>
 
 namespace rs {
 
@@ -13,7 +14,10 @@ Controls::Controls(const CarConfig& cfg) : cfg_(cfg) {}
 
 void Controls::set_gear(int g) {
     int n = (int)cfg_.drivetrain.gear_ratios.size();
+    int prev = gear_;
     gear_ = g < 0 ? 0 : (g >= n ? n - 1 : g);
+    if (gear_ != 0) pedal_reverse_ = false;
+    if (gear_ != prev) reverse_timer_ = 0;
 }
 
 double Controls::max_steer_fraction(double v) const {
@@ -100,6 +104,22 @@ DriverInput Controls::update(const RawInput& raw, const VehicleOutput& last, dou
         }
         if (std::abs(v) < 1.0 && brake_ > 0.2) set_gear(2);   // stopped: back to first
     }
+    // ---- reverse by pedal (see ControlSettings): brake held at a standstill -> R, pedals swap;
+    // throttle held at a standstill while pedal-reversing -> 1st. Works with either gearbox; an
+    // explicit shift into R (manual) keeps the normal pedals.
+    if (s.pedal_reverse && !raw.shift_up && !raw.shift_down) {
+        const bool stopped = std::abs(v) < s.reverse_speed;
+        const double want = pedal_reverse_ ? throttle_ : brake_;   // the pedal that asks to switch
+        const double other = pedal_reverse_ ? brake_ : throttle_;
+        if (stopped && want > s.reverse_brake && other < 0.05) reverse_timer_ += dt;
+        else reverse_timer_ = 0;
+        if (reverse_timer_ > s.reverse_delay) {
+            bool to_reverse = !pedal_reverse_;
+            set_gear(to_reverse ? 0 : 2);
+            pedal_reverse_ = to_reverse;
+        }
+    }
+    if (pedal_reverse_) std::swap(in.throttle, in.brake);
     in.gear = gear_;
     return in;
 }

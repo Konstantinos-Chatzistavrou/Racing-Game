@@ -1,4 +1,5 @@
 #include "rs/damage.hpp"
+#include <algorithm>
 #include <cmath>
 
 namespace rs {
@@ -51,7 +52,28 @@ void DamageModel::add_contact(std::uint64_t id, const Vec3& pt, double impulse, 
     }
 }
 
-double DamageModel::engine_power_factor() const { return r_.totaled ? 0.0 : 1.0 - 0.7 * r_.engine; }
+// Limp-home floor instead of a dead engine: the car must never become immovable (game rule).
+double DamageModel::engine_power_factor() const { return std::max(p_.limp_power, 1.0 - 0.7 * r_.engine); }
+
+double DamageModel::severity() const {
+    return clamp(std::max(r_.engine, r_.total_energy_kj / p_.severity_kj), 0.0, 1.0);
+}
+
+void DamageModel::update(double dt) {
+    const double s = severity();
+    if (s >= p_.fire_severity) {
+        if (r_.fire <= 0) {                                   // smoke first, then it catches
+            r_.smoulder = std::min(1.0, r_.smoulder + dt / p_.smoulder_s);
+            if (r_.smoulder >= 1.0) r_.fire = 1e-3;
+        } else {
+            r_.fire = std::min(1.0, r_.fire + dt / p_.fire_grow_s);
+        }
+    }
+    double rate = std::max(0.0, s - p_.fade_severity) / (1.0 - p_.fade_severity) / p_.fade_damage_s + r_.fire / p_.fade_fire_s;
+    brake_wear_ = std::min(1.0, brake_wear_ + rate * dt);
+    r_.brakes_failed = brake_wear_ >= 1.0;
+    r_.brakes = r_.brakes_failed ? 0.0 : 1.0 - 0.7 * brake_wear_;
+}
 
 double DamageModel::drag_factor() const {
     double avg = 0;

@@ -20,7 +20,14 @@ export class PhysicsWorld {
 
   constructor() { this.world.timestep = DT; }
 
-  /** Static trimesh from a mesh already placed in the world (uses its world matrix). */
+  /**
+   * Static trimesh from a mesh already placed in the world (uses its world matrix). Created with NO
+   * parent body: Rapier treats such colliders as fixed (never integrated, no solver islands, never
+   * paired with other fixed colliders), same as a fixed body. Measured (drive.mjs crash/damage):
+   * world.step() = ~0.08-0.12 ms with the 42 city colliders and the car awake; +~0.1 ms while debris
+   * tumbles, back to the baseline once it sleeps (debris uses Rapier's default canSleep = true; the
+   * player car is kept awake on purpose: it is driven every tick).
+   */
   addStaticMesh(mesh: THREE.Mesh, surface: number) {
     mesh.updateWorldMatrix(true, false);
     const g = mesh.geometry;
@@ -38,13 +45,17 @@ export class PhysicsWorld {
 
   surface(c: RAPIER.Collider): number { return this.surfaceOf.get(c.handle) ?? 0; }
 
-  /** First hit along a segment, ignoring one body (the car itself). */
+  /**
+   * First hit along a segment, ignoring one body (the car itself). Only colliders the CAR collides
+   * with count (groups = GROUP_CAR): a bumper that broke off and lies in front of a wheel is not
+   * road (wheel rays used to land on debris and kick the car sideways).
+   */
   raycast(from: THREE.Vector3, to: THREE.Vector3, exclude?: RAPIER.RigidBody) {
     const d = to.clone().sub(from);
     const len = d.length();
     if (len < 1e-6) return null;
     d.divideScalar(len);
-    const hit = this.world.castRayAndGetNormal(new RAPIER.Ray(from, d), len, true, undefined, undefined, undefined, exclude);
+    const hit = this.world.castRayAndGetNormal(new RAPIER.Ray(from, d), len, true, undefined, GROUP_CAR, undefined, exclude);
     if (!hit) return null;
     return { toi: hit.timeOfImpact, normal: hit.normal, collider: hit.collider };
   }
@@ -94,7 +105,8 @@ export class CarBody {
     const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(q).multiplyScalar(speed);
     this.body.setLinvel(fwd, true);
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
-    this.core.resetMotion(speed, speed > 0 ? 3 : -1);
+    // gear: 2nd when launched rolling, else 1st (also clears a pedal-engaged reverse on respawn)
+    this.core.resetMotion(speed, speed > 0 ? 3 : 2);
     this.hasPrev = false;
   }
 
