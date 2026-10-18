@@ -10,7 +10,7 @@ const url = process.argv[2] ?? 'http://127.0.0.1:5173/';
 const out = process.argv[3] ?? path.join(os.tmpdir(), 'drive');
 const scenario = process.argv[4] ?? 'straight';
 fs.mkdirSync(out, { recursive: true });
-const port = 9334;
+const port = Number(process.env.CDP_PORT ?? 9334);   // CDP_PORT: several tests side by side
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'chrome-webgpu-'));
 const chrome = spawn('google-chrome', [
   `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
