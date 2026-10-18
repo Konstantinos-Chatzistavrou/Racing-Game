@@ -1,5 +1,5 @@
 // Night Run (web build): three.js WebGPU renderer + Rapier rigid bodies + the rs_core physics
-// compiled to WebAssembly. WebGPU required. URL options: ?scale=0.75 (render resolution), ?webgl=1 (debug only),
+// compiled to WebAssembly. WebGPU required. URL options: ?scale=0.75 (pins the render resolution; default adaptive), ?webgl=1 (debug only),
 // ?bloom=0, ?aa=0, ?shadows=0, ?lights=12 (WebGL 2 light pool size), ?mp=1 or ?mp=ws://host:port (multiplayer, see net.ts).
 import * as THREE from 'three/webgpu';
 import { Post } from './post';
@@ -127,7 +127,7 @@ async function main() {
 
   const pos = new THREE.Vector3(), quat = new THREE.Quaternion();
   const input = new Input();
-  const rig = new CameraRig(camera, pw, car.body);
+  const rig = new CameraRig(camera, pw, car.body, core.info.redline);
   const hud = new Hud();
   const audio = new GameAudio();
   const damage = new DamageVisuals(visual, visualCfg, pw, scene);
@@ -165,14 +165,18 @@ async function main() {
   await renderer.compileAsync(scene, camera);
   net?.warmup(false);
   hud.show();
-  const setExtra = () => (hud.extra = `${backend} · ${renderer.domElement.width}×${renderer.domElement.height} · ${cityLights.mode}`
+  const setExtra = () => (hud.extra = `${backend} · ${renderer.domElement.width}×${renderer.domElement.height} · scale ${+scale.toFixed(2)}${adaptive ? '' : ' (pinned)'} · ${cityLights.mode}`
     + (net ? ` · ${net.status}` : ''));
   setExtra();
   if (net) net.onChange = setExtra;
 
   // --- loop: fixed 240 Hz physics, render every frame -----------------------------------------
-  let acc = 0, prev = performance.now(), ticks = 0, lastScaleCheck = performance.now() + 3000, calibrationSteps = 0, bad = 0;   // skip shader warm-up
+  let acc = 0, prev = performance.now(), ticks = 0;
   const frameTimes: number[] = [];
+  // adaptive resolution state (see the end of the loop)
+  const WINDOW = 2000, FPS_LOW = 40, FPS_HIGH = 55, CONFIRM = 2, STEP = 0.1, MIN_SCALE = 0.5;
+  let winStart = performance.now() + 3000;   // skip shader warm-up
+  let calibration = 3, lowRun = 0, highRun = 0, lastUp = -Infinity, lastDown = -Infinity, upCooldown = 10000;
   const trace: unknown[] = [];
   const g = window as unknown as { __game: object };
   g.__game = { audio, rig, damage, trace, car, core, input, renderer, camera, scene, info: () => ({ pos: car.body.translation(), speed: car.out[OUT.speed], rpm: car.out[OUT.rpm], gear: car.out[OUT.gear] }) };
@@ -239,28 +243,48 @@ async function main() {
     post.render();
     lap = race.update(raceCar, car.body.translation(), ticks * DT - raceT0);
     hud.update(now, frame, car.out, core.info, input.assists, damage.last, lap);
-    // Adaptive resolution driven by FRAME PACING, not average fps ("34 fps" was frames alternating
-    // 33/50+ ms = stutter). A resize reallocates render targets and froze the game 300-700 ms, so:
-    // calibrate at the start (car held on the brake), at most 3 steps, then LOCK. After that only a
-    // sustained collapse (> 30 % missed for 3 windows) steps down again; never up mid-drive.
-    frameTimes.push(frame * 1000);
-    if (adaptive && now - lastScaleCheck > 1500) {
-      lastScaleCheck = now;
-      const missed = frameTimes.filter((t) => t > 22).length / Math.max(1, frameTimes.length);
+    // Adaptive resolution: every 2 s, average fps over the window. A resize reallocates every
+    // render target and froze the game 300-700 ms, and pacing (missed frames) is what reads as
+    // stutter, so changes are rare and deliberate:
+    // - calibration (first 3 windows, car held on the brake at the start): one window < 40 fps
+    //   is enough to step down, so the hitches happen before the player drives;
+    // - then < 40 fps for 2 consecutive windows -> -0.1 (min 0.5);
+    // - "stably" > 55 fps (2 consecutive windows, and 90 % of frames under 22 ms) -> +0.1, at most
+    //   one step up per 10 s and never above maxScale. If a step up is followed by a step down
+    //   within 20 s it was too much: the up cooldown doubles (10 -> 20 -> 40 -> 80 s), so the
+    //   game cannot oscillate between two scales and freeze every few seconds;
+    // - after any resize the next window starts 1 s later and the counters reset, so the resize
+    //   hitch itself is never measured.
+    // ?scale=x pins the resolution (adaptive off).
+    if (now >= winStart) frameTimes.push(frame * 1000);
+    if (adaptive && now - winStart >= WINDOW) {
+      const fps = (frameTimes.length * 1000) / (now - winStart);
+      const sorted = frameTimes.slice().sort((a, b) => a - b);
+      const p90 = sorted[Math.floor(sorted.length * 0.9)] ?? 0;
       frameTimes.length = 0;
+      winStart = now;
+      lowRun = fps < FPS_LOW ? lowRun + 1 : 0;
+      highRun = fps > FPS_HIGH && p90 < 22 ? highRun + 1 : 0;
       let next = scale;
-      if (calibrationSteps < 3) {
-        if (missed > 0.08) { next = Math.max(0.5, scale - 0.1); calibrationSteps++; }
-        else calibrationSteps = 3;                                   // smooth: lock here
-      } else {
-        bad = missed > 0.3 ? bad + 1 : 0;
-        if (bad >= 3) { next = Math.max(0.5, scale - 0.1); bad = 0; }
+      if (calibration > 0) {
+        calibration--;
+        if (lowRun > 0) next = scale - STEP;
+        else calibration = 0;                                        // fine already: stop calibrating
+      } else if (lowRun >= CONFIRM) {
+        next = scale - STEP;
+      } else if (highRun >= CONFIRM && now - lastUp >= upCooldown && now - lastDown >= upCooldown) {
+        next = scale + STEP;
       }
+      next = Math.min(maxScale, Math.max(MIN_SCALE, Math.round(next * 10) / 10));
       if (Math.abs(next - scale) > 1e-6) {
-        scale = Math.round(next * 10) / 10;
+        if (next < scale) {
+          if (now - lastUp < 20000) upCooldown = Math.min(80000, upCooldown * 2);
+          lastDown = now;
+        } else lastUp = now;
+        scale = next;
         renderer.setPixelRatio(baseRatio * scale);
-        frameTimes.length = 0;
-        lastScaleCheck = now + 1000;                                 // let the resize hitch pass
+        lowRun = highRun = 0;
+        winStart = now + 1000;                                       // let the resize hitch pass
         setExtra();
       }
     }
