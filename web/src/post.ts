@@ -17,7 +17,7 @@
 // changes which pipeline renders: no material, light set or pipeline changes, no recompiles, no
 // render-target resizes of the scene. Measured: switching costs no frame over the normal budget.
 import * as THREE from 'three/webgpu';
-import { Fn, clamp, convertToTexture, float, int, log, max, min, pass, positionView, renderOutput, screenUV, textureSize, uniform, uv, vec2, vec3, vec4 } from 'three/tsl';
+import { Fn, clamp, float, int, log, max, min, pass, positionView, renderOutput, rtt, screenUV, textureSize, uniform, uv, vec2, vec3, vec4 } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import * as SMAAModule from 'three/addons/tsl/display/SMAANode.js';
 import { fxaa } from 'three/addons/tsl/display/FXAANode.js';
@@ -50,6 +50,12 @@ const SMAANode = (SMAAModule as unknown as { default: new (t: THREE.Node) => SMA
 /** SMAA that sizes its targets from the render scale (stock SMAANode uses the full drawing buffer). */
 class ScaledSMAA extends SMAANode {
   scale = 1;
+  constructor(t: THREE.Node) {
+    super(t);
+    // display-referred 0..1 data (as in the SMAA reference): 8 bit, half the bandwidth of half-float
+    const self = this as unknown as Record<string, THREE.RenderTarget>;
+    for (const k of ['_renderTargetEdges', '_renderTargetWeights', '_renderTargetBlend']) self[k].texture.type = THREE.UnsignedByteType;
+  }
   setSize(width: number, height: number) { super.setSize(Math.max(1, Math.floor(width * this.scale)), Math.max(1, Math.floor(height * this.scale))); }
 }
 
@@ -109,6 +115,9 @@ function casUpscale(src: THREE.TextureNode, sharpness: THREE.UniformNode<'float'
   })();
 }
 
+/** Render-to-texture in 8 bit: everything after the tone map is display-referred (0..1, sRGB). */
+const rtt8 = (n: THREE.Node) => rtt(n, null, null, { type: THREE.UnsignedByteType }) as unknown as THREE.RTTNode;
+
 export class Post {
   private scenePass: THREE.PassNode;
   private pipelines = new Map<PresetName, THREE.RenderPipeline>();
@@ -132,7 +141,7 @@ export class Post {
         lit = color.add(b);
       }
       // display-referred image at the render size (AA and the sharpening limiter expect 0..1)
-      const toned = convertToTexture(renderOutput(lit)) as unknown as THREE.RTTNode;
+      const toned = rtt8(renderOutput(lit));
       this.scaled.push(toned);
       let src: THREE.TextureNode = toned;
       const aa = opts.aa ? pr.aa : 'none';
@@ -141,7 +150,7 @@ export class Post {
         this.smaas.push(s);
         src = s.getTextureNode();
       } else if (aa === 'fxaa') {
-        const fx = convertToTexture(fxaa(toned)) as unknown as THREE.RTTNode;
+        const fx = rtt8(fxaa(toned));
         this.scaled.push(fx);
         src = fx;
       }

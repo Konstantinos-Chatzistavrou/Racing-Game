@@ -153,6 +153,7 @@ async function main() {
   const rig = new CameraRig(camera, pw, car.body, core.info.redline);
   const hud = new Hud();
   const audio = new GameAudio();
+  audio.prepare();   // the audio device opens now (behind the loading screen), not on the first key press
   const damage = new DamageVisuals(visual, visualCfg, pw, scene);
   damage.onImpact = (kj, glass) => audio.impact(kj, glass);
   input.onAnyInput = () => audio.unlock();
@@ -225,6 +226,16 @@ async function main() {
     post.warmup();
   }
   ai.reset();
+  {
+    // compileAsync builds pipelines, but an object's GPU buffers, bind groups and textures are only
+    // created the first time it is actually DRAWN. City blocks coming into view therefore stalled
+    // the first second of driving (one 200-280 ms frame ~0.8 s after the start, every run, no new
+    // pipeline). Draw everything once with frustum culling off, behind the loading screen.
+    const culled: THREE.Object3D[] = [];
+    scene.traverse((o) => { if (o.frustumCulled && (o as THREE.Mesh).isMesh) { o.frustumCulled = false; culled.push(o); } });
+    post.render();
+    for (const o of culled) o.frustumCulled = true;
+  }
   const pipelinesAtStart = (renderer as unknown as { _pipelines: { caches: Map<string, unknown> } })._pipelines.caches.size;
   hud.show();
   const setExtra = () => (hud.extra = `${backend} · ${Math.floor(renderer.domElement.width * scale)}×${Math.floor(renderer.domElement.height * scale)}`

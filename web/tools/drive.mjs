@@ -112,7 +112,8 @@ try {
       requestAnimationFrame(f); return be.trackTimestamp; })()`).then((t) => console.log('gpu timestamps', t));
     const stats = `(() => { const S = window.__perf, q = (a, p) => a.length ? a[Math.min(a.length - 1, Math.floor(p * a.length))].toFixed(1) : '-';
       const ft = S.ft.slice(3).sort((x, y) => x - y), gp = S.gpu.slice(3).sort((x, y) => x - y), c = S.calls.slice().sort((x, y) => x - y), tr = S.tris.slice().sort((x, y) => x - y);
-      const r = 'frames ' + ft.length + '  frame median ' + q(ft, 0.5) + ' p95 ' + q(ft, 0.95) + ' max ' + q(ft, 1) + ' ms | GPU median ' + q(gp, 0.5) + ' p95 ' + q(gp, 0.95) + ' ms (' + gp.length + ') | draws ' + q(c, 0.5) + ' tris ' + (+q(tr, 0.5) / 1000).toFixed(0) + 'k';
+      const r = 'frames ' + ft.length + '  frame median ' + q(ft, 0.5) + ' p95 ' + q(ft, 0.95) + ' max ' + q(ft, 1) + ' ms | GPU median ' + q(gp, 0.5) + ' p95 ' + q(gp, 0.95) + ' ms (' + gp.length + ') | draws ' + q(c, 0.5) + ' tris ' + (+q(tr, 0.5) / 1000).toFixed(0) + 'k'
+        + '  >100ms at s: ' + (() => { let t = 0; return S.ft.map((x) => { t += x; return x > 100 ? (t / 1000).toFixed(1) + '(' + Math.round(x) + ')' : ''; }).filter(Boolean).join(' '); })();
       S.ft.length = S.gpu.length = S.calls.length = S.tris.length = 0; return r; })()`;
     await evaluate(`(window.__perf.on = true, 1)`);
     await sleep(4000);
@@ -177,11 +178,12 @@ try {
     console.log('pipelines created after loading:', (await evaluate(pipes)) - p0, `(${p0} at start)`);
   }
   if (scenario === 'profile') {
-    await key('keyDown', 'KeyW', 'w');
-    await sleep(1500);
+    // PROFILE_EARLY=1: profile from the throttle press (the first second of driving)
+    if (!process.env.PROFILE_EARLY) { await key('keyDown', 'KeyW', 'w'); await sleep(1500); }
     await send('Profiler.enable');
     await send('Profiler.setSamplingInterval', { interval: 200 });
     await send('Profiler.start');
+    if (process.env.PROFILE_EARLY) await key('keyDown', 'KeyW', 'w');
     await sleep(4000);
     const { profile } = await send('Profiler.stop');
     await key('keyUp', 'KeyW', 'w');
