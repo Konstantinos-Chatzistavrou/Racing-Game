@@ -10,6 +10,8 @@ export class Input {
   private padPrev: boolean[] = [];
   /** After a spawn the car is held on the brake until the first throttle input (start on a hill). */
   hold = true;
+  /** Keeps the hold on (throttle ignored) while the renderer calibrates its resolution. */
+  locked = false;
   touch: TouchControls | null = null;
   private source: 'keys' | 'pad' | 'touch' = 'keys';
   onAnyInput = () => {};
@@ -77,8 +79,8 @@ export class Input {
       r.clutch = k('ShiftLeft') || k('ShiftRight') ? 1 : 0;
     }
     if (this.hold) {
-      if (r.throttle > 0.05) this.hold = false;
-      else r.brake = Math.max(r.brake, 0.5);
+      if (r.throttle > 0.05 && !this.locked) this.hold = false;
+      else { r.throttle = 0; r.brake = Math.max(r.brake, 0.5); }
     }
     r.shiftUp = this.pending.up;
     r.shiftDown = this.pending.down;

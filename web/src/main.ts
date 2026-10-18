@@ -45,7 +45,11 @@ async function main() {
   const adaptive = !params.has('scale');   // ?scale=x pins the resolution
   const maxScale = 1;
   // Start near ~0.9 megapixels rendered (1.07 MP measured too heavy on the laptop iGPU at 60 Hz).
-  let scale = params.has('scale') ? num('scale', 1)
+  // The scale settled on last time on this device (a calibration costs a resize hitch per step).
+  const SCALE_KEY = `nr.scale.${innerWidth}x${innerHeight}`;
+  let stored = NaN;
+  try { stored = Number(localStorage.getItem(SCALE_KEY) ?? NaN); } catch { /* storage blocked */ }
+  let scale = params.has('scale') ? num('scale', 1) : stored >= 0.5 && stored <= maxScale ? stored
     : Math.min(maxScale, Math.max(0.5, Math.round(Math.sqrt(0.9e6 / (innerWidth * innerHeight * Math.min(devicePixelRatio, 1) ** 2)) * 10) / 10));
   renderer.setPixelRatio(baseRatio * scale);
   renderer.setSize(innerWidth, innerHeight);
@@ -188,7 +192,7 @@ async function main() {
   }
   hud.show();
   const setExtra = () => (hud.extra = `${backend} · ${renderer.domElement.width}×${renderer.domElement.height} · scale ${+scale.toFixed(2)}${adaptive ? '' : ' (pinned)'} · ${cityLights.mode}`
-    + (net ? ` · ${net.status}` : ''));
+    + (net ? ` · ${net.status}` : '') + (input.locked ? ' · calibrating…' : ''));
   setExtra();
   if (net) net.onChange = setExtra;
 
@@ -196,9 +200,11 @@ async function main() {
   let acc = 0, prev = performance.now(), ticks = 0;
   const frameTimes: number[] = [];
   // adaptive resolution state (see the end of the loop)
-  const WINDOW = 2000, FPS_LOW = 40, FPS_HIGH = 55, CONFIRM = 2, STEP = 0.1, MIN_SCALE = 0.5;
+  const WINDOW = 2000, FPS_LOW = 40, FPS_FLOOR = 30, FPS_HIGH = 55, CONFIRM = 2, CONFIRM_DOWN = 3, STEP = 0.1, MIN_SCALE = 0.5;
   let winStart = performance.now() + 3000;   // skip shader warm-up
-  let calibration = 3, lowRun = 0, highRun = 0, lastUp = -Infinity, lastDown = -Infinity, upCooldown = 10000;
+  let calibrating = adaptive, calSteps = Number.isNaN(stored) ? 3 : 1, lowRun = 0, highRun = 0, lastUp = -Infinity, lastDown = -Infinity, upCooldown = 10000;
+  input.locked = adaptive;
+  setExtra();
   let stepMs = 0;
   const trace: unknown[] = [];
   const g = window as unknown as { __game: object };
@@ -277,36 +283,43 @@ async function main() {
     // Adaptive resolution: every 2 s, average fps over the window. A resize reallocates every
     // render target and froze the game 300-700 ms, and pacing (missed frames) is what reads as
     // stutter, so changes are rare and deliberate:
-    // - calibration (first 3 windows, car held on the brake at the start): one window < 40 fps
-    //   is enough to step down, so the hitches happen before the player drives;
-    // - then < 40 fps for 2 consecutive windows -> -0.1 (min 0.5);
+    // - calibration (up to 3 windows of 1 s; 1 window when a scale is stored from a previous
+    //   session): the car is LOCKED on the brake (input.locked, HUD "calibrating…") and one window
+    //   < 40 fps is enough to step down, so the hitches happen before the player can drive;
+    //   the settled scale is stored per window size, so later sessions start there;
+    // - while driving, only a real collapse steps down: < 30 fps for 3 consecutive windows -> -0.1
+    //   (min 0.5). Driving costs more than the parked calibration view, and on the laptop iGPU it runs
+    //   33-39 fps at the calibrated scale: a 40 fps rule there froze the game ~0.7 s per step mid-drive
+    //   and walked the resolution down to 0.5 (the user accepts ~30 fps for image quality);
     // - "stably" > 55 fps (2 consecutive windows, and 90 % of frames under 22 ms) -> +0.1, at most
-    //   one step up per 10 s and never above maxScale. If a step up is followed by a step down
+    //   one step up per 10 s, only while the car is stopped, never above maxScale. If a step up is followed by a step down
     //   within 20 s it was too much: the up cooldown doubles (10 -> 20 -> 40 -> 80 s), so the
     //   game cannot oscillate between two scales and freeze every few seconds;
     // - after any resize the next window starts 1 s later and the counters reset, so the resize
     //   hitch itself is never measured.
     // ?scale=x pins the resolution (adaptive off).
     if (now >= winStart) frameTimes.push(frame * 1000);
-    if (adaptive && now - winStart >= WINDOW) {
+    if (adaptive && now - winStart >= (calibrating ? WINDOW / 2 : WINDOW)) {
       const fps = (frameTimes.length * 1000) / (now - winStart);
       const sorted = frameTimes.slice().sort((a, b) => a - b);
       const p90 = sorted[Math.floor(sorted.length * 0.9)] ?? 0;
       frameTimes.length = 0;
       winStart = now;
-      lowRun = fps < FPS_LOW ? lowRun + 1 : 0;
+      lowRun = fps < (calibrating ? FPS_LOW : FPS_FLOOR) ? lowRun + 1 : 0;
       highRun = fps > FPS_HIGH && p90 < 22 ? highRun + 1 : 0;
       let next = scale;
-      if (calibration > 0) {
-        calibration--;
-        if (lowRun > 0) next = scale - STEP;
-        else calibration = 0;                                        // fine already: stop calibrating
-      } else if (lowRun >= CONFIRM) {
+      if (calibrating) {
+        // stays locked until a window WITHOUT a resize, so the last resize hitch is never driven through
+        if (lowRun > 0 && calSteps > 0 && scale > MIN_SCALE) { next = scale - STEP; calSteps--; }
+        else calibrating = false;
+      } else if (lowRun >= CONFIRM_DOWN) {
         next = scale - STEP;
-      } else if (highRun >= CONFIRM && now - lastUp >= upCooldown && now - lastDown >= upCooldown) {
+      } else if (highRun >= CONFIRM && now - lastUp >= upCooldown && now - lastDown >= upCooldown
+        && Math.abs(car.out[OUT.speed]) < 1) {                       // step up only when stopped: no hitch mid-drive
         next = scale + STEP;
       }
       next = Math.min(maxScale, Math.max(MIN_SCALE, Math.round(next * 10) / 10));
+      if (input.locked !== calibrating) { input.locked = calibrating; setExtra(); }
       if (Math.abs(next - scale) > 1e-6) {
         if (next < scale) {
           if (now - lastUp < 20000) upCooldown = Math.min(80000, upCooldown * 2);
@@ -314,6 +327,7 @@ async function main() {
         } else lastUp = now;
         scale = next;
         renderer.setPixelRatio(baseRatio * scale);
+        try { localStorage.setItem(SCALE_KEY, String(scale)); } catch { /* storage blocked */ }
         lowRun = highRun = 0;
         winStart = now + 1000;                                       // let the resize hitch pass
         setExtra();

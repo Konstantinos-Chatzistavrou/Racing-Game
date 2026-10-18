@@ -142,3 +142,11 @@ Real-phone frame rates are NOT measured yet (emulation runs on this laptop's GPU
 - Test: `drive.mjs <url> <out> night` parks the AI cars in front (11 m behind-on, 20 m side-on,
   32 m facing), screenshots headlights on/off, then drives among them. Pin `?scale=` when measuring:
   the adaptive-resolution resize (300-700 ms) is what showed up as "hitches" in unpinned runs.
+
+### Adaptive resolution after the merge (2026-10-18)
+Measured on the laptop iGPU: the 40 fps rule stepped the scale down 4 times during a 7 s drive
+(1.0 -> 0.6), each resize freezing the game 0.5-1 s. Now the car is locked on the brake while it
+calibrates (1 s windows, HUD "calibrating…", 40 fps threshold) and stays locked until a window
+without a resize. The settled scale is stored in localStorage per window size, so later sessions
+start there with one check. While driving only < 30 fps for 3 windows steps down, and steps up only
+happen while stopped. Result: all hitches before the start, no driving frame over 60 ms at scale 0.7.
