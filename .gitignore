@@ -18,6 +18,7 @@
 /game/bin/
 *.unwrap_cache
 /web/node_modules/
+/server/node_modules/
 /web/dist/
 
 # Local tooling

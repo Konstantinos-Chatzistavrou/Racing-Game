@@ -24,11 +24,32 @@ The compiled physics (`web/src/physics/rs_core.wasm`) is checked in. To rebuild 
 `core/`, install [Emscripten](https://emscripten.org/docs/getting_started/downloads.html) to `~/emsdk`
 and run `npm run wasm`.
 
+## Multiplayer (optional)
+
+A minimal relay in `server/` (Express + ws) forwards each player's car pose to the others. No
+authority or collisions between players yet: you see the other cars, they pass through you.
+
+```bash
+cd server
+npm i
+npm start            # ws://localhost:8787, health check at http://localhost:8787/health (PORT env to change)
+npm test             # starts the server and checks welcome / state relay / validation / leave with two clients
+```
+
+Then open the game with `?mp=1` (relay on the page's host, port 8787) or `?mp=ws://host:port`.
+Without `?mp` the game is single-player and opens no connection. The HUD's second line shows
+`online · N players`.
+
+Hosting: the Vercel deployment serves only the static game. The relay needs a long-lived process:
+Vercel Functions can accept WebSockets through `ws` with Fluid Compute, or run `server/` on
+Render or Fly.io. A page served over HTTPS must use `wss://`.
+
 ## Layout
 
 | Path | What |
 |---|---|
 | `core/` | C++17 physics + game logic (tyres, drivetrain, assists, damage, AI, race rules), no engine deps, with tests |
+| `server/` | Optional multiplayer relay (Node, Express + ws) |
 | `web/` | Browser game: three.js WebGPU renderer, Rapier rigid bodies, WASM bridge (`web/wasm/bridge.cpp`) |
 | `data/` | Car and track data (JSON, engine-neutral) |
 | `game/` | Godot 4.7 build (reference) and the exported glTF assets the web build uses |
