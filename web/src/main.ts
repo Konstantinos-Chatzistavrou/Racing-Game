@@ -1,8 +1,8 @@
 // Night Run (web build): three.js WebGPU renderer + Rapier rigid bodies + the rs_core physics
 // compiled to WebAssembly. WebGPU required. URL options: ?scale=0.75 (render resolution), ?webgl=1 (debug only),
-// ?quality=high|low (default: high on desktop, low on touch devices), ?bloom=0, ?aa=0, ?shadows=0, ?lights=12 (WebGL 2 light pool size).
+// ?bloom=0, ?aa=0, ?shadows=0, ?lights=12 (WebGL 2 light pool size).
 import * as THREE from 'three/webgpu';
-import { Post, type Quality } from './post';
+import { Post } from './post';
 import { ClusteredLighting } from 'three/addons/lighting/ClusteredLighting.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { CoreCar, CoreRace, OUT, loadCore, type LapInfo } from './physics/core';
@@ -39,8 +39,11 @@ async function main() {
   const canvas = document.getElementById('view') as HTMLCanvasElement;
   const renderer = new THREE.WebGPURenderer({ canvas, antialias: false, forceWebGL });
   const baseRatio = Math.min(devicePixelRatio, 1);
-  let scale = num('scale', 1);
   const adaptive = !params.has('scale');   // ?scale=x pins the resolution
+  const maxScale = 1;
+  // Start near ~0.9 megapixels rendered (1.07 MP measured too heavy on the laptop iGPU at 60 Hz).
+  let scale = params.has('scale') ? num('scale', 1)
+    : Math.min(maxScale, Math.max(0.5, Math.round(Math.sqrt(0.9e6 / (innerWidth * innerHeight * Math.min(devicePixelRatio, 1) ** 2)) * 10) / 10));
   renderer.setPixelRatio(baseRatio * scale);
   renderer.setSize(innerWidth, innerHeight);
   renderer.toneMapping = THREE.AgXToneMapping;
@@ -150,18 +153,18 @@ async function main() {
   input.onHud = () => hud.toggle();
 
   // --- post-processing ------------------------------------------------------------------------
-  const quality: Quality = params.get('quality') === 'low' || (params.get('quality') !== 'high' && !!input.touch) ? 'low' : 'high';
-  const post = new Post(renderer, scene, camera, { quality, bloom: params.get('bloom') !== '0', aa: params.get('aa') !== '0' });
+  const post = new Post(renderer, scene, camera, { bloom: params.get('bloom') !== '0', aa: params.get('aa') !== '0' });
 
-  rig.update(1, pos.copy(car.body.translation() as THREE.Vector3), quat.copy(car.body.rotation() as THREE.Quaternion), new THREE.Vector3(), car.out, core.info.redline);
+  rig.update(1, pos.copy(car.body.translation() as THREE.Vector3), quat.copy(car.body.rotation() as THREE.Quaternion), new THREE.Vector3(), car.out);
   cityLights.update(1, camera);
   say('Compiling shaders…');
   await renderer.compileAsync(scene, camera);
   hud.show();
-  hud.extra = `${backend} · ${quality} · ${renderer.domElement.width}×${renderer.domElement.height} · ${cityLights.mode}`;
+  hud.extra = `${backend} · ${renderer.domElement.width}×${renderer.domElement.height} · ${cityLights.mode}`;
 
   // --- loop: fixed 240 Hz physics, render every frame -----------------------------------------
-  let acc = 0, prev = performance.now(), ticks = 0, lastScaleCheck = performance.now() + 4000;   // skip shader warm-up
+  let acc = 0, prev = performance.now(), ticks = 0, lastScaleCheck = performance.now() + 3000, calibrationSteps = 0, bad = 0;   // skip shader warm-up
+  const frameTimes: number[] = [];
   const trace: unknown[] = [];
   const g = window as unknown as { __game: object };
   g.__game = { audio, rig, damage, trace, car, core, input, renderer, camera, scene, info: () => ({ pos: car.body.translation(), speed: car.out[OUT.speed], rpm: car.out[OUT.rpm], gear: car.out[OUT.gear] }) };
@@ -172,6 +175,21 @@ async function main() {
     setInterval(() => report(`${document.getElementById('perf')!.textContent!.replace('\n', ' | ')} | ${Math.round(Math.abs(car.out[OUT.speed]) * 3.6)} km/h`), 2000);
   }
 
+  // Render interpolation: the car is drawn between the last two physics states (alpha = leftover
+  // time / tick). Without it the drawn position snaps to whole 240 Hz ticks and the number of ticks
+  // per frame varies, which reads as judder at 30 fps (up to ~17 cm per frame at 140 km/h).
+  const prevPos = new THREE.Vector3(), prevQuat = new THREE.Quaternion();
+  const physPos = new THREE.Vector3(), physQuat = new THREE.Quaternion();
+  const carAcc = new THREE.Vector3(), lastVel = new THREE.Vector3();
+  const readBody = (p: THREE.Vector3, q: THREE.Quaternion) => {
+    const t = car.body.translation(), r = car.body.rotation();
+    p.set(t.x, t.y, t.z);
+    q.set(r.x, r.y, r.z, r.w);
+  };
+  readBody(physPos, physQuat);
+  prevPos.copy(physPos);
+  prevQuat.copy(physQuat);
+
   renderer.setAnimationLoop(() => {
     const now = performance.now();
     const frame = Math.min(0.1, (now - prev) / 1000);
@@ -179,9 +197,17 @@ async function main() {
     acc += frame;
     let steps = 0;
     while (acc >= DT && steps < 24) {
+      prevPos.copy(physPos);
+      prevQuat.copy(physQuat);
       car.tick(input.poll(), input.assists);
       pw.world.step();
-      ticks++;   // simulation clock (race timing): every tick, not just while tracing
+      readBody(physPos, physQuat);
+      // car acceleration for the camera spring, from the physics (low-passed ~25 ms)
+      const v = car.body.linvel();
+      const a = new THREE.Vector3(v.x - lastVel.x, v.y - lastVel.y, v.z - lastVel.z).divideScalar(DT);
+      lastVel.set(v.x, v.y, v.z);
+      carAcc.lerp(a.clampLength(0, 60), 1 - Math.exp(-DT / 0.025));
+      ticks++;   // simulation clock (race timing)
       if (trace.length < 300 && ticks % 4 === 0) {
         const r = car.body.rotation(), t = car.body.translation(), o = car.out;
         trace.push([ticks, +(Math.atan2(2 * (r.w * r.y + r.x * r.z), 1 - 2 * (r.y * r.y + r.x * r.x)) * 57.2958).toFixed(2), +t.y.toFixed(3),
@@ -191,28 +217,42 @@ async function main() {
       steps++;
     }
     if (steps === 24) acc = 0;   // too slow to keep up: drop time rather than spiral
-    const t = car.body.translation(), r = car.body.rotation();
-    pos.set(t.x, t.y, t.z);
-    quat.set(r.x, r.y, r.z, r.w);
+    const alpha = Math.min(1, acc / DT);
+    pos.lerpVectors(prevPos, physPos, alpha);
+    quat.slerpQuaternions(prevQuat, physQuat, alpha);
     const lv = car.body.linvel();
     visual.velocity.set(lv.x, lv.y, lv.z);
-    visual.update(pos, quat, car.out);
+    visual.update(pos, quat, car.out, physPos, physQuat);
     damage.update(frame, () => core.damage());
     audio.update(car.out, car.out[OUT.speed]);
-    rig.update(frame, pos, quat, visual.velocity, car.out, core.info.redline);
+    rig.update(frame, pos, quat, carAcc, car.out);
     cityLights.update(frame, camera);
     post.render();
     lap = race.update(raceCar, car.body.translation(), ticks * DT - raceT0);
     hud.update(now, frame, car.out, core.info, input.assists, damage.last, lap);
-    // Adaptive resolution: hold >= ~28 fps (phones vary a lot); recover when there's headroom.
-    if (adaptive && now - lastScaleCheck > 2000) {
-      const fps = hud.fps;
+    // Adaptive resolution driven by FRAME PACING, not average fps ("34 fps" was frames alternating
+    // 33/50+ ms = stutter). A resize reallocates render targets and froze the game 300-700 ms, so:
+    // calibrate at the start (car held on the brake), at most 3 steps, then LOCK. After that only a
+    // sustained collapse (> 30 % missed for 3 windows) steps down again; never up mid-drive.
+    frameTimes.push(frame * 1000);
+    if (adaptive && now - lastScaleCheck > 1500) {
       lastScaleCheck = now;
-      const next = fps < 28 ? Math.max(0.5, scale - 0.1) : fps > 50 ? Math.min(1, scale + 0.1) : scale;
-      if (next !== scale) {
-        scale = next;
+      const missed = frameTimes.filter((t) => t > 22).length / Math.max(1, frameTimes.length);
+      frameTimes.length = 0;
+      let next = scale;
+      if (calibrationSteps < 3) {
+        if (missed > 0.08) { next = Math.max(0.5, scale - 0.1); calibrationSteps++; }
+        else calibrationSteps = 3;                                   // smooth: lock here
+      } else {
+        bad = missed > 0.3 ? bad + 1 : 0;
+        if (bad >= 3) { next = Math.max(0.5, scale - 0.1); bad = 0; }
+      }
+      if (Math.abs(next - scale) > 1e-6) {
+        scale = Math.round(next * 10) / 10;
         renderer.setPixelRatio(baseRatio * scale);
-        hud.extra = `${backend} · ${quality} · ${renderer.domElement.width}×${renderer.domElement.height} · ${cityLights.mode}`;
+        frameTimes.length = 0;
+        lastScaleCheck = now + 1000;                                 // let the resize hitch pass
+        hud.extra = `${backend} · ${renderer.domElement.width}×${renderer.domElement.height} · ${cityLights.mode}`;
       }
     }
   });
