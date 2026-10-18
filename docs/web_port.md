@@ -85,3 +85,25 @@ Real-phone frame rates are NOT measured yet (emulation runs on this laptop's GPU
   lap card from the core's RaceTracker (`Route::parse` added for JSON text).
 - Cost on the laptop (1236x613): low 49-60 fps, high 44-48 fps; GPU-bound (CPU profile: 27 % idle,
   no hot spot in game code). Adaptive resolution covers full screen.
+
+## Night lighting and AI traffic
+- Floor of the picture: `HemisphereLight(0x0a0a14, 0x000000, 0.1)`; sky/fog 0x05060c (deep blue-black,
+  not a void); moon 0.04. The city reflection capture is for reflections only: environmentIntensity
+  0.5 (at 1 its diffuse part lit every wall like an overcast sky).
+- Headlights are the main light (900 cd, decay 2, one shadowed). `L` switches them (intensity 0, never
+  `visible = false`, see the damage traps). Street lamps 40 cd / 18 m, neon 15 / 8 m (were 260 / 26
+  and 60 / 12: they floodlit the facades and headlights stopped mattering); lamp heads and neon tubes
+  stay bright through their emissive materials.
+- AI (`web/src/ai.ts`, `?ai=0..3`, default 3): kinematic Rapier bodies following the route lane
+  (offset right, smoothed through narrow streets; ground from raycasts), speed from curvature ahead
+  (5.5 m/s^2) and from whatever is in the lane ahead (player or AI: stop ~7 m behind). Own copy of
+  the car glTF (the player's gets dented), shared by the AI cars; 1 unshadowed spot each.
+  Collider 0.15-1.0 m high, restitution 0: at the player's hull height (1.2 m) the top edges met and
+  a player pushing a side-on AI car climbed it and rolled over. Shader warm-up: the AI cars are drawn
+  once in the headlight beam during loading.
+- `?blackcar=1`: AI cars black (body: black albedo, reduced specular 0.2 + thin clear coat 0.15;
+  rest MeshStandard black, roughness 0.6), lights off. Full F0 4 % (or clear coat 1) on the rear
+  panel facing the headlights at 11 m blew out to a white slab; none at all = a hole in the picture.
+- Test: `drive.mjs <url> <out> night` parks the AI cars in front (11 m behind-on, 20 m side-on,
+  32 m facing), screenshots headlights on/off, then drives among them. Pin `?scale=` when measuring:
+  the adaptive-resolution resize (300-700 ms) is what showed up as "hitches" in unpinned runs.

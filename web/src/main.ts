@@ -1,6 +1,7 @@
 // Night Run (web build): three.js WebGPU renderer + Rapier rigid bodies + the rs_core physics
 // compiled to WebAssembly. WebGPU required. URL options: ?scale=0.75 (render resolution), ?webgl=1 (debug only),
-// ?bloom=0, ?aa=0, ?shadows=0, ?lights=12 (WebGL 2 light pool size).
+// ?bloom=0, ?aa=0, ?shadows=0, ?lights=12 (WebGL 2 light pool size), ?ai=0..3 (AI cars), ?blackcar=1
+// (AI cars matte black, lights off: night lighting test).
 import * as THREE from 'three/webgpu';
 import { Post } from './post';
 import { ClusteredLighting } from 'three/addons/lighting/ClusteredLighting.js';
@@ -15,6 +16,7 @@ import { Hud } from './hud';
 import { DamageVisuals } from './scene/damage';
 import { GameAudio } from './audio';
 import { TouchControls, wantsTouch } from './touch';
+import { AiTraffic } from './ai';
 
 const params = new URLSearchParams(location.search);
 const num = (k: string, d: number) => (params.has(k) ? Number(params.get(k)) : d);
@@ -56,13 +58,17 @@ async function main() {
   if (webgpu) renderer.lighting = new ClusteredLighting(512);   // needs compute shaders
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x02040a);
-  scene.fog = new THREE.FogExp2(0x03060d, 0.0085);
+  // Night: very dark but never pure black. The hemisphere fill is the floor of the picture
+  // (silhouettes barely readable, a matte black car or dark wall all but invisible); headlights are
+  // the main light, street lamps leave faint pools. Sky/fog are a hair above black, so distant
+  // shapes fade into a deep blue-black instead of a void.
+  scene.background = new THREE.Color(0x05060c);
+  scene.fog = new THREE.FogExp2(0x05060c, 0.0085);
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;   // placeholder until the city is captured
   scene.environmentIntensity = 0.03;
-  scene.add(new THREE.HemisphereLight(0x3a4a70, 0x050508, 0.1));
-  const moon = new THREE.DirectionalLight(0x7088c0, 0.12);
+  scene.add(new THREE.HemisphereLight(0x0a0a14, 0x000000, 0.1));
+  const moon = new THREE.DirectionalLight(0x7088c0, 0.04);   // a trace of cold top light on roofs and car bodies
   moon.position.set(-60, 120, 40);
   scene.add(moon);
 
@@ -91,7 +97,9 @@ async function main() {
     camera.position.set(s0.x, s0.z + 2, -s0.y);
     cityLights.update(1, camera);
     scene.environment = pmrem.fromScene(scene, 0.02, 0.5, 400, { size: 256, position: camera.position.clone() }).texture;
-    scene.environmentIntensity = 1;
+    // The capture is for REFLECTIONS (lamps and neon in paint and wet asphalt). At full strength its
+    // diffuse part lit every wall like an overcast sky and undid the darkness.
+    scene.environmentIntensity = 0.5;
   }
   say('Loading car…');
   const visual = await CarVisual.load(visualCfg);
@@ -104,6 +112,8 @@ async function main() {
   // Rapier only indexes new colliders for queries during a step: step once so the spawn probe
   // below can see the city (without this the first spawn misses the road and drops 3 m).
   pw.world.step();
+  say('Loading traffic…');
+  const ai = await AiTraffic.create(scene, pw, visualCfg, route.samples, Math.max(0, Math.min(3, num('ai', 3))), params.get('blackcar') === '1');
 
   // Start line = first route sample (core coords: Z-up) -> three (x, z, -y).
   const s0 = route.samples[0];
@@ -136,7 +146,9 @@ async function main() {
     raceCar = race.addCar(car.body.translation());
     raceT0 = ticks * DT;
     hud.resetLaps();
+    ai.reset();
   };
+  input.onLights = () => { visual.lightsOn = !visual.lightsOn; visual.applyHeadlights(); };
   const enableTouch = () => {
     if (input.touch) return;
     document.body.classList.add('touch');
@@ -159,6 +171,16 @@ async function main() {
   cityLights.update(1, camera);
   say('Compiling shaders…');
   await renderer.compileAsync(scene, camera);
+  if (ai.cars.length) {
+    // draw the AI cars once in the headlight beam (their pipelines + shadow pass), then send them off
+    const yaw = Math.atan2(Math.cos(s0.heading), -Math.sin(s0.heading));
+    visual.update(pos, quat, car.out);
+    ai.stage(pos.clone().setY(pos.y - core.info.cgHeight - 0.05), yaw);
+    ai.update(1, camera);
+    await renderer.compileAsync(scene, camera);
+    post.render();
+    ai.reset();
+  }
   hud.show();
   hud.extra = `${backend} · ${renderer.domElement.width}×${renderer.domElement.height} · ${cityLights.mode}`;
 
@@ -167,7 +189,7 @@ async function main() {
   const frameTimes: number[] = [];
   const trace: unknown[] = [];
   const g = window as unknown as { __game: object };
-  g.__game = { audio, rig, damage, trace, car, core, input, renderer, camera, scene, info: () => ({ pos: car.body.translation(), speed: car.out[OUT.speed], rpm: car.out[OUT.rpm], gear: car.out[OUT.gear] }) };
+  g.__game = { ai, visual, audio, rig, damage, trace, car, core, input, renderer, camera, scene, info: () => ({ pos: car.body.translation(), speed: car.out[OUT.speed], rpm: car.out[OUT.rpm], gear: car.out[OUT.gear] }) };
 
   if (import.meta.env.DEV) {
     const report = (msg: string) => fetch('/__telemetry', { method: 'POST', body: msg }).catch(() => {});
@@ -200,6 +222,7 @@ async function main() {
       prevPos.copy(physPos);
       prevQuat.copy(physQuat);
       car.tick(input.poll(), input.assists);
+      ai.tick(DT, car.body.translation());
       pw.world.step();
       readBody(physPos, physQuat);
       // car acceleration for the camera spring, from the physics (low-passed ~25 ms)
@@ -223,6 +246,7 @@ async function main() {
     const lv = car.body.linvel();
     visual.velocity.set(lv.x, lv.y, lv.z);
     visual.update(pos, quat, car.out, physPos, physQuat);
+    ai.update(alpha, camera);
     damage.update(frame, () => core.damage());
     audio.update(car.out, car.out[OUT.speed]);
     rig.update(frame, pos, quat, carAcc, car.out);
