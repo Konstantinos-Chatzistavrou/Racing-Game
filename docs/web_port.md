@@ -63,7 +63,11 @@ totaled; bent toe up to 1.5 deg, weaker springs, power loss). The web side only 
 Touch controls appear on coarse-pointer devices or on the first touch: analog steering pad (left,
 relative drag, 90 px = full lock), GAS/BRAKE/handbrake (right), reset/camera/gearbox/fullscreen
 (top; fullscreen also locks landscape on Android). Phones in portrait get a rotate prompt.
-Adaptive resolution keeps >= ~28 fps (steps of 10 % down to 50 %); `?scale=x` pins it.
+Adaptive resolution (main.ts): 2 s windows of average fps; < 40 for 2 windows -> scale -0.1 (min
+0.5); > 55 with p90 frame < 22 ms for 2 windows -> +0.1, at most one step up per 10 s (doubling to
+80 s if a step up is undone within 20 s), never above 1. The first 3 windows (car held at the start)
+calibrate with no hysteresis. Each resize costs a 300-700 ms hitch, so the window after it is
+skipped. The HUD shows the scale; `?scale=x` pins it.
 Test: `drive.mjs <url> <out> mobile` emulates a 915x412 phone with multi-touch (gas + steer).
 Real-phone frame rates are NOT measured yet (emulation runs on this laptop's GPU).
 
@@ -71,8 +75,13 @@ Real-phone frame rates are NOT measured yet (emulation runs on this laptop's GPU
 - Camera (`web/src/camera.ts`): spring-damper on the camera's offset RELATIVE to the car
   (omega 5 rad/s, zeta 0.75, lag capped at 1.6 m), driven by the car's acceleration: pulls back
   under power, surges in under braking, swings wide in corners. A world-space spring would trail
-  ~9 m behind at 144 km/h. Shake from the core's suspension compression rate (kerbs, landings,
-  crashes) + redline buzz, as rotations only. FOV +0..14 deg above 60 km/h.
+  ~9 m behind at 144 km/h. The final car-relative offset is smoothed with
+  `lerp(target, 1 - exp(-12 dt))` (eases out after a wall pull-in; pulling in stays instant).
+  FOV +0..14 deg above 60 km/h, plus a throttle punch of up to +5 deg (~1 s in, ~1.5 s out,
+  weighted by forward acceleration), total capped at +16. Redline shake: only within 3 % of the
+  redline, rotation only, 3.5/6.5 Hz value noise, <= 0.15 deg (bumper cam 45 %). Measured on the
+  limiter: <= 0.024 deg camera rotation per frame. (The earlier high-frequency suspension shake was
+  removed: it aliased into judder at 30 fps.) Ideas from Threejs-Punk: docs/threejspunk_notes.md.
 - Audio (`web/src/audio.ts`, all synthesized): engine pitch = rpm/60 * cylinders/2 (V8 assumed:
   the data has no cylinder count); filter opens with throttle; tyre squeal from the core's slip
   angle (> 6 deg) / slip ratio (> 12 %) weighted by load; wind ~ speed^2. No blow-off valve: the
