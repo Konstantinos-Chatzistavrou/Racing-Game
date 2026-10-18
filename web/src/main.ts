@@ -236,7 +236,10 @@ async function main() {
     post.render();
     for (const o of culled) o.frustumCulled = true;
   }
-  const pipelinesAtStart = (renderer as unknown as { _pipelines: { caches: Map<string, unknown> } })._pipelines.caches.size;
+  // The warm-up queued a dozen full renders on the GPU: wait until it has worked through them, or
+  // the first race frames block behind that backlog (a 130-220 ms frame 0.2-0.6 s after loading).
+  if (webgpu) await (renderer.backend as unknown as { device: GPUDevice }).device.queue.onSubmittedWorkDone();
+  const pipelinesAtStart =(renderer as unknown as { _pipelines: { caches: Map<string, unknown> } })._pipelines.caches.size;
   hud.show();
   const setExtra = () => (hud.extra = `${backend} · ${Math.floor(renderer.domElement.width * scale)}×${Math.floor(renderer.domElement.height * scale)}`
     + ` → ${renderer.domElement.width}×${renderer.domElement.height} · scale ${+scale.toFixed(2)}${adaptive ? '' : ' (pinned)'}`
