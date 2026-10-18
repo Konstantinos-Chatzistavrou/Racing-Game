@@ -14,7 +14,7 @@ const port = 9334;
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'chrome-webgpu-'));
 const chrome = spawn('google-chrome', [
   `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
-  '--enable-unsafe-webgpu', '--enable-features=Vulkan', '--window-size=1280,800',
+  '--enable-unsafe-webgpu', '--enable-features=Vulkan', `--window-size=${process.env.WIN ?? '1280,800'}`,
   // other windows (e.g. a full-screen Chrome) must not throttle the test window's frame rate
   '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling',
   'about:blank',
@@ -82,9 +82,15 @@ try {
       if ((await evaluate(`document.getElementById('loading') ? 'no' : 'ready'`).catch(() => '')) === 'ready') break;
     }
   }
-  await sleep(4000);
+  await sleep(Number(process.env.SETTLE ?? 4000));
   console.log('idle  ', JSON.stringify(await evaluate(info)));
   if (process.env.PROBE) console.log('probe', await evaluate(fs.readFileSync(process.env.PROBE, 'utf8')));
+  if (scenario === 'bench') {
+    await sleep(2000);
+    const r = await evaluate(`new Promise((res) => { const ft = []; let p = performance.now(); const f = (t) => { ft.push(t - p); p = t; if (ft.length < 240) requestAnimationFrame(f); else res(ft); }; requestAnimationFrame(f); })`);
+    const a = r.slice(5).sort((x, y) => x - y), q = (p) => a[Math.min(a.length - 1, Math.floor(p * a.length))].toFixed(1);
+    console.log(`bench median ${q(0.5)} ms  p95 ${q(0.95)}  p99 ${q(0.99)}  max ${a[a.length - 1].toFixed(1)}  >40ms: ${a.filter((x) => x > 40).length}/${a.length}  | ${(await evaluate(info)).perf}`);
+  }
   if (scenario === 'profile') {
     await key('keyDown', 'KeyW', 'w');
     await sleep(1500);
@@ -151,8 +157,13 @@ try {
   }
   if (scenario === 'straight') {
   await shot('1_start.png');
+  // frame pacing: record every frame interval while driving
+  await evaluate(`(() => { window.__ft = []; let p = performance.now(); const f = (t) => { window.__ft.push(t - p); p = t; if (window.__ft.length < 2000) requestAnimationFrame(f); }; requestAnimationFrame(f); return 1; })()`);
   await key('keyDown', 'KeyW', 'w');
   for (let s = 1; s <= 7; s++) { await sleep(1000); console.log(`t=${s}s `, JSON.stringify(await evaluate(info))); }
+  console.log('pacing', await evaluate(`(() => { const a = window.__ft.slice(5).sort((x, y) => x - y), q = (p) => a[Math.min(a.length - 1, Math.floor(p * a.length))].toFixed(1);
+    const hitches = window.__ft.slice(5).filter((x) => x > 50).length;
+    return 'frames ' + a.length + '  median ' + q(0.5) + ' ms  p95 ' + q(0.95) + '  p99 ' + q(0.99) + '  max ' + a[a.length - 1].toFixed(1) + '  >50ms: ' + hitches; })()`));
   console.log('audio ', await evaluate(`(() => { const a = window.__game.audio, c = a.ctx, e = a.eng, o = window.__game.car.out;
     if (!c) return 'no context';
     return JSON.stringify({ state: c.state, rpm: Math.round(o[103]), expectedHz: Math.round(o[103] / 60 * 4), oscHz: Math.round(e.o1.frequency.value),

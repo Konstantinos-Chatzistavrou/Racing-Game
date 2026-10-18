@@ -16,13 +16,14 @@ export interface CarVisualConfig extends DamageVisualConfig {
   headlights: [number, number, number][];
 }
 
-const Y = new THREE.Vector3(0, 1, 0), X = new THREE.Vector3(1, 0, 0);
+const Y = new THREE.Vector3(0, 1, 0), X = new THREE.Vector3(1, 0, 0), ONE = new THREE.Vector3(1, 1, 1);
 
 export class CarVisual {
   readonly root = new THREE.Group();          // placed at the physics body (CG)
   private wheels: { node: THREE.Object3D; rest: THREE.Quaternion; caliper?: THREE.Object3D }[] = [];
   private qa = new THREE.Quaternion();
   private qb = new THREE.Quaternion();
+  private physInv = new THREE.Matrix4();
   readonly cg: THREE.Vector3;
   headlights: THREE.SpotLight[] = [];
   readonly headlightIntensity = 900;
@@ -75,12 +76,16 @@ export class CarVisual {
     return new CarVisual(cfg, gltf.scene);
   }
 
-  /** pos/quat: body (CG) transform; out: core output buffer. */
-  update(pos: THREE.Vector3, quat: THREE.Quaternion, out: Float64Array) {
+  /**
+   * pos/quat: where to DRAW the body (interpolated between physics ticks); physPos/physQuat: the
+   * body at the last physics tick, which the core's wheel centres refer to. Wheels are converted to
+   * car-local with the physics pose, then follow the drawn body: no drift between car and wheels.
+   */
+  update(pos: THREE.Vector3, quat: THREE.Quaternion, out: Float64Array, physPos = pos, physQuat = quat) {
     this.root.position.copy(pos);
     this.root.quaternion.copy(quat);
     this.root.updateMatrixWorld();
-    const inv = this.root.matrixWorld.clone().invert();
+    const inv = this.physInv.compose(physPos, physQuat, ONE).invert();
     for (let i = 0; i < 4; i++) {
       const w = this.wheels[i], o = OUT.wheel(i);
       const centre = new THREE.Vector3(out[o], out[o + 1], out[o + 2]).applyMatrix4(inv).add(this.cg);
