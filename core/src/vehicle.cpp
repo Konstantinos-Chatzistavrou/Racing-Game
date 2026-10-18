@@ -69,7 +69,9 @@ VehicleOutput Vehicle::update(const ChassisState& s, const std::array<WheelConta
     last_dt_ = dt;
     // ---- crash damage -> physical effects
     if (damage_enabled) {
+        damage_model_.update(dt);
         const DamageModel& dm = damage_model_;
+        damage_.brakes = dm.brake_factor();
         damage_.engine_power = dm.engine_power_factor();
         damage_.aero_drag = dm.drag_factor();
         for (int w = 0; w < 4; ++w) {
@@ -205,6 +207,7 @@ VehicleOutput Vehicle::update(const ChassisState& s, const std::array<WheelConta
     std::array<double, 4> fx_sum{}, fy_sum{};
     DrivetrainInput din{input_.throttle, input_.clutch, input_.brake, input_.handbrake, input_.gear,
                         damage_.engine_power};
+    din.brake_power_scale = damage_.brakes;
     // ---- ASSIST: auto-clutch (sits on top of the model; the drivetrain only sees a pedal value)
     // Behaves like a centrifugal clutch: engagement rises with engine rpm above idle, so the car
     // launches when you add throttle and declutches before stalling when you slow down. Gear

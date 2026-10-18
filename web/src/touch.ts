@@ -1,7 +1,8 @@
 // On-screen controls for phones and tablets (multi-touch, pointer events).
 //   left half, bottom: steering pad - press anywhere, slide sideways (analog, relative to where
 //                      the thumb landed; a knob shows the position)
-//   right, bottom:     GAS and BRAKE pedals, handbrake
+//   right, bottom:     GAS and BRAKE pedals, handbrake (BRAKE held at a standstill = reverse:
+//                      the core's pedal reverse, same as keyboard S)
 //   top right:         reset, camera, gearbox auto/manual, fullscreen; shift up/down in manual
 export interface TouchState {
   active: boolean;
@@ -23,7 +24,7 @@ export class TouchControls {
       <div class="steer" data-c="steer"><div class="knob"></div><span class="hint">◀ steer ▶</span></div>
       <div class="pedals">
         <button class="pad hb" data-c="handbrake">HAND<br>BRAKE</button>
-        <button class="pad brake" data-c="brake">BRAKE</button>
+        <button class="pad brake" data-c="brake">BRAKE<br><small>hold: R</small></button>
         <button class="pad gas" data-c="gas">GAS</button>
       </div>
       <div class="shift" hidden>

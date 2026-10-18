@@ -79,6 +79,7 @@ export class CoreCar {
     return {
       crush: a(200), zone: a(204), wheel: a(208), engine: b[212], lastKj: b[213],
       lastPoint: [b[214], b[215], b[216]], lastZone: b[217], impacts: b[218], totaled: b[219] > 0.5, totalKj: b[220],
+      smoulder: b[221], fire: b[222], brakes: b[223], brakesFailed: b[224] > 0.5, severity: b[225],
     };
   }
 
@@ -105,6 +106,8 @@ export class CoreCar {
 export interface Damage {
   crush: number[]; zone: number[]; wheel: number[]; engine: number; lastKj: number;
   lastPoint: [number, number, number]; lastZone: number; impacts: number; totaled: boolean; totalKj: number;
+  /** engine bay: smoke phase 0..1, then fire 0..1 (grows); brakes: effectiveness 1..0, failed = none at all */
+  smoulder: number; fire: number; brakes: number; brakesFailed: boolean; severity: number;
 }
 
 // Output offsets (bridge.cpp, rs_step)

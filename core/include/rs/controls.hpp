@@ -42,6 +42,14 @@ struct ControlSettings {
     double countersteer_gain = 0.8;      // rad of steer per rad of sideslip
     double upshift_rpm_fraction = 0.95;  // of redline
     double downshift_rpm = 3200;
+    // reverse by pedal (auto AND manual gearbox): hold the brake (> reverse_brake) at a standstill
+    // (|v| < reverse_speed) for reverse_delay s -> reverse gear, pedals swap (brake drives backward,
+    // throttle brakes). Throttle held at a standstill for reverse_delay -> back to 1st.
+    // reverse_brake is above the 0.5 spawn hold (web input.ts) so a parked car never backs away.
+    bool pedal_reverse = true;
+    double reverse_speed = 0.5;          // m/s
+    double reverse_delay = 0.4;          // s
+    double reverse_brake = 0.8;
 };
 
 class Controls {
@@ -50,6 +58,7 @@ public:
     // last = previous vehicle output (speed, sideslip, rpm, wheel data). dt = physics tick.
     DriverInput update(const RawInput& raw, const VehicleOutput& last, double dt);
     int gear() const { return gear_; }
+    bool pedal_reversing() const { return pedal_reverse_; }   // reverse engaged by the brake pedal
     void set_gear(int g);
     double max_steer_fraction(double speed) const;   // exposed for tests / overlay
     ControlSettings settings;
@@ -59,6 +68,8 @@ private:
     double steer_ = 0, throttle_ = 0, brake_ = 0;
     int gear_ = 2;
     double shift_cooldown_ = 0;
+    bool pedal_reverse_ = false;         // in reverse via the brake pedal (pedals swapped)
+    double reverse_timer_ = 0;
 };
 
 }  // namespace rs
