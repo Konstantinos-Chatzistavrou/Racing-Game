@@ -1,6 +1,6 @@
 // Night Run (web build): three.js WebGPU renderer + Rapier rigid bodies + the rs_core physics
 // compiled to WebAssembly. WebGPU required. URL options: ?scale=0.75 (render resolution), ?webgl=1 (debug only),
-// ?bloom=0, ?aa=0, ?shadows=0, ?lights=12 (WebGL 2 light pool size).
+// ?bloom=0, ?aa=0, ?shadows=0, ?lights=12 (WebGL 2 light pool size), ?mp=1 or ?mp=ws://host:port (multiplayer, see net.ts).
 import * as THREE from 'three/webgpu';
 import { Post } from './post';
 import { ClusteredLighting } from 'three/addons/lighting/ClusteredLighting.js';
@@ -15,6 +15,7 @@ import { Hud } from './hud';
 import { DamageVisuals } from './scene/damage';
 import { GameAudio } from './audio';
 import { TouchControls, wantsTouch } from './touch';
+import { Net, netUrl } from './net';
 
 const params = new URLSearchParams(location.search);
 const num = (k: string, d: number) => (params.has(k) ? Number(params.get(k)) : d);
@@ -96,6 +97,8 @@ async function main() {
   say('Loading car…');
   const visual = await CarVisual.load(visualCfg);
   scene.add(visual.root);
+  const mpUrl = netUrl(params);
+  const net = mpUrl ? new Net(mpUrl, scene, visual) : null;   // clones the car model as loaded
   const cb = visualCfg.collision_box;
   const car = new CarBody(pw, core, {
     boxSize: cb.size_m, boxCentre: cb.centre_in_model_m, endLift: cb.end_lift_m, endLiftStart: cb.end_lift_start_m,
@@ -158,9 +161,14 @@ async function main() {
   rig.update(1, pos.copy(car.body.translation() as THREE.Vector3), quat.copy(car.body.rotation() as THREE.Quaternion), new THREE.Vector3(), car.out);
   cityLights.update(1, camera);
   say('Compiling shaders…');
+  net?.warmup(true);   // remote car shaders compiled now, not as a hitch when someone joins
   await renderer.compileAsync(scene, camera);
+  net?.warmup(false);
   hud.show();
-  hud.extra = `${backend} · ${renderer.domElement.width}×${renderer.domElement.height} · ${cityLights.mode}`;
+  const setExtra = () => (hud.extra = `${backend} · ${renderer.domElement.width}×${renderer.domElement.height} · ${cityLights.mode}`
+    + (net ? ` · ${net.status}` : ''));
+  setExtra();
+  if (net) net.onChange = setExtra;
 
   // --- loop: fixed 240 Hz physics, render every frame -----------------------------------------
   let acc = 0, prev = performance.now(), ticks = 0, lastScaleCheck = performance.now() + 3000, calibrationSteps = 0, bad = 0;   // skip shader warm-up
@@ -225,6 +233,7 @@ async function main() {
     visual.update(pos, quat, car.out, physPos, physQuat);
     damage.update(frame, () => core.damage());
     audio.update(car.out, car.out[OUT.speed]);
+    net?.update(now, pos, quat);
     rig.update(frame, pos, quat, carAcc, car.out);
     cityLights.update(frame, camera);
     post.render();
@@ -252,7 +261,7 @@ async function main() {
         renderer.setPixelRatio(baseRatio * scale);
         frameTimes.length = 0;
         lastScaleCheck = now + 1000;                                 // let the resize hitch pass
-        hud.extra = `${backend} · ${renderer.domElement.width}×${renderer.domElement.height} · ${cityLights.mode}`;
+        setExtra();
       }
     }
   });
