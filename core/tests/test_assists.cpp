@@ -220,3 +220,67 @@ RS_TEST(auto_gearbox) {
     test::check("back in 1st gear after braking to a stop", c.gear() == 2);
     test::check("no stall when braking to a stop", !s->last.engine_stalled);
 }
+
+// ---------------------------------------------------------------- wrecks stay drivable; fire; brakes
+RS_TEST(wreck_drivable_fire_brakes) {
+    CarConfig cfg = test::car();
+    auto s = test::make_sim(cfg);
+    s->settle(1.0);
+    // Wreck it: 80 km/h into a wall, both doors caved in, three wheels smashed.
+    s->vehicle.add_contact(1, {2.2, 0.1, 0}, cfg.mass * 80 / 3.6);
+    s->vehicle.add_contact(2, {0.0, 0.95, 0}, cfg.mass * 12);
+    s->vehicle.add_contact(3, {0.0, -0.95, 0}, cfg.mass * 12);
+    for (int w = 0; w < 3; ++w) s->vehicle.add_contact(10 + w, {cfg.wheels[w].x, cfg.wheels[w].y, 0}, cfg.mass * 15);
+    const DamageReport& r = s->vehicle.damage_model().report();
+    test::check("wrecked car is totaled (report flag)", r.totaled);
+    Controls c(cfg);
+    c.settings.auto_gearbox = true;
+    RawInput raw;
+    raw.throttle = 1;
+    for (int i = 0; i < 6 * 240; ++i) drive(*s, c, raw);
+    std::printf("         totaled car, 6 s full throttle: %.1f km/h (engine %.2f, power x%.2f)\n", s->last.speed * 3.6,
+                r.engine, s->vehicle.damage_model().engine_power_factor());
+    test::check_range("totaled car still drives forward (limp home)", s->last.speed * 3.6, 10, 400, "km/h");
+    raw.throttle = 0;
+    double t_fire = -1, t_fail = -1;
+    for (int i = 0; i < 90 * 240; ++i) {
+        drive(*s, c, raw);
+        double t = i / 240.0;
+        if (t_fire < 0 && r.fire > 0) t_fire = t;
+        if (t_fail < 0 && r.brakes_failed) t_fail = t;
+    }
+    std::printf("         fire %.1f s after the wreck's drive, brakes failed after %.1f s\n", t_fire, t_fail);
+    test::check("wreck catches fire (smoulders first)", t_fire >= 0);
+    test::check("brakes fail completely later", t_fail > t_fire || (t_fail >= 0 && t_fire >= 0));
+    test::check("full fire after a while", r.fire > 0.9);
+    s->vehicle.damage_model().repair();
+    s->step(c.update(raw, s->last, s->dt));
+    test::check("repair clears fire and brakes", r.fire == 0 && r.brakes == 1.0 && !r.brakes_failed);
+}
+
+// ---------------------------------------------------------------- reverse by pedal
+RS_TEST(pedal_reverse) {
+    CarConfig cfg = test::car();
+    for (int autobox = 1; autobox >= 0; --autobox) {
+        auto s = test::make_sim(cfg);
+        s->settle(1.0);
+        Controls c(cfg);
+        c.settings.auto_gearbox = autobox;
+        const char* box = autobox ? "auto" : "manual";
+        RawInput raw;
+        raw.brake = 0.5;                                   // spawn hold: must NOT reverse
+        for (int i = 0; i < 240; ++i) drive(*s, c, raw);
+        std::printf("         %s: half brake 1 s at rest -> gear %d\n", box, c.gear());
+        test::check("half brake at rest stays in 1st", c.gear() == 2);
+        raw.brake = 1;
+        for (int i = 0; i < 3 * 240; ++i) drive(*s, c, raw);
+        std::printf("         %s: brake held 3 s at rest -> gear %d, %.1f km/h\n", box, c.gear(), s->last.speed * 3.6);
+        test::check("brake held at rest engages reverse", c.gear() == 0);
+        test::check_range("drives backward on the brake pedal", s->last.speed * 3.6, -60, -3, "km/h");
+        raw.brake = 0;
+        raw.throttle = 1;                                   // throttle brakes, then 1st gear
+        for (int i = 0; i < 4 * 240; ++i) drive(*s, c, raw);
+        std::printf("         %s: then throttle 4 s -> gear %d, %.1f km/h\n", box, c.gear(), s->last.speed * 3.6);
+        test::check("throttle stops it, then drives forward in 1st+", c.gear() >= 2 && s->last.speed > 1.0);
+    }
+}

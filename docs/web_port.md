@@ -59,6 +59,32 @@ totaled; bent toe up to 1.5 deg, weaker springs, power loss). The web side only 
 - Test: `node web/tools/drive.mjs <url> <out> crash` (93 km/h into the buildings): 3-7 impacts,
   ~500 kJ, totaled, 3 parts off, worst frame 31.8 ms (was 383 ms).
 
+### Damage pass 2 (2026-10-18)
+- Dents moved to the VERTEX SHADER (`web/src/scene/dents.ts`): one TSL positionNode on every body
+  material applies up to 16 accumulated dents (model-space point + depth, crash dir + radius;
+  falloff (1-(r/R)^2)^2, push = -normal blended with the crash direction, analytic normal tilt
+  written to normalLocal). Replaces the CPU vertex loop: zero CPU per hit, no geometry clones;
+  when full a new dent merges into the nearest. Per-mesh rest matrices are per-object uniforms, so
+  wheels sharing a material are never dented and broken-off parts keep their dents.
+- Never immovable: "totaled" is only a report flag now; engine power floor 0.25 (limp home), the
+  bridge no longer cuts the input. Native test: wrecked car reaches 55 km/h in 6 s.
+- Fire + brakes in the core (`DamageModel::update`): severity = max(engine, total kJ / 900);
+  from 0.6 the bay smoulders 10 s, then burns (flames grow over 45 s; flickering orange point light
+  created at start with intensity 0). Brake wear from severity and fire: fade to 30 %, then failure
+  (all brakes incl. handbrake). HUD lamps: ENGINE OVERHEATING / ENGINE FIRE, BRAKES FADING / NO BRAKES.
+  Browser: 67 km/h -> 57 km/h in 1 s on failed brakes vs 67 -> 30 repaired.
+- Reverse by pedal (core Controls, auto and manual): brake > 0.8 held 0.4 s at < 0.5 m/s -> R, pedals
+  swap; throttle held at a standstill -> 1st. The 0.5 spawn hold never reverses. Touch BRAKE too.
+  Respawn resets to 1st (a pedal reverse used to survive R and drive the car backward).
+- Headlights: a front hit (crush > 0.12 m or >= 15 kJ) makes the spots flicker 2 s, then die.
+- Wheel/camera/spawn rays use the car's collision groups: a fallen bumper is no longer "road"
+  (wheels used to land on it and slew the car sideways).
+- Rapier: city = 42 parentless (fixed) trimesh colliders. world.step() 0.08-0.12 ms with the car
+  awake, ~0.2 ms while debris tumbles, back to ~0.1 ms once it sleeps (default canSleep).
+- Tests: `drive.mjs <url> <out> damage` (reverse, injected 90 km/h wreck, flicker, fire, brakes,
+  repair); CDP_PORT env for parallel runs. Known (pre-existing): a car impaled on a thin pole can
+  feed huge impulses (47 MJ "crash"); not addressed.
+
 ## Phones and tablets
 Touch controls appear on coarse-pointer devices or on the first touch: analog steering pad (left,
 relative drag, 90 px = full lock), GAS/BRAKE/handbrake (right), reset/camera/gearbox/fullscreen

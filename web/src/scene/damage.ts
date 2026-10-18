@@ -1,15 +1,19 @@
 // Visual side of crash damage (port of game/scripts/damage_visuals.gd). The CORE decides how far
 // each zone is crushed (energy -> crush depth, core/src/damage.cpp); this module SHOWS it:
-//   - mesh deformation at the actual impact point (vertices pushed in along the crash direction by
-//     the increase in crush depth, smooth falloff + crumple wrinkles, normals recomputed),
-//   - parts breaking off as physics debris (bumpers, mirrors), broken lights, engine smoke, sparks.
-// The physical consequences (bent steering, weaker springs, lost power, drag) are in the core.
+//   - dents at the actual impact point, in the vertex shader (dents.ts: accumulated, zero CPU),
+//   - parts breaking off as physics debris (bumpers, mirrors), broken lights (headlights flicker
+//     for 2 s after a heavy front hit, then die), engine smoke, sparks,
+//   - engine fire: the core's smoulder -> fire state (smoke, then growing flames + a flickering
+//     orange point light from the engine bay). No explosion; R repairs.
+// The physical consequences (bent steering, weaker springs, lost power, drag, brake fade) are in the core.
 import * as THREE from 'three/webgpu';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { instancedDynamicBufferAttribute, uv, vec4, smoothstep, float } from 'three/tsl';
 import type { Damage } from '../physics/core';
 import { GROUP_DEBRIS, type PhysicsWorld } from '../physics/world';
 import type { CarVisual } from './car';
+import { materialsOf } from './city';
+import { Dents } from './dents';
 
 const ZONES = ['front', 'rear', 'left', 'right'] as const;
 // Crush direction per zone in model space (X left, Y up, Z forward): the dent goes INTO the car.
@@ -18,6 +22,10 @@ const SKIP = ['wheel_', 'caliper_', 'interior_shell', 'seat', 'dashboard', 'stee
 // Break-off thresholds in metres of zone crush (same as the Godot build).
 const BREAK_CRUSH: Record<string, number> = { bumper_front: 0.3, bumper_rear: 0.3, mirror_L: 0.12, mirror_R: 0.12 };
 const LIGHTS_CRUSH = 0.12;
+// A front hit this big (kJ; ~15 kJ = a 16 km/h stop for this car) breaks the headlights too,
+// even below LIGHTS_CRUSH. Either way they flicker (loose connector) for FLICKER_S, then die.
+const HEADLIGHT_KJ = 15;
+const FLICKER_S = 2;
 
 export interface DamageVisualConfig {
   detachable: Record<string, [string, number]>;
@@ -27,7 +35,7 @@ export interface DamageVisualConfig {
 }
 
 /** Instanced camera-facing sprites, simulated on the CPU (tens of particles: cheap), one draw call. */
-class Particles {
+export class Particles {
   private pos: THREE.InstancedBufferAttribute;
   private col: THREE.InstancedBufferAttribute;
   private size: THREE.InstancedBufferAttribute;
@@ -91,16 +99,23 @@ interface Debris { node: THREE.Object3D; parent: THREE.Object3D; local: THREE.Ma
 
 export class DamageVisuals {
   private deformables: THREE.Mesh[] = [];
-  private original = new Map<THREE.Mesh, { pos: Float32Array; nrm: Float32Array | null }>();
+  readonly dents = new Dents();
   private applied = [0, 0, 0, 0];
   private detached = new Map<string, Debris>();
   private lightsOff = { front: false, rear: false };
   private lightMats = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
-  private dentQueue: [THREE.Mesh, THREE.Vector3, THREE.Vector3, number, number][] = [];
   private lastImpacts = 0;
   private t = 0;
-  private smoke = new Particles(48, { additive: false, gravity: 0.6, grow: 0.9, drag: 0.6 });
+  private smoke = new Particles(64, { additive: false, gravity: 0.6, grow: 0.9, drag: 0.6 });
   private sparks = new Particles(80, { additive: true, gravity: -9.8, grow: -0.8, drag: 0.4 });
+  // fire: orange outer flames + a hotter yellow core, both additive HDR (bloom does the glow)
+  private flames = new Particles(72, { additive: true, gravity: 3, grow: -0.9, drag: 1.6 });
+  private flameCore = new Particles(32, { additive: true, gravity: 2, grow: -1.4, drag: 2 });
+  // Created up front at intensity 0: adding a light mid-race recompiles every lit material.
+  private fireLight = new THREE.PointLight(0xff6a1c, 0, 10, 2);
+  private fireAcc = 0;
+  private flicker = 0;        // s of headlight flicker left (> 0 = flickering)
+  private flickerHold = 0;    // s until the next flicker level
   private smokeAcc = 0;
   private dmg: Damage | null = null;
   get last(): Damage | null { return this.dmg; }
@@ -111,18 +126,30 @@ export class DamageVisuals {
       const m = o as THREE.Mesh;
       if (m.isMesh && !SKIP.some((p) => o.name.startsWith(p))) this.deformables.push(m);
     });
+    // Shader dents on every body material (set before the first compile: no mid-race pipeline).
+    // A skipped mesh sharing one of these materials has no dent matrices -> dentOn = 0.
+    for (const m of this.deformables) {
+      this.dents.register(m, car.model);
+      for (const mat of materialsOf(m)) (mat as unknown as { positionNode: THREE.Node }).positionNode = this.dents.positionNode;
+    }
     this.sparks.color.setRGB(4, 2.2, 0.7);   // HDR: blooms
-    scene.add(this.smoke.sprite, this.sparks.sprite);
+    this.flames.color.setRGB(5, 1.5, 0.25);
+    this.flameCore.color.setRGB(6, 3.6, 1.1);
+    this.fireLight.position.set(...cfg.engine_smoke_in_model_m).sub(car.cg);
+    car.root.add(this.fireLight);
+    scene.add(this.smoke.sprite, this.sparks.sprite, this.flames.sprite, this.flameCore.sprite);
   }
 
   /** Every frame. Damage is read from the core at 20 Hz; dents are applied one panel per frame. */
   update(dt: number, damage: () => Damage) {
-    const job = this.dentQueue.shift();
-    if (job) this.dentMesh(...job);
     this.smoke.update(dt);
     this.sparks.update(dt);
+    this.flames.update(dt);
+    this.flameCore.update(dt);
     this.updateDebris(dt);
-    if (this.dmg && (this.dmg.engine > 0.25 || this.dmg.totaled)) this.emitSmoke(dt);
+    this.updateFlicker(dt);
+    if (this.dmg && (this.dmg.engine > 0.25 || this.dmg.totaled || this.dmg.smoulder > 0)) this.emitSmoke(dt);
+    this.updateFire(dt);
     this.t += dt;
     if (this.t < 0.05) return;
     this.t = 0;
@@ -134,7 +161,8 @@ export class DamageVisuals {
     if (delta > 0.01) {
       this.applied[z] = d.crush[z];
       const p = new THREE.Vector3(...d.lastPoint).add(this.car.cg);   // car local (CG) -> model space
-      this.dent(p, INWARD[z], delta, d.crush[z]);
+      // dent radius grows with the zone's total crush (same rule as the old CPU path)
+      this.dents.add(p, INWARD[z], delta, THREE.MathUtils.clamp(0.45 + 0.9 * d.crush[z], 0.45, 1.2));
     }
     // ---- break-offs
     for (const [name, [zone]] of Object.entries(this.cfg.detachable)) {
@@ -143,12 +171,12 @@ export class DamageVisuals {
     }
     // ---- lights
     let glass = false;
-    if (d.crush[0] > LIGHTS_CRUSH && !this.lightsOff.front) {
+    const heavyFront = d.impacts > this.lastImpacts && d.lastZone === 0 && d.lastKj >= HEADLIGHT_KJ;
+    if ((d.crush[0] > LIGHTS_CRUSH || heavyFront) && !this.lightsOff.front) {
+      // headlights: loose connector -> flicker for FLICKER_S, then dead (updateFlicker)
       this.lightsOff.front = glass = true;
-      this.killLights(this.cfg.front_lights);
-      // intensity 0, NOT visible = false: changing the scene's light set recompiles every lit
-      // material (a ~300 ms freeze on impact)
-      for (const s of this.car.headlights) s.intensity = 0;
+      this.flicker = FLICKER_S;
+      this.flickerHold = 0;
     }
     if (d.crush[1] > LIGHTS_CRUSH && !this.lightsOff.rear) {
       this.lightsOff.rear = glass = true;
@@ -171,9 +199,11 @@ export class DamageVisuals {
 
   private emitSmoke(dt: number) {
     const d = this.dmg!;
-    const rate = d.totaled ? 22 : 6 + 14 * Math.min(1, (d.engine - 0.25) / 0.6);   // particles/s
+    // particles/s: engine damage, more while it smoulders, thick and black once burning
+    const burning = d.fire > 0 || d.totaled;
+    const rate = burning ? 24 : Math.max(6 + 14 * THREE.MathUtils.clamp((d.engine - 0.25) / 0.6, 0, 1), 8 + 16 * d.smoulder);
     this.smokeAcc += dt * rate;
-    const grey = d.totaled ? 0.03 : 0.55 - 0.43 * d.engine;   // grey -> black as the engine dies
+    const grey = burning ? 0.03 : Math.min(0.55 - 0.43 * d.engine, 0.5 - 0.4 * d.smoulder);   // grey -> black
     this.smoke.color.setRGB(grey, grey, grey);
     const origin = new THREE.Vector3(...this.cfg.engine_smoke_in_model_m).sub(this.car.cg).applyMatrix4(this.car.root.matrixWorld);
     while (this.smokeAcc >= 1) {
@@ -184,78 +214,48 @@ export class DamageVisuals {
   }
 
   /**
-   * Push vertices near p (model space) along dir by depth metres. Falloff w = (1 - (r/R)^2)^2
-   * (smooth, zero slope at the edge); the dent radius grows with total crush. A deterministic
-   * per-vertex jitter perpendicular to the push adds crumple wrinkles. Work is queued per panel.
+   * Engine fire from the core's fire state (0..1, grows over ~45 s): flames from the engine bay,
+   * rate and size growing with it, plus an orange point light flickering on two incommensurate
+   * sines and noise (fire light never holds still).
    */
-  private dent(p: THREE.Vector3, dir: THREE.Vector3, depth: number, total: number) {
-    const R = THREE.MathUtils.clamp(0.45 + 0.9 * total, 0.45, 1.2);
-    const invModel = this.car.model.matrixWorld.clone().invert();
-    for (const m of this.deformables) {
-      if (!m.parent || this.detached.has(m.name)) continue;
-      if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
-      const box = m.geometry.boundingBox!.clone().applyMatrix4(invModel.clone().multiply(m.matrixWorld)).expandByScalar(R);
-      if (box.containsPoint(p)) this.dentQueue.push([m, p, dir, depth, R]);
+  private updateFire(dt: number) {
+    const f = this.dmg?.fire ?? 0;
+    if (f <= 0) { this.fireLight.intensity = 0; return; }
+    const g = 0.25 + 0.75 * f;                                   // visual size: small flames at ignition
+    const time = performance.now() / 1000;
+    const flick = 0.7 + 0.18 * Math.sin(time * 23) + 0.12 * Math.sin(time * 37.7) + 0.15 * (Math.random() - 0.5);
+    this.fireLight.intensity = 60 * g * flick;
+    this.fireLight.distance = 6 + 6 * g;
+    const origin = new THREE.Vector3(...this.cfg.engine_smoke_in_model_m).sub(this.car.cg).applyMatrix4(this.car.root.matrixWorld);
+    this.fireAcc += dt * (12 + 48 * f);
+    const v = new THREE.Vector3(), p = new THREE.Vector3();
+    while (this.fireAcc >= 1) {
+      this.fireAcc -= 1;
+      p.set((Math.random() - 0.5) * 0.7 * g, 0.05, (Math.random() - 0.5) * 0.5 * g).add(origin);
+      v.set((Math.random() - 0.5) * 0.5, 1 + Math.random() * 1.2 * g, (Math.random() - 0.5) * 0.5);
+      this.flames.emit(p, v, 0.35 + Math.random() * 0.35 * g, (0.22 + Math.random() * 0.2) * g);
+      if (Math.random() < 0.5) this.flameCore.emit(p, v.multiplyScalar(0.7), 0.25 + Math.random() * 0.15, (0.14 + Math.random() * 0.1) * g);
     }
   }
 
-  private dentMesh(m: THREE.Mesh, p: THREE.Vector3, dir: THREE.Vector3, depth: number, R: number) {
-    if (!m.parent || this.detached.has(m.name)) return;
-    if (!this.original.has(m)) {   // per-car copy before editing (models are shared between cars)
-      m.geometry = m.geometry.clone();
-      const n = m.geometry.getAttribute('normal') as THREE.BufferAttribute | undefined;
-      this.original.set(m, { pos: (m.geometry.getAttribute('position').array as Float32Array).slice(), nrm: n ? (n.array as Float32Array).slice() : null });
+  /** Headlights after a heavy front hit: random on/dim/off levels held 30-150 ms, then dead. */
+  private updateFlicker(dt: number) {
+    if (this.flicker <= 0) return;
+    this.flicker -= dt;
+    // intensity changes only, NOT visible = false: changing the scene's light set recompiles every
+    // lit material (a ~300 ms freeze on impact)
+    if (this.flicker <= 0) {
+      for (const s of this.car.headlights) s.intensity = 0;
+      this.killLights(this.cfg.front_lights);
+      return;
     }
-    const g = m.geometry;
-    const pos = g.getAttribute('position') as THREE.BufferAttribute;
-    const xf = new THREE.Matrix4().copy(this.car.model.matrixWorld).invert().multiply(m.matrixWorld);   // mesh -> model
-    const xinv = xf.clone().invert();
-    const side = dir.clone().cross(new THREE.Vector3(0, 1, 0)).normalize();
-    const vm = new THREE.Vector3(), disp = new THREE.Vector3();
-    const moved: number[] = [];
-    for (let i = 0; i < pos.count; i++) {
-      vm.fromBufferAttribute(pos, i).applyMatrix4(xf);
-      const r = vm.distanceTo(p);
-      if (r >= R) continue;
-      let w = 1 - (r / R) * (r / R);
-      w *= w;
-      const h = Math.sin(vm.x * 41 + vm.y * 17) * Math.cos(vm.z * 29);   // wrinkle noise
-      disp.copy(dir).multiplyScalar(depth * w)
-        .addScaledVector(side, h * depth * 0.25 * w)
-        .addScaledVector(new THREE.Vector3(0, 1, 0), h * 0.5 * depth * 0.25 * w);
-      vm.add(disp).applyMatrix4(xinv);
-      pos.setXYZ(i, vm.x, vm.y, vm.z);
-      moved.push(i);
+    if ((this.flickerHold -= dt) > 0) return;
+    this.flickerHold = 0.03 + Math.random() * 0.12;
+    const alive = this.flicker / FLICKER_S;                      // fewer "on" moments toward the end
+    for (const s of this.car.headlights) {
+      const on = Math.random() < 0.25 + 0.4 * alive;
+      s.intensity = on ? this.car.headlightIntensity * (0.25 + 0.75 * Math.random()) : 0;
     }
-    if (!moved.length) return;
-    pos.needsUpdate = true;
-    this.renormal(g, moved);
-    g.computeBoundingSphere();
-  }
-
-  /** Recompute normals only for moved vertices: sum of the face normals around them (CCW faces). */
-  private renormal(g: THREE.BufferGeometry, moved: number[]) {
-    const n = g.getAttribute('normal') as THREE.BufferAttribute | undefined;
-    if (!n) return;
-    const pos = g.getAttribute('position') as THREE.BufferAttribute;
-    const isMoved = new Uint8Array(pos.count);
-    for (const i of moved) { isMoved[i] = 1; n.setXYZ(i, 0, 0, 0); }
-    const idx = g.index;
-    const tri = idx ? idx.count : pos.count;
-    const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), fn = new THREE.Vector3();
-    for (let t = 0; t < tri; t += 3) {
-      const ia = idx ? idx.getX(t) : t, ib = idx ? idx.getX(t + 1) : t + 1, ic = idx ? idx.getX(t + 2) : t + 2;
-      if (!(isMoved[ia] || isMoved[ib] || isMoved[ic])) continue;
-      a.fromBufferAttribute(pos, ia); b.fromBufferAttribute(pos, ib); c.fromBufferAttribute(pos, ic);
-      fn.subVectors(b, a).cross(c.sub(a));
-      for (const k of [ia, ib, ic]) if (isMoved[k]) n.setXYZ(k, n.getX(k) + fn.x, n.getY(k) + fn.y, n.getZ(k) + fn.z);
-    }
-    for (const i of moved) {
-      a.fromBufferAttribute(n, i);
-      if (a.lengthSq() > 0) a.normalize(); else a.set(0, 1, 0);
-      n.setXYZ(i, a.x, a.y, a.z);
-    }
-    n.needsUpdate = true;
   }
 
   /** A part breaks off: it becomes a 6 kg Rapier body carrying the car's velocity, gone after 30 s. */
@@ -306,7 +306,10 @@ export class DamageVisuals {
         const m = o as THREE.Mesh;
         if (!m.isMesh) return;
         this.lightMats.set(m, m.material);
-        const dark = (Array.isArray(m.material) ? m.material[0] : m.material).clone() as THREE.MeshStandardMaterial;
+        const src = Array.isArray(m.material) ? m.material[0] : m.material;
+        const dark = src.clone() as THREE.MeshStandardMaterial;
+        // clone() drops custom node properties: keep the dents (same node -> same pipeline)
+        (dark as unknown as { positionNode: unknown }).positionNode = (src as unknown as { positionNode: unknown }).positionNode;
         dark.color?.setScalar(0.05);
         dark.emissive?.setScalar(0);
         m.material = dark;
@@ -316,13 +319,7 @@ export class DamageVisuals {
 
   /** Full repair (reset): geometry, parts, lights, effects. */
   repair() {
-    for (const [m, o] of this.original) {
-      (m.geometry.getAttribute('position').array as Float32Array).set(o.pos);
-      m.geometry.getAttribute('position').needsUpdate = true;
-      const n = m.geometry.getAttribute('normal');
-      if (n && o.nrm) { (n.array as Float32Array).set(o.nrm); n.needsUpdate = true; }
-      m.geometry.computeBoundingSphere();
-    }
+    this.dents.clear();
     for (const d of this.detached.values()) {
       if (d.body.isValid()) this.pw.world.removeRigidBody(d.body);
       d.parent.add(d.node);
@@ -337,10 +334,13 @@ export class DamageVisuals {
     for (const s of this.car.headlights) s.intensity = this.car.headlightIntensity;
     this.lightsOff = { front: false, rear: false };
     this.applied = [0, 0, 0, 0];
-    this.dentQueue = [];
     this.lastImpacts = 0;
     this.dmg = null;
     this.smoke.clear();
     this.sparks.clear();
+    this.flames.clear();
+    this.flameCore.clear();
+    this.flicker = 0;
+    this.fireLight.intensity = 0;
   }
 }

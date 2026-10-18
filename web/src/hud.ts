@@ -12,6 +12,10 @@ function arc(f0: number, f1: number, r: number) {
   return `M ${x0} ${y0} A ${r} ${r} 0 ${SWEEP * (f1 - f0) > 180 ? 1 : 0} 1 ${x1} ${y1}`;
 }
 
+// Warning lamps: flame (engine fire) and the ISO brake symbol, (!) in a circle with side arcs.
+const ICON_FIRE = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c1 4 5 6 5 11a5 5 0 0 1-10 0c0-2 1-3.5 2-4.5 0 2 1 3 2 3 0-3-1-6 1-9.5z"/></svg>';
+const ICON_BRAKE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="6.5"/><path d="M4.5 6.5a9 9 0 0 0 0 11M19.5 6.5a9 9 0 0 1 0 11M12 8.5v4.5M12 15.6v.1"/></svg>';
+
 export function formatLap(t: number) {
   if (!(t > 0)) return '—';
   const m = Math.floor(t / 60), s = t - m * 60;
@@ -25,6 +29,7 @@ export class Hud {
   private rev = 0;
   private lapsSeen = 0;
   private toastTimer = 0;
+  private warnHtml = '';
   extra = '';
   fps = 60;
 
@@ -84,13 +89,27 @@ export class Hud {
       on('ABS', assists.abs, out[OUT.abs] > 0), on('TC', assists.tc, out[OUT.tc] > 0.01),
       on('ESC', assists.esc, out[OUT.esc] !== 0), on('AUTO', assists.autoGearbox),
     ].join(' · ');
+    this.updateWarnings(dmg);
     const el = $('damage');
     if (!dmg || dmg.totalKj < 1) { el.textContent = ''; return; }
     const pct = (x: number) => Math.round(Math.min(1, x) * 100);
     el.classList.toggle('bad', dmg.totaled);
     el.textContent = dmg.totaled
-      ? 'TOTALED · press R'
+      ? 'WRECKED · limping · R repairs'
       : `DAMAGE  body ${pct(Math.max(...dmg.zone))}%  engine ${pct(dmg.engine)}%  wheels ${pct(Math.max(...dmg.wheel))}%`;
+  }
+
+  /** Fire and brake lamps (DOM rebuilt only when the text changes). */
+  private updateWarnings(dmg: Damage | null) {
+    const chips: string[] = [];
+    if (dmg) {
+      if (dmg.fire > 0) chips.push(`<div class="chip red">${ICON_FIRE}ENGINE FIRE</div>`);
+      else if (dmg.smoulder > 0) chips.push(`<div class="chip">${ICON_FIRE}ENGINE OVERHEATING</div>`);
+      if (dmg.brakesFailed) chips.push(`<div class="chip red">${ICON_BRAKE}NO BRAKES</div>`);
+      else if (dmg.brakes < 0.97) chips.push(`<div class="chip">${ICON_BRAKE}BRAKES FADING ${Math.round(dmg.brakes * 100)}%</div>`);
+    }
+    const html = chips.join('');
+    if (html !== this.warnHtml) $('warn').innerHTML = this.warnHtml = html;
   }
 
   private updateLaps(lap: LapInfo, dt: number) {

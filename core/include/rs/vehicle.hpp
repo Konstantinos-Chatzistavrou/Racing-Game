@@ -91,6 +91,7 @@ struct DamageState {
     double aero_drag = 1.0;
     std::array<double, 4> toe{};               // rad, added to each wheel's steer angle
     std::array<double, 4> grip{1, 1, 1, 1};    // tyre grip multiplier
+    double brakes = 1.0;                       // brake effectiveness (fade / failure), all brakes
 };
 
 class Vehicle {

@@ -158,11 +158,7 @@ EMSCRIPTEN_KEEPALIVE void rs_step(int id, double dt) {
     a.tc = b[89] > 0.5;
     a.esc = b[90] > 0.5;
     c.controls->settings.auto_gearbox = b[91] > 0.5;
-    if (c.out.damage.totaled) {
-        raw = rs::RawInput{};
-        raw.device = rs::InputDevice::Wheel;
-        raw.brake = 0.15;
-    }
+    // No input cut-off when totaled: the car always stays drivable (limp home, see damage.hpp).
 
     const rs::DriverInput di = c.controls->update(raw, c.out, dt);
     c.vehicle->set_input(di);
@@ -213,7 +209,9 @@ EMSCRIPTEN_KEEPALIVE void rs_contact(int id, double x, double y, double z, doubl
 // Damage report -> buf[200..]: crush m (front, rear, left, right) [200..203], zone 0..1 [204..207],
 // wheel 0..1 FL FR RL RR [208..211], engine 0..1 [212], last impact kJ [213],
 // last impact point in the car's LOCAL three frame (X left, Y up, Z fwd; origin CG) [214..216],
-// last zone [217], impacts [218], totaled [219], total kJ [220]
+// last zone [217], impacts [218], totaled [219] (report only: the car stays drivable), total kJ [220],
+// smoulder 0..1 [221], fire 0..1 [222], brake effectiveness 0..1 [223], brakes failed [224],
+// severity 0..1 [225]
 EMSCRIPTEN_KEEPALIVE void rs_damage(int id) {
     Car& c = *g_cars[id];
     const rs::DamageReport& d = c.out.damage;
@@ -227,6 +225,11 @@ EMSCRIPTEN_KEEPALIVE void rs_damage(int id) {
     b[18] = d.impacts;
     b[19] = d.totaled ? 1 : 0;
     b[20] = d.total_energy_kj;
+    b[21] = d.smoulder;
+    b[22] = d.fire;
+    b[23] = d.brakes;
+    b[24] = d.brakes_failed ? 1 : 0;
+    b[25] = c.vehicle->damage_model().severity();
 }
 
 EMSCRIPTEN_KEEPALIVE void rs_repair(int id) {
