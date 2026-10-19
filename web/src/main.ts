@@ -10,6 +10,7 @@ import { CoreCar, CoreRace, OUT, loadCore, type LapInfo } from './physics/core';
 import { CarBody, DT, PhysicsWorld, loadRapier } from './physics/world';
 import { CityLighting, loadCity } from './scene/city';
 import { CarVisual, type CarVisualConfig } from './scene/car';
+import { initLoaders } from './scene/loaders';
 import { CameraRig } from './camera';
 import { Input } from './input';
 import { Hud } from './hud';
@@ -58,6 +59,7 @@ async function main() {
   renderer.shadowMap.enabled = params.get('shadows') !== '0';
   renderer.shadowMap.type = THREE.PCFShadowMap;
   await renderer.init();
+  initLoaders(renderer);   // shared glTF decoders (meshopt, KTX2), scene/loaders.ts
   const webgpu = !!(renderer.backend as { isWebGPUBackend?: boolean }).isWebGPUBackend;
   const backend = webgpu ? 'WebGPU' : 'WebGL 2';
   if (webgpu) renderer.lighting = new ClusteredLighting(512);   // needs compute shaders
