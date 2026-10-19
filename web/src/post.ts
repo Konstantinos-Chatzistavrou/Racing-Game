@@ -124,7 +124,7 @@ export class Post {
   private blooms: { node: BloomNode; res: number }[] = [];
   private scaled: { setResolutionScale(s: number): unknown }[] = [];
   private smaas: ScaledSMAA[] = [];
-  private sharpness = uniform(0.25);
+  private sharpness = uniform(0.5);
   private _scale = 1;
   preset: PresetName;
 
@@ -172,7 +172,7 @@ export class Post {
     for (const m of this.smaas) m.scale = s;
     for (const b of this.blooms) b.node.setResolutionScale(b.res * s);
     // full-resolution image: a light touch only (RCAS at 1:1 sharpens texture noise); reduced: stronger
-    this.sharpness.value = s >= 0.99 ? 1.0 : 0.35;
+    this.sharpness.value = s >= 0.99 ? 1.0 : 0.5;
   }
 
   render() { this.pipelines.get(this.preset)!.render(); }
