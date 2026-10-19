@@ -1,15 +1,46 @@
 // The city: visual meshes + collision meshes (nodes named "*-colonly", Godot's convention, kept
-// so the same Blender export feeds both builds) + night lighting from the exported lamps.
+// so the same Blender export feeds both builds) + night lighting from the exported lamps, plus the
+// instanced props (street lamps, hydrants, bins, shutters, sills, fire escapes...: instancing.ts).
+// Both GLBs are meshopt-compressed with KTX2 (Basis) textures (assets_source/scripts/build_city_assets.sh).
+// Static base geometry is already merged per material per 160 m tile by make_city.py (one draw call
+// per material per tile, culled per tile by three's frustum test).
 import * as THREE from 'three/webgpu';
+import { texture, uv, floor, hash, vec3, float, mix, step, smoothstep, positionWorld, mx_noise_float } from 'three/tsl';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import type { PhysicsWorld } from '../physics/world';
 import type { CarInfo } from '../physics/core';
+import { CityInstances, type PropsJson } from './instancing';
 
 export interface CityLight { pos: THREE.Vector3; color: THREE.Color; intensity: number; range: number }
-export interface City { root: THREE.Object3D; lights: CityLight[]; lamps: number; neon: number }
+export interface City {
+  root: THREE.Object3D; lights: CityLight[]; lamps: number; neon: number; props: CityInstances;
+  /** per frame: re-pick the visible prop instances / LODs (skipped while the camera is still) */
+  update: (camera: THREE.Camera) => void;
+}
 
-export async function loadCity(scene: THREE.Scene, pw: PhysicsWorld, surfaces: CarInfo['surfaces'], onProgress: (f: number) => void): Promise<City> {
-  const gltf = await new GLTFLoader().loadAsync('/assets/city/city.glb', (e) => e.total && onProgress(e.loaded / e.total));
+// Shared loader: meshopt geometry + KTX2 textures (the Basis transcoder is served from /basis/, a
+// copy of three/examples/jsm/libs/basis). City-local for now (a shared scene/loaders.ts may replace
+// it); detectSupport needs the initialised renderer to pick BC7 / ETC2 / ASTC.
+let loader: GLTFLoader | null = null;
+function cityLoader(renderer: THREE.WebGPURenderer) {
+  if (loader) return loader;
+  const ktx2 = new KTX2Loader().setTranscoderPath('/basis/').detectSupport(renderer);
+  loader = new GLTFLoader().setKTX2Loader(ktx2).setMeshoptDecoder(MeshoptDecoder);
+  return loader;
+}
+
+export async function loadCity(scene: THREE.Scene, pw: PhysicsWorld, surfaces: CarInfo['surfaces'], onProgress: (f: number) => void,
+  renderer: THREE.WebGPURenderer): Promise<City> {
+  const L = cityLoader(renderer);
+  const prog = [0, 0];
+  const report = () => onProgress(prog[0] * 0.75 + prog[1] * 0.25);
+  const [gltf, lib, props] = await Promise.all([
+    L.loadAsync('/assets/city/city.glb', (e) => { if (e.total) { prog[0] = e.loaded / e.total; report(); } }),
+    L.loadAsync('/assets/city/city_props.glb', (e) => { if (e.total) { prog[1] = e.loaded / e.total; report(); } }),
+    fetch('/data/city_props.json').then((r) => r.json() as Promise<PropsJson>),
+  ]);
   const root = gltf.scene;
   root.updateMatrixWorld(true);
 
@@ -22,7 +53,8 @@ export async function loadCity(scene: THREE.Scene, pw: PhysicsWorld, surfaces: C
     if (m.isMesh) {
       m.castShadow = false;
       m.receiveShadow = true;
-      for (const mat of materialsOf(m)) tuneMaterial(mat);
+      m.material = Array.isArray(m.material) ? m.material.map((x) => tuneMaterial(x as THREE.MeshStandardMaterial))
+        : tuneMaterial(m.material as THREE.MeshStandardMaterial);
     }
   });
 
@@ -33,6 +65,14 @@ export async function loadCity(scene: THREE.Scene, pw: PhysicsWorld, surfaces: C
   }
   for (const m of collision) m.removeFromParent();
   root.traverse((o) => { if (o.name.endsWith('-colonly')) o.visible = false; });
+
+  // Instanced props. Sidewalk props with a collider (hydrants, bins, utility boxes) get static
+  // boxes; lamp posts already have theirs in the "-colonly" meshes.
+  const inst = new CityInstances(lib.scene, props);
+  let boxes = 0;
+  inst.forEachCollider((c, h, q) => { pw.addStaticBox(c, h, q, surfaces.wall); boxes++; });
+  root.add(inst.root);
+  console.info(`city: ${inst.assets.length} instanced assets, ${inst.assets.reduce((s, a) => s + a.meta.count, 0)} instances, ${boxes} prop colliders`);
 
   // Exported lamps are physical spot lights in Blender units: replaced by point lights (see
   // CityLighting). Street lamps: warm, short range; neon signs: tinted, very short. Both kept LOW:
@@ -51,7 +91,7 @@ export async function loadCity(scene: THREE.Scene, pw: PhysicsWorld, surfaces: C
     l.removeFromParent();
   }
   scene.add(root);
-  return { root, lights: out, lamps, neon };
+  return { root, lights: out, lamps, neon, props: inst, update: (camera) => inst.update(camera) };
 }
 
 function meshesOf(o: THREE.Object3D): THREE.Mesh[] {
@@ -64,18 +104,75 @@ export function materialsOf(m: THREE.Mesh): THREE.MeshStandardMaterial[] {
   return (Array.isArray(m.material) ? m.material : [m.material]) as THREE.MeshStandardMaterial[];
 }
 
-function tuneMaterial(mat: THREE.MeshStandardMaterial) {
-  for (const t of [mat.map, mat.emissiveMap, mat.normalMap, mat.roughnessMap]) if (t) t.anisotropy = 4;
-  switch (mat.name) {
-    case 'road_asphalt':
-      // Night street after rain: darker, glossier asphalt picks up lamp and neon reflections.
-      mat.color.setScalar(0.45);
-      mat.roughness = 0.35;
-      break;
-    case 'road_paint':
-      mat.roughness = 0.5;
-      break;
+/** Node-material copy of a glTF standard material (maps and factors), for TSL overrides. */
+function toNode(src: THREE.MeshStandardMaterial) {
+  const m = new THREE.MeshStandardNodeMaterial();
+  m.name = src.name;
+  m.color.copy(src.color);
+  m.map = src.map;
+  m.normalMap = src.normalMap;
+  m.normalScale.copy(src.normalScale);
+  m.roughnessMap = src.roughnessMap;
+  m.metalnessMap = src.metalnessMap;
+  m.roughness = src.roughness;
+  m.metalness = src.metalness;
+  m.aoMap = src.aoMap;
+  m.emissive.copy(src.emissive);
+  m.emissiveMap = src.emissiveMap;
+  m.emissiveIntensity = src.emissiveIntensity;
+  m.side = src.side;
+  return m;
+}
+
+// Lit windows: the facade/shop emissive map is a MASK (glass = white); which windows are lit and in
+// what colour is decided per window bay in the shader: bay id = floor(uv) (facades are UV-mapped in
+// whole bays, each building with its own offset), hashed. A third of the windows lit (warm
+// tungsten, cool fluorescent or a dim bluish TV), the rest dark glass reflecting the street.
+// Brightness matched by eye to the previous night look (emissive 3 on the old window textures).
+function litWindows(mat: THREE.MeshStandardNodeMaterial, share: number, strength: number) {
+  const cell = floor(uv());
+  const seed = cell.x.add(1000).mul(157).add(cell.y.add(1000).mul(311)).add(7);
+  const h = hash(seed), h2 = hash(seed.add(17)), h3 = hash(seed.add(41));
+  const warm = vec3(1.0, 0.66, 0.36), cool = vec3(0.72, 0.85, 1.0), tv = vec3(0.35, 0.45, 0.9);
+  const col = mix(mix(warm, cool, step(0.62, h2)), tv, step(0.9, h2));
+  const lit = step(1 - share, h).mul(float(0.45).add(h3.mul(0.75)));
+  mat.emissiveNode = texture(mat.emissiveMap!, uv()).rgb.mul(col).mul(lit).mul(strength);
+}
+
+function tuneMaterial(src: THREE.MeshStandardMaterial): THREE.Material {
+  for (const t of [src.map, src.emissiveMap, src.normalMap, src.roughnessMap]) if (t) t.anisotropy = 4;
+  const name = src.name;
+  if (name === 'road_asphalt') {
+    // Night street after rain: dark asphalt, glossy where wet. Large-scale (15-60 m) noise breaks
+    // the 3 m tiling: patches of darker/lighter wear, and puddles (roughness -> 0.05 and a darker
+    // albedo) where the noise peaks, so lamps and headlights leave long reflections in them.
+    const m = toNode(src);
+    const wp = positionWorld;
+    const wear = mx_noise_float(vec3(wp.x.mul(0.017), 0, wp.z.mul(0.017))).mul(0.5).add(0.5);
+    const pud = smoothstep(0.32, 0.5, mx_noise_float(vec3(wp.x.mul(0.06), 3.1, wp.z.mul(0.06))));
+    const base = texture(src.map!, uv()).rgb.mul(mix(float(0.38), float(0.6), wear));
+    m.colorNode = base.mul(mix(float(1), float(0.55), pud));
+    m.roughnessNode = mix(texture(src.roughnessMap!, uv()).g.mul(0.62), float(0.05), pud);
+    m.normalScale.setScalar(0.8);
+    return m;
   }
+  if (name === 'road_paint' || name === 'road_decal') {
+    // alpha-tested (no blending, no sorting); pulled toward the camera so it never z-fights the road
+    src.transparent = false;
+    src.alphaTest = 0.5;
+    src.depthWrite = true;
+    src.polygonOffset = true;
+    src.polygonOffsetFactor = -1;
+    src.polygonOffsetUnits = -4;
+    if (name === 'road_paint') src.color.setScalar(0.8);
+    return src;
+  }
+  if (name.startsWith('facade_') || name === 'shopfront') {
+    const m = toNode(src);
+    if (name === 'shopfront') litWindows(m, 0.75, 2.2); else litWindows(m, 0.34, 2.6);
+    return m;
+  }
+  return src;
 }
 
 /**
