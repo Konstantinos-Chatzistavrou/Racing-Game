@@ -28,4 +28,5 @@
 
 # Raw third-party downloads (rebuilt by assets_source/scripts/fetch_city_assets.py) and local tools
 /assets_source/downloads/
+/assets_source/build/
 /tools/ktx/
