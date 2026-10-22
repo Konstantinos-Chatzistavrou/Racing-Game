@@ -34,7 +34,7 @@ function send(method, params = {}) {
   return new Promise((res, rej) => pending.set(id, { res, rej }));
 }
 async function evaluate(expr) {
-  const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true });
+  const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true, userGesture: true });   // userGesture: element.click() counts as a user activation (fullscreen)
   if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? 'eval error');
   return r.result.value;
 }
@@ -104,6 +104,7 @@ try {
     console.log('title ', await st(), await evaluate(`document.querySelector('.note')?.textContent`));
     await shot('m1_title.png');
     await click('[data-act=start]'); await sleep(2500); await shot('m2_garage.png');
+    console.log('fullscreen', await evaluate(`JSON.stringify({ fs: !!document.fullscreenElement, inner: [innerWidth, innerHeight], extra: window.__game.menu && document.getElementById('perf')?.textContent })`));
     await click(`[data-act=car][data-v=${process.env.MENU_CAR ?? 'vela_gtr'}]`); await sleep(500);
     await click('[data-act=paint][data-v="#1d4ed8"]'); await click('[data-act=finish][data-v=metallic]');
     if (!process.env.NOMODS) { await click('[data-act=mod][data-k=engine][data-v="2"]'); await click('[data-act=mod][data-k=tyres][data-v="1"]'); }

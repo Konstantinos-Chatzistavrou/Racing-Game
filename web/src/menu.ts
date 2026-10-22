@@ -144,9 +144,20 @@ export class Menu {
   }
 
   // ---- events ----------------------------------------------------------------------------------
+  /** Fullscreen needs a user gesture, so the first menu click asks for it (once per page; ?fs=0 turns it off, F toggles later). */
+  private fsAsked = false;
+  private askFullscreen() {
+    if (this.fsAsked || document.fullscreenElement || new URLSearchParams(location.search).get('fs') === '0') return;
+    this.fsAsked = true;
+    document.documentElement.requestFullscreen?.({ navigationUI: 'hide' }).then(() => {
+      (screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> }).lock?.('landscape').catch(() => {});
+    }).catch(() => { /* refused (iframe, policy): stay windowed */ });
+  }
+
   private click(e: Event) {
     const b = (e.target as HTMLElement).closest('[data-act]') as HTMLElement | null;
     if (!b || (b as HTMLButtonElement).disabled) return;
+    if (b.dataset.act === 'go' || b.dataset.act === 'start') this.askFullscreen();
     const v = b.dataset.v ?? '', sel = this.sel;
     switch (b.dataset.act) {
       case 'start': this.show('garage'); this.hooks.preview(); break;
