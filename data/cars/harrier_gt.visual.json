@@ -1,0 +1,108 @@
+{
+  "schema": "car_visual/1",
+  "name": "Harrier GT",
+  "physics": "cars/harrier_gt.json",
+  "model": "res://assets/cars/v4/harrier_gt_hero.glb",
+  "notes": "modified from '2018 Mercedes C-Coup\u00e9 DTM' by Dave Love SketchFab (CC BY 4.0, CREDITS.md). Model space +X left, +Y up, +Z forward, origin on the ground at the body length centre. Front axle z 1.220, rear -1.430 (wheelbase 2.650), hubs y 0.331, model track 1.549.",
+  "cg_in_model_m": [
+    0.0,
+    0.51,
+    -0.158
+  ],
+  "wheel_nodes": {
+    "fl": "wheel_FL",
+    "fr": "wheel_FR",
+    "rl": "wheel_RL",
+    "rr": "wheel_RR"
+  },
+  "wheel_visual_offset_m": 0.03,
+  "collision_box": {
+    "size_m": [
+      1.93,
+      0.72,
+      4.33
+    ],
+    "centre_in_model_m": [
+      0.0,
+      0.72,
+      0.0
+    ],
+    "end_lift_m": 0.13,
+    "end_lift_start_m": 1.59,
+    "note": "body 1.98 x 1.17 x 4.38 m; flat underside, rising to each end; wheels are raycasts"
+  },
+  "paint_material": "paint",
+  "default_paint": [
+    0.55,
+    0.03,
+    0.02
+  ],
+  "headlights": [
+    [
+      -0.62,
+      0.52,
+      1.89
+    ],
+    [
+      0.62,
+      0.52,
+      1.89
+    ]
+  ],
+  "panels": {
+    "front": [
+      "bumper_front",
+      "body",
+      "drl_L",
+      "drl_R",
+      "beam_L",
+      "beam_R"
+    ],
+    "rear": [
+      "bumper_rear",
+      "taillight_bar",
+      "taillight_housing",
+      "wing"
+    ],
+    "left": [
+      "mirror_L"
+    ],
+    "right": [
+      "mirror_R"
+    ]
+  },
+  "detachable": {
+    "bumper_front": [
+      "front",
+      0.7
+    ],
+    "bumper_rear": [
+      "rear",
+      0.7
+    ],
+    "mirror_L": [
+      "left",
+      0.45
+    ],
+    "mirror_R": [
+      "right",
+      0.45
+    ]
+  },
+  "front_lights": [
+    "drl_L",
+    "drl_R",
+    "beam_L",
+    "beam_R"
+  ],
+  "rear_lights": [
+    "taillight_bar"
+  ],
+  "engine_smoke_in_model_m": [
+    0.0,
+    0.78,
+    1.59
+  ],
+  "lod_model": "res://assets/cars/v3/vela_gt_traffic.glb",
+  "lod_distance_m": 30.0
+}

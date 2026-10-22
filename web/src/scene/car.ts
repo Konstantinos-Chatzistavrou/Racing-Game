@@ -120,7 +120,7 @@ export class CarVisual {
   /** The car's own clone of the paint material (garage colour + finish). */
   readonly paint: THREE.MeshPhysicalMaterial | null;
 
-  private constructor(readonly cfg: CarVisualConfig, readonly model: THREE.Object3D) {
+  private constructor(readonly cfg: CarVisualConfig, readonly model: THREE.Object3D, shared?: THREE.SpotLight[]) {
     this.cg = new THREE.Vector3(...cfg.cg_in_model_m);
     model.position.copy(this.cg).negate();
     this.root.add(model);
@@ -131,15 +131,19 @@ export class CarVisual {
       this.wheels.push({ node, rest: node.quaternion.clone(), caliper });
     }
     this.paint = setupCarMaterials(model, cfg, null);
-    // Headlights: two shadow-casting spots (the only dynamic shadows in the scene).
+    // Headlights: two shadow-casting spots (the only dynamic shadows in the scene). A garage car swap passes the
+    // previous car's spots in: removing a shadow-casting light destroys its shadow map mid-frame (WebGPU validation
+    // error) and changes the light count (shader recompile), so the same two lights move to the new body.
     for (const [i, hp] of cfg.headlights.entries()) {
-      const s = new THREE.SpotLight(0xfff3e0, this.headlightIntensity, 70, 0.42, 0.45, 2);
+      const s = shared?.[i] ?? new THREE.SpotLight(0xfff3e0, this.headlightIntensity, 70, 0.42, 0.45, 2);
       s.position.set(hp[0], hp[1], hp[2]).sub(this.cg);
       s.target.position.copy(s.position).add(new THREE.Vector3(0, -1.1, 14));
-      s.castShadow = i === 0;
-      s.shadow.mapSize.set(1024, 1024);
-      s.shadow.camera.near = 0.3;
-      s.shadow.bias = -0.0004;
+      if (!shared) {
+        s.castShadow = i === 0;
+        s.shadow.mapSize.set(1024, 1024);
+        s.shadow.camera.near = 0.3;
+        s.shadow.bias = -0.0004;
+      }
       this.root.add(s, s.target);
       this.headlights.push(s);
     }
@@ -160,9 +164,9 @@ export class CarVisual {
     for (const s of this.headlights) s.intensity = this.lightsOn && !this.lightsBroken ? this.headlightIntensity : 0;
   }
 
-  static async load(cfg: CarVisualConfig): Promise<CarVisual> {
+  static async load(cfg: CarVisualConfig, sharedHeadlights?: THREE.SpotLight[]): Promise<CarVisual> {
     const gltf = await loadGLTF(assetUrl(cfg.model));
-    return new CarVisual(cfg, gltf.scene);
+    return new CarVisual(cfg, gltf.scene, sharedHeadlights);
   }
 
   /**

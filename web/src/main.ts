@@ -381,7 +381,7 @@ async function main() {
     const path = visualPathOf(sel.car);
     if (path === visualPath) return;
     const cfg = path === DEFAULT_VISUAL ? defaultCfg : await fetchVisualCfg(path);
-    const next = await CarVisual.load(cfg);
+    const next = await CarVisual.load(cfg, visual.headlights);
     scene.remove(visual.root);
     damage.dispose();
     visualPath = path; visualCfg = cfg; visual = next; shape = shapeOf(cfg);
