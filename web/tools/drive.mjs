@@ -135,6 +135,21 @@ try {
     await evaluate(`(window.__game.menu().showResults({ total: 187.234, best: 61.5, laps: [64.2, 61.5, 61.534], laps_target: 3 }), 1)`); await sleep(500);
     await shot('o3_results.png');
   }
+  if (scenario === 'wheels') {
+    // Garage views from the front, rear and side (run with ?menu=1): wheel / fender fit.
+    const click = (q) => evaluate(`(() => { const e = document.querySelector('${q}'); if (e) e.click(); return 1; })()`);
+    for (let i = 0; i < 90 && (await evaluate(`window.__game.menu().tuning`)); i++) await sleep(500);
+    await click('[data-act=start]'); await sleep(800);
+    await evaluate(`(document.getElementById('menu').style.display = 'none', 1)`);
+    const views = [['front', Math.PI, 0.12, 5.5], ['rear', 0, 0.12, 5.5], ['side', Math.PI / 2, 0.05, 6.5], ['front34', 2.4, 0.18, 5.5]];
+    for (const off of (process.env.OFFSETS ?? '').split(',').filter(Boolean)) {
+      await evaluate(`(window.__game.visual.cfg.wheel_visual_offset_m = ${off}, 1)`);
+      for (const [n, az, el, d] of views.slice(3)) { await evaluate(`(Object.assign(window.__game.orbit, { az: ${az}, el: ${el}, dist: ${d}, drag: true }), 1)`); await sleep(1200); await shot(`w_${n}_off${off}.png`); }
+    }
+    if (!process.env.OFFSETS) for (const [n, az, el, d] of views) {
+      await evaluate(`(Object.assign(window.__game.orbit, { az: ${az}, el: ${el}, dist: ${d}, drag: true }), 1)`); await sleep(1500); await shot(`w_${n}.png`);
+    }
+  }
   if (scenario === 'perf') {
     // Render cost A/B: frame intervals AND GPU time per frame (WebGPU timestamp queries, enabled
     // here at runtime) plus GPU-independent counts (draw calls, triangles) from renderer.info.
