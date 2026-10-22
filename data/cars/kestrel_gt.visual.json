@@ -1,0 +1,108 @@
+{
+  "schema": "car_visual/1",
+  "name": "Kestrel GT",
+  "physics": "cars/kestrel_gt.json",
+  "model": "res://assets/cars/v4/kestrel_gt_hero.glb",
+  "notes": "Generation 4 (docs/car_model_v4.md): de-branded, re-shaped derivative of '2019 Aston Martin Vantage DTM' by Dave Love SketchFab (CC BY 4.0, CREDITS.md). Model space +X left, +Y up, +Z forward, origin on the ground at the body length centre. Front axle z 1.200, rear -1.450 (wheelbase 2.650), hubs y 0.321, model track 1.709.",
+  "cg_in_model_m": [
+    0.0,
+    0.51,
+    -0.178
+  ],
+  "wheel_nodes": {
+    "fl": "wheel_FL",
+    "fr": "wheel_FR",
+    "rl": "wheel_RL",
+    "rr": "wheel_RR"
+  },
+  "wheel_visual_offset_m": -0.051,
+  "collision_box": {
+    "size_m": [
+      1.96,
+      0.72,
+      4.44
+    ],
+    "centre_in_model_m": [
+      0.0,
+      0.72,
+      0.0
+    ],
+    "end_lift_m": 0.13,
+    "end_lift_start_m": 1.6,
+    "note": "body 2.01 x 1.11 x 4.49 m; flat underside between +-1.6 m, rising 0.13 m to each end; wheels are raycasts"
+  },
+  "paint_material": "paint",
+  "default_paint": [
+    0.55,
+    0.03,
+    0.02
+  ],
+  "headlights": [
+    [
+      -0.62,
+      0.52,
+      1.95
+    ],
+    [
+      0.62,
+      0.52,
+      1.95
+    ]
+  ],
+  "panels": {
+    "front": [
+      "bumper_front",
+      "body",
+      "drl_L",
+      "drl_R",
+      "beam_L",
+      "beam_R"
+    ],
+    "rear": [
+      "bumper_rear",
+      "taillight_bar",
+      "taillight_housing",
+      "wing"
+    ],
+    "left": [
+      "mirror_L"
+    ],
+    "right": [
+      "mirror_R"
+    ]
+  },
+  "detachable": {
+    "bumper_front": [
+      "front",
+      0.7
+    ],
+    "bumper_rear": [
+      "rear",
+      0.7
+    ],
+    "mirror_L": [
+      "left",
+      0.45
+    ],
+    "mirror_R": [
+      "right",
+      0.45
+    ]
+  },
+  "front_lights": [
+    "drl_L",
+    "drl_R",
+    "beam_L",
+    "beam_R"
+  ],
+  "rear_lights": [
+    "taillight_bar"
+  ],
+  "engine_smoke_in_model_m": [
+    0.0,
+    0.78,
+    1.65
+  ],
+  "lod_model": "res://assets/cars/v3/vela_gt_traffic.glb",
+  "lod_distance_m": 30.0
+}

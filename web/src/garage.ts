@@ -1,7 +1,7 @@
 // Garage data: the car catalog, tuning mods (a patch applied to the car's physics JSON before the
 // core is created), paint, and the saved selection. No DOM and no three.js here (menu.ts draws it).
 
-export interface CatalogCar { id: string; name: string; tag: string; physics: string; paint: string }
+export interface CatalogCar { id: string; name: string; tag: string; physics: string; paint: string; /** visual config (default: the shared Vela GT body) */ visual?: string }
 export type Finish = 'gloss' | 'satin' | 'metallic' | 'pearl' | 'candy' | 'matte';
 export type ModKey = 'engine' | 'tyres' | 'weight' | 'aero';
 export type Mods = Record<ModKey, number>;   // level 0 (stock) .. 3
@@ -86,6 +86,8 @@ export function loadSelection(cars: CatalogCar[], params: URLSearchParams): Sele
       if (typeof s.server === 'string' && /^wss?:\/\//.test(s.server)) sel.server = s.server;
     }
   } catch { /* storage blocked or corrupt: defaults */ }
+  const q = params.get('car');   // ?car=<id>: pick the car from the URL (tests, links)
+  if (q && cars.some((c) => c.id === q)) sel.car = q;
   const mp = params.get('mp');
   if (mp && mp !== '0') { sel.mode = 'online'; if (/^wss?:\/\//.test(mp)) sel.server = mp; }
   return sel;
