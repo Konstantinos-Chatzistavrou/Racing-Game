@@ -1,9 +1,35 @@
 {
   "schema": "garage_catalog/1",
-  "notes": "Cars offered in the garage. All three share the Vela GT body (data/cars/vela_gt.visual.json); they differ in physics (physics = data/cars/*.json) and default paint.",
+  "notes": "Cars offered in the garage. The Vela cars share the Vela GT body (data/cars/vela_gt.visual.json); an entry with its own \"visual\" brings its own model. Physics = data/cars/*.json.",
   "cars": [
-    { "id": "vela_touring", "name": "Vela GT Touring", "tag": "Relaxed grand tourer. Easy to place, forgiving at the limit.", "physics": "cars/vela_touring.json", "paint": "#b9bcc4" },
-    { "id": "vela_gt", "name": "Vela GT", "tag": "The balanced rear-drive coupe. Where every lap starts.", "physics": "cars/vela_gt.json", "paint": "#c0160f" },
-    { "id": "vela_gtr", "name": "Vela GT-R", "tag": "More power, stickier tyres, extra downforce. Rewards a clean line.", "physics": "cars/vela_gtr.json", "paint": "#e8890a" }
+    {
+      "id": "vela_touring",
+      "name": "Vela GT Touring",
+      "tag": "Relaxed grand tourer. Easy to place, forgiving at the limit.",
+      "physics": "cars/vela_touring.json",
+      "paint": "#b9bcc4"
+    },
+    {
+      "id": "vela_gt",
+      "name": "Vela GT",
+      "tag": "The balanced rear-drive coupe. Where every lap starts.",
+      "physics": "cars/vela_gt.json",
+      "paint": "#c0160f"
+    },
+    {
+      "id": "vela_gtr",
+      "name": "Vela GT-R",
+      "tag": "More power, stickier tyres, extra downforce. Rewards a clean line.",
+      "physics": "cars/vela_gtr.json",
+      "paint": "#e8890a"
+    },
+    {
+      "id": "kestrel_gt",
+      "name": "Kestrel GT",
+      "tag": "Track-bred coupe with its own body: long nose, big wing, a hard-edged aero kit.",
+      "physics": "cars/kestrel_gt.json",
+      "visual": "cars/kestrel_gt.visual.json",
+      "paint": "#2a6df4"
+    }
   ]
 }

@@ -108,9 +108,11 @@ async function main() {
   // --- physics + content ----------------------------------------------------------------------
   say('Loading physics…');
   await Promise.all([loadCore(), loadRapier()]);
-  const [catalog, visualCfg, route] = await Promise.all([
+  const DEFAULT_VISUAL = 'cars/vela_gt.visual.json';
+  const fetchVisualCfg = (path: string) => fetch(`/data/${path}`).then((r) => r.json() as Promise<CarVisualConfig>);
+  const [catalog, defaultCfg, route] = await Promise.all([
     fetch('/data/cars/catalog.json').then((r) => r.json() as Promise<{ cars: CatalogCar[] }>).then((j) => j.cars),
-    fetch('/data/cars/vela_gt.visual.json').then((r) => r.json() as Promise<CarVisualConfig>),   // the body all cars share
+    fetchVisualCfg(DEFAULT_VISUAL),   // the shared body: traffic, remote players, and every catalog car without its own
     fetch('/data/tracks/city_route.json').then((r) => r.json()),
   ]);
   const physics: Record<string, unknown> = {};
@@ -134,19 +136,26 @@ async function main() {
     scene.environmentIntensity = 0.5;
   }
   say('Loading car…');
-  const visual = await CarVisual.load(visualCfg);
+  // The player's body: each catalog car may bring its own model + visual config (garage swaps it).
+  const visualPathOf = (id: string) => catalog.find((c) => c.id === id)?.visual ?? DEFAULT_VISUAL;
+  const shapeOf = (cfg: CarVisualConfig): CarShape => {
+    const cb = cfg.collision_box;
+    return { boxSize: cb.size_m, boxCentre: cb.centre_in_model_m, endLift: cb.end_lift_m, endLiftStart: cb.end_lift_start_m };
+  };
+  let visualPath = visualPathOf(sel.car);
+  let visualCfg = visualPath === DEFAULT_VISUAL ? defaultCfg : await fetchVisualCfg(visualPath);
+  let visual = await CarVisual.load(visualCfg);
   scene.add(visual.root);
   visual.setPaint(paintOf(sel, catalog), sel.finish);
   let net: Net | null = null;   // only while an Online session runs
-  const cb = visualCfg.collision_box;
-  const shape: CarShape = { boxSize: cb.size_m, boxCentre: cb.centre_in_model_m, endLift: cb.end_lift_m, endLiftStart: cb.end_lift_start_m };
+  let shape = shapeOf(visualCfg);
   let car = new CarBody(pw, core, shape, visual.cg);
 
   // Rapier only indexes new colliders for queries during a step: step once so the spawn probe
   // below can see the city (without this the first spawn misses the road and drops 3 m).
   pw.world.step();
   say('Loading traffic…');
-  const ai = await AiTraffic.create(scene, pw, visualCfg, route.samples, Math.max(0, Math.min(3, num('ai', 3))), params.get('blackcar') === '1');
+  const ai = await AiTraffic.create(scene, pw, defaultCfg, route.samples, Math.max(0, Math.min(3, num('ai', 3))), params.get('blackcar') === '1');
 
   // Start line = first route sample (core coords: Z-up) -> three (x, z, -y).
   const s0 = route.samples[0];
@@ -171,8 +180,9 @@ async function main() {
   const hud = new Hud();
   const audio = new GameAudio();
   audio.prepare();   // the audio device opens now (behind the loading screen), not on the first key press
-  const damage = new DamageVisuals(visual, visualCfg, pw, scene);
-  damage.onImpact = (kj, glass) => audio.impact(kj, glass);
+  let damage = new DamageVisuals(visual, visualCfg, pw, scene);
+  const wireDamage = () => { damage.onImpact = (kj, glass) => audio.impact(kj, glass); };
+  wireDamage();
   input.onAnyInput = () => audio.unlock();
   audio.muted = true;   // silent in the menus
   // Session state. boot/title/garage/busy: car parked on the start line under the orbit camera;
@@ -224,7 +234,7 @@ async function main() {
   // Headlight shadow map: only the car bodies cast into it (the city does not cast), re-rendered
   // every Nth frame by preset (stale by one frame = ~1 m of light travel at 130 km/h, invisible:
   // map and light matrix stay paired, so shadows stay anchored to their casters).
-  const headShadows = visual.headlights.filter((s) => s.castShadow).map((s) => s.shadow);
+  let headShadows = visual.headlights.filter((s) => s.castShadow).map((s) => s.shadow);
   for (const sh of headShadows) sh.autoUpdate = false;
 
   rig.update(1, pos.copy(car.body.translation() as THREE.Vector3), quat.copy(car.body.rotation() as THREE.Quaternion), new THREE.Vector3(), car.out);
@@ -355,7 +365,7 @@ async function main() {
   // --- front end: title -> garage -> session -------------------------------------------------
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   const menu: Menu = new Menu(sel, catalog, physics, {
-    preview: () => visual.setPaint(paintOf(sel, catalog), sel.finish),
+    preview: () => { void showCar().then(() => visual.setPaint(paintOf(sel, catalog), sel.finish)); },
     go: () => void startSession(),
     gfx: (g2) => applyGfx(g2),
     resume: () => resume(),
@@ -365,7 +375,26 @@ async function main() {
   });
   menu.gfx = gfx;
 
-  /** A different car or tuning replaces the physics body; the visual (one shared body) stays. */
+  /** The garage car's own model (if its catalog entry has one): swapped in, damage visuals rebuilt. Serialised. */
+  let visualQueue: Promise<void> = Promise.resolve();
+  const showCar = () => (visualQueue = visualQueue.then(async () => {
+    const path = visualPathOf(sel.car);
+    if (path === visualPath) return;
+    const cfg = path === DEFAULT_VISUAL ? defaultCfg : await fetchVisualCfg(path);
+    const next = await CarVisual.load(cfg);
+    scene.remove(visual.root);
+    damage.dispose();
+    visualPath = path; visualCfg = cfg; visual = next; shape = shapeOf(cfg);
+    scene.add(visual.root);
+    visual.setPaint(paintOf(sel, catalog), sel.finish);
+    damage = new DamageVisuals(visual, visualCfg, pw, scene);
+    wireDamage();
+    headShadows = visual.headlights.filter((s) => s.castShadow).map((s) => s.shadow);
+    for (const sh of headShadows) sh.autoUpdate = false;
+    Object.assign(g.__game, { visual, damage });
+  }).catch((e) => console.error('car swap failed', e)));
+
+  /** A different car or tuning replaces the physics body (and, via showCar, the model). */
   const rebuildPlayer = () => {
     builtKey = carKey();
     pw.world.removeRigidBody(car.body);
@@ -377,6 +406,7 @@ async function main() {
   async function startSession() {
     setState('busy');
     menu.show('busy', sel.mode === 'online' ? 'Connecting…' : 'Getting ready…');
+    await showCar();
     visual.setPaint(paintOf(sel, catalog), sel.finish);
     if (carKey() !== builtKey) rebuildPlayer();
     if (sel.mode === 'online') {

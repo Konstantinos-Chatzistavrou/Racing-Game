@@ -141,6 +141,14 @@ export class DamageVisuals {
     scene.add(this.smoke.sprite, this.sparks.sprite, this.flames.sprite, this.flameCore.sprite);
   }
 
+  /** Garage car swap: take this car's sprites and fire light out of the scene (the model itself is dropped by the caller). */
+  dispose() {
+    this.scene.remove(this.smoke.sprite, this.sparks.sprite, this.flames.sprite, this.flameCore.sprite);
+    this.car.root.remove(this.fireLight);
+    for (const d of this.detached.values()) if (d.body.isValid()) this.pw.world.removeRigidBody(d.body);
+    this.detached.clear();
+  }
+
   /** Every frame. Damage is read from the core at 20 Hz; dents are applied one panel per frame. */
   update(dt: number, damage: () => Damage) {
     this.smoke.update(dt);
