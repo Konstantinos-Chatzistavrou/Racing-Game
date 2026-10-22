@@ -7,6 +7,7 @@
 // Flow: loading -> title (graphics tuned once behind a cover) -> garage (car, paint, tuning, mode) -> race / free run / online.
 import * as THREE from 'three/webgpu';
 import { Post, PRESETS, PRESET_ORDER, ScaledClusteredLighting, type PresetName } from './post';
+import { CarProbe } from './fx/carProbe';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { CoreCar, CoreRace, OUT, loadCore, type LapInfo, type RawInput } from './physics/core';
 import { CarBody, DT, PhysicsWorld, loadRapier, type CarShape } from './physics/world';
@@ -53,9 +54,9 @@ async function main() {
   // Graphics: 'auto' tunes resolution + preset ONCE behind a cover in the title menu (never while a
   // car is on screen); high/medium/low are fixed. ?scale / ?quality (test tools) pin on top of that.
   const GFX_KEY = 'nr.gfx';
-  const GFX_SCALE = { high: 1, medium: 0.85, low: 0.7 } as const;
+  const GFX_SCALE = { ultra: 1, high: 1, medium: 0.85, low: 0.7 } as const;
   let gfx: Gfx = 'auto';
-  try { const g = localStorage.getItem(GFX_KEY); if (g === 'high' || g === 'medium' || g === 'low') gfx = g; } catch { /* storage blocked */ }
+  try { const g = localStorage.getItem(GFX_KEY); if (g === 'ultra' || g === 'high' || g === 'medium' || g === 'low') gfx = g; } catch { /* storage blocked */ }
   let adaptive = gfx === 'auto' && !params.has('scale');
   const maxScale = 1;
   // Start near ~0.9 megapixels rendered (1.07 MP measured too heavy on the laptop iGPU at 60 Hz).
@@ -153,6 +154,9 @@ async function main() {
   let visual = await CarVisual.load(visualCfg);
   scene.add(visual.root);
   visual.setPaint(paintOf(sel, catalog), sel.finish);
+  // Live car reflection probe (src/fx/carProbe.ts): ?probe=N renders one 128 px cube face every Nth drawn frame; 0 = static city capture only.
+  const probe = webgpu && num('probe', 0) > 0 ? new CarProbe(renderer, scene, pmrem, num('probesize', 128), num('probe', 0)) : null;
+  probe?.attach(visual.model, num('probei', 1));
   let net: Net | null = null;   // only while an Online session runs
   let shape = shapeOf(visualCfg);
   let car = new CarBody(pw, core, shape, visual.cg);
@@ -255,9 +259,11 @@ async function main() {
   // share pipelines; the dark light clones are new materials with the same program.
   const warm = async () => {
     await renderer.compileAsync(scene, camera);
+    probe?.captureAll(pos, visual.root);
     for (const sh of headShadows) sh.needsUpdate = true;
     post.warmup();
   };
+  city.props.warmup(true);   // every prop LOD compiled + drawn now, not when it first comes into range
   await warm();
   if (ai.cars.length) {
     // draw the AI cars once in the headlight beam (their pipelines + shadow pass), then send them off
@@ -287,9 +293,12 @@ async function main() {
     const culled: THREE.Object3D[] = [];
     scene.traverse((o) => { if (o.frustumCulled && (o as THREE.Mesh).isMesh) { o.frustumCulled = false; culled.push(o); } });
     post.render();
+    probe?.captureAll(pos, visual.root);   // the probe's faces look behind and beside the car: their objects need their GPU resources too
     for (const o of culled) o.frustumCulled = true;
   }
-  await post.warmupFrames();
+  await post.warmupFrames();   // props still forced visible: each preset's scene pass compiles them too
+  city.props.warmup(false);
+  city.update(camera, true);
   // The warm-up queued a dozen full renders on the GPU: wait until it has worked through them, or
   // the first race frames block behind that backlog (a 130-220 ms frame 0.2-0.6 s after loading).
   if (webgpu) await (renderer.backend as unknown as { device: GPUDevice }).device.queue.onSubmittedWorkDone();
@@ -345,7 +354,7 @@ async function main() {
     tuning = true; wentDown = false; tuneStart = performance.now();
     calSteps = full || Number.isNaN(stored) ? 3 : 1;
     upSteps = full ? 3 : 0;
-    if (full) { setPreset(0); applyScale(startScale()); }
+    if (full) { setPreset(0); applyScale(startScale()); }   // starts at the best preset (ultra); the tuner steps down if the laptop can't hold it
     frameTimes.length = 0;
     winStart = performance.now() + 2500;   // the cover has just appeared: let the frame pacing settle
     menu.setTuning(true);
@@ -407,6 +416,7 @@ async function main() {
     if (path === visualPath) return;
     const cfg = path === DEFAULT_VISUAL ? defaultCfg : await fetchVisualCfg(path);
     const next = await CarVisual.load(cfg, visual.headlights);
+    probe?.attach(next.model, num('probei', 1));
     scene.remove(visual.root);
     damage.dispose();
     visualPath = path; visualCfg = cfg; visual = next; shape = shapeOf(cfg);
@@ -545,7 +555,7 @@ async function main() {
   // per frame varies, which reads as judder at 30 fps (up to ~17 cm per frame at 140 km/h).
   const prevPos = new THREE.Vector3(), prevQuat = new THREE.Quaternion();
   const physPos = new THREE.Vector3(), physQuat = new THREE.Quaternion();
-  const carAcc = new THREE.Vector3(), lastVel = new THREE.Vector3();
+  const carAcc = new THREE.Vector3(), lastVel = new THREE.Vector3(), stepAcc = new THREE.Vector3();
   const readBody = (p: THREE.Vector3, q: THREE.Quaternion) => {
     const t = car.body.translation(), r = car.body.rotation();
     p.set(t.x, t.y, t.z);
@@ -595,7 +605,7 @@ async function main() {
       readBody(physPos, physQuat);
       // car acceleration for the camera spring, from the physics (low-passed ~25 ms)
       const v = car.body.linvel();
-      const a = new THREE.Vector3(v.x - lastVel.x, v.y - lastVel.y, v.z - lastVel.z).divideScalar(DT);
+      const a = stepAcc.set(v.x - lastVel.x, v.y - lastVel.y, v.z - lastVel.z).divideScalar(DT);
       lastVel.set(v.x, v.y, v.z);
       carAcc.lerp(a.clampLength(0, 60), 1 - Math.exp(-DT / 0.025));
       ticks++;   // simulation clock (race timing)
@@ -633,6 +643,7 @@ async function main() {
       lastRenderAt = capInterval && now - lastRenderAt < capInterval * 1.5 ? lastRenderAt + capInterval : now;
       if (++frameNo % PRESETS[post.preset].shadowEvery === 0) for (const sh of headShadows) sh.needsUpdate = true;
       post.render();
+      probe?.update(pos, visual.root);
       hud.rendered(now);
     }
     if (state === 'race') {

@@ -160,18 +160,18 @@ try {
     if (process.env.PERF_JS) console.log('perf_js', await evaluate(process.env.PERF_JS));
     await evaluate(`(() => { const g = window.__game, r = g.renderer, be = r.backend;
       be.trackTimestamp = r.hasFeature('timestamp-query');
-      const S = window.__perf = { ft: [], gpu: [], calls: [], tris: [], on: false, pending: false, n: 0 };
+      const S = window.__perf = { ft: [], gpu: [], cmp: [], calls: [], tris: [], on: false, pending: false, n: 0 };
       let p = performance.now();
       const f = (t) => { if (S.on) { S.ft.push(t - p); S.calls.push(r.info.render.drawCalls); S.tris.push(r.info.render.triangles); S.n++;
           if (be.trackTimestamp && !S.pending) { S.pending = true;
-            Promise.all([r.resolveTimestampsAsync('render'), r.resolveTimestampsAsync('compute')]).then(([a, c]) => { if (a) S.gpu.push(a + (c || 0)); S.pending = false; }); } }
+            Promise.all([r.resolveTimestampsAsync('render'), r.resolveTimestampsAsync('compute')]).then(([a, c]) => { if (a) { S.gpu.push(a + (c || 0)); S.cmp.push(c || 0); } S.pending = false; }); } }
         p = t; requestAnimationFrame(f); };
       requestAnimationFrame(f); return be.trackTimestamp; })()`).then((t) => console.log('gpu timestamps', t));
     const stats = `(() => { const S = window.__perf, q = (a, p) => a.length ? a[Math.min(a.length - 1, Math.floor(p * a.length))].toFixed(1) : '-';
-      const ft = S.ft.slice(3).sort((x, y) => x - y), gp = S.gpu.slice(3).sort((x, y) => x - y), c = S.calls.slice().sort((x, y) => x - y), tr = S.tris.slice().sort((x, y) => x - y);
-      const r = 'frames ' + ft.length + '  frame median ' + q(ft, 0.5) + ' p95 ' + q(ft, 0.95) + ' max ' + q(ft, 1) + ' ms | GPU median ' + q(gp, 0.5) + ' p95 ' + q(gp, 0.95) + ' ms (' + gp.length + ') | draws ' + q(c, 0.5) + ' tris ' + (+q(tr, 0.5) / 1000).toFixed(0) + 'k'
+      const ft = S.ft.slice(3).sort((x, y) => x - y), gp = S.gpu.slice(3).sort((x, y) => x - y), cm = S.cmp.slice(3).sort((x, y) => x - y), c = S.calls.slice().sort((x, y) => x - y), tr = S.tris.slice().sort((x, y) => x - y);
+      const r = 'frames ' + ft.length + '  frame median ' + q(ft, 0.5) + ' p95 ' + q(ft, 0.95) + ' max ' + q(ft, 1) + ' ms | GPU median ' + q(gp, 0.5) + ' p95 ' + q(gp, 0.95) + ' ms (' + gp.length + ', compute ' + q(cm, 0.5) + ') | draws ' + q(c, 0.5) + ' tris ' + (+q(tr, 0.5) / 1000).toFixed(0) + 'k'
         + '  >100ms at s: ' + (() => { let t = 0; return S.ft.map((x) => { t += x; return x > 100 ? (t / 1000).toFixed(1) + '(' + Math.round(x) + ')' : ''; }).filter(Boolean).join(' '); })();
-      S.ft.length = S.gpu.length = S.calls.length = S.tris.length = 0; return r; })()`;
+      S.ft.length = S.gpu.length = S.cmp.length = S.calls.length = S.tris.length = 0; return r; })()`;
     await evaluate(`(window.__perf.on = true, 1)`);
     await sleep(4000);
     console.log('parked', await evaluate(stats));
@@ -182,6 +182,7 @@ try {
     await shot('perf_drive.png');
     await key('keyUp', 'KeyW', 'w');
     console.log('hud   ', (await evaluate(info)).perf);
+    if (process.env.PERF_AFTER) console.log('perf_after', await evaluate(process.env.PERF_AFTER));
   }
   if (scenario === 'switch') {
     // Quality-preset switches must not hitch: while driving, cycle the presets every 0.7 s and record

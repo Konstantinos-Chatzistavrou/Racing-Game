@@ -165,6 +165,16 @@ export class CityInstances {
     this.drawn = drawn;
   }
 
+  /**
+   * Warm-up: every (asset, LOD, material) mesh visible with one (degenerate, all-zero) instance, so
+   * its pipeline is compiled and its GPU buffers made behind the loading screen. Without it each LOD
+   * first coming into range while driving compiled a pipeline mid-frame (40-250 ms hitches).
+   * Call with false afterwards, then update(camera, true).
+   */
+  warmup(on: boolean) {
+    for (const a of this.assets) for (const l of a.lods) for (const im of l.meshes) { im.count = on ? 1 : l.n; im.visible = on || l.n > 0; }
+  }
+
   /** World-space box colliders for the assets that declare one (hydrants, bins, utility boxes). */
   forEachCollider(cb: (centre: THREE.Vector3, half: THREE.Vector3, rot: THREE.Quaternion) => void) {
     const up = new THREE.Vector3(0, 1, 0), c = new THREE.Vector3(), h = new THREE.Vector3(), q = new THREE.Quaternion();

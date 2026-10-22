@@ -10,6 +10,7 @@ import * as THREE from 'three/webgpu';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { GROUP_CAR, type PhysicsWorld } from './physics/world';
 import { materialsOf } from './scene/city';
+import { mergeStaticMeshes } from './scene/merge';
 import { setupCarMaterials, type CarVisualConfig } from './scene/car';
 import { assetUrl, loadGLTF } from './scene/loaders';
 
@@ -138,6 +139,7 @@ export class AiTraffic {
           m.material = mat.name === cfg.paint_material ? blackPaint : blackMat;
         });
       }
+      if (new URLSearchParams(location.search).get('merge') !== '0') mergeStaticMeshes(model, wheels.map((w) => w.node));   // ~89 meshes -> one per material (the wheels spin: kept)
       const root = new THREE.Group();
       root.add(model);
       scene.add(root);
