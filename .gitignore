@@ -26,6 +26,7 @@
 .DS_Store
 /.claude/worktrees/
 
-# Raw third-party downloads (fetch per docs/car_model_v3.md; never committed) and the KTX tools
+# Raw third-party downloads (car: docs/car_model_v3.md; city: assets_source/scripts/fetch_city_assets.py; never committed) and local build output
 /assets_source/downloads/
+/assets_source/build/
 /tools/ktx/

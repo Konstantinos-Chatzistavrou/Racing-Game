@@ -105,7 +105,7 @@ async function main() {
   ]);
   const core = new CoreCar(carJson);
   const pw = new PhysicsWorld();
-  const city = await loadCity(scene, pw, core.info.surfaces, (f) => say(`Loading city… ${Math.round(f * 100)}%`));
+  const city = await loadCity(scene, pw, core.info.surfaces, (f) => say(`Loading city… ${Math.round(f * 100)}%`), renderer);
   const cityLights = new CityLighting(scene, city.lights, webgpu, num('lights', 12));
   // Reflections: capture the lit city once from street level (the car isn't in the scene yet).
   {
@@ -193,6 +193,7 @@ async function main() {
 
   rig.update(1, pos.copy(car.body.translation() as THREE.Vector3), quat.copy(car.body.rotation() as THREE.Quaternion), new THREE.Vector3(), car.out);
   cityLights.update(1, camera);
+  city.update(camera, true);
   say('Compiling shaders…');
   // Warm-up behind the loading screen: every pipeline the race can need is built now, not as a
   // freeze mid-race. compileAsync covers the scene's materials; the post chains, shadow pass and
@@ -274,7 +275,7 @@ async function main() {
     post.preset = PRESET_ORDER[i];
     try { localStorage.setItem(PRESET_KEY, post.preset); } catch { /* storage blocked */ }
   };
-  g.__game = { ai, visual, audio, rig, damage, trace, car, core, input, renderer, camera, scene, post,
+  g.__game = { city, ai, visual, audio, rig, damage, trace, car, core, input, renderer, camera, scene, post,
     setPreset: (name: PresetName) => { setPreset(PRESET_ORDER.indexOf(name)); setExtra(); },
     setScale: (x: number) => { scale = x; post.setScale(x); setExtra(); },
     pipelines: () => ({ atStart: pipelinesAtStart, now: (renderer as unknown as { _pipelines: { caches: Map<string, unknown> } })._pipelines.caches.size }),
@@ -346,6 +347,7 @@ async function main() {
     net?.update(now, pos, quat);
     rig.update(frame, pos, quat, carAcc, car.out);
     cityLights.update(frame, camera);   // WebGL 2 pool only (5 Hz); a no-op with clustered lighting
+    city.update(camera);
     if (++frameNo % PRESETS[post.preset].shadowEvery === 0) for (const sh of headShadows) sh.needsUpdate = true;
     post.render();
     lap = race.update(raceCar, car.body.translation(), ticks * DT - raceT0);
