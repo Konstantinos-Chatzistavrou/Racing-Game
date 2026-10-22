@@ -1,10 +1,10 @@
 // Night Run (web build): three.js WebGPU renderer + Rapier rigid bodies + the rs_core physics
-// compiled to WebAssembly. WebGPU required. URL options: ?scale=0.75 (pins the render resolution; default adaptive), ?webgl=1 (debug only),
+// compiled to WebAssembly. WebGPU required. URL options: ?scale=0.75 (pins the render resolution; default adaptive),
+// ?quality=high|medium|low (pins the post/render preset; default adaptive), ?webgl=1 (debug only),
 // ?bloom=0, ?aa=0, ?shadows=0, ?lights=12 (WebGL 2 light pool size), ?mp=1 or ?mp=ws://host:port (multiplayer, see net.ts),
 // ?ai=0..3 (AI cars), ?blackcar=1 (AI cars matte black, lights off: night lighting test).
 import * as THREE from 'three/webgpu';
-import { Post } from './post';
-import { ClusteredLighting } from 'three/addons/lighting/ClusteredLighting.js';
+import { Post, PRESETS, PRESET_ORDER, ScaledClusteredLighting, type PresetName } from './post';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { CoreCar, CoreRace, OUT, loadCore, type LapInfo } from './physics/core';
 import { CarBody, DT, PhysicsWorld, loadRapier } from './physics/world';
@@ -41,6 +41,9 @@ async function main() {
   }
   const canvas = document.getElementById('view') as HTMLCanvasElement;
   const renderer = new THREE.WebGPURenderer({ canvas, antialias: false, forceWebGL });
+  // The canvas always runs at baseRatio; `scale` is the RENDER scale of the scene and the passes
+  // before the sharpening upscale (post.ts). It used to be the canvas pixel ratio, which the browser
+  // then stretched bilinearly (soft) and whose change reconfigured the whole canvas.
   const baseRatio = Math.min(devicePixelRatio, 1);
   const adaptive = !params.has('scale');   // ?scale=x pins the resolution
   const maxScale = 1;
@@ -51,8 +54,14 @@ async function main() {
   try { stored = Number(localStorage.getItem(SCALE_KEY) ?? NaN); } catch { /* storage blocked */ }
   let scale = params.has('scale') ? num('scale', 1) : stored >= 0.5 && stored <= maxScale ? stored
     : Math.min(maxScale, Math.max(0.5, Math.round(Math.sqrt(0.9e6 / (innerWidth * innerHeight * Math.min(devicePixelRatio, 1) ** 2)) * 10) / 10));
-  renderer.setPixelRatio(baseRatio * scale);
+  renderer.setPixelRatio(baseRatio);
   renderer.setSize(innerWidth, innerHeight);
+  // Quality preset (post.ts PRESETS), lowered by the adaptive system BEFORE the scale; stored like it.
+  const PRESET_KEY = `nr.preset.${innerWidth}x${innerHeight}`;
+  const presetPinned = PRESET_ORDER.includes(params.get('quality') as PresetName);
+  let storedPreset: string | null = null;
+  try { storedPreset = localStorage.getItem(PRESET_KEY); } catch { /* storage blocked */ }
+  let presetIdx = Math.max(0, PRESET_ORDER.indexOf((presetPinned ? params.get('quality') : storedPreset ?? 'high') as PresetName));
   renderer.toneMapping = THREE.AgXToneMapping;
   renderer.toneMappingExposure = 1.1;
   renderer.shadowMap.enabled = params.get('shadows') !== '0';
@@ -60,7 +69,7 @@ async function main() {
   await renderer.init();
   const webgpu = !!(renderer.backend as { isWebGPUBackend?: boolean }).isWebGPUBackend;
   const backend = webgpu ? 'WebGPU' : 'WebGL 2';
-  if (webgpu) renderer.lighting = new ClusteredLighting(512);   // needs compute shaders
+  if (webgpu) renderer.lighting = new ScaledClusteredLighting(512);   // needs compute shaders; grid follows the render scale
 
   const scene = new THREE.Scene();
   // Night: very dark but never pure black. The hemisphere fill is the floor of the picture
@@ -144,6 +153,7 @@ async function main() {
   const rig = new CameraRig(camera, pw, car.body, core.info.redline);
   const hud = new Hud();
   const audio = new GameAudio();
+  audio.prepare();   // the audio device opens now (behind the loading screen), not on the first key press
   const damage = new DamageVisuals(visual, visualCfg, pw, scene);
   damage.onImpact = (kj, glass) => audio.impact(kj, glass);
   input.onAnyInput = () => audio.unlock();
@@ -172,13 +182,29 @@ async function main() {
   input.onHud = () => hud.toggle();
 
   // --- post-processing ------------------------------------------------------------------------
-  const post = new Post(renderer, scene, camera, { bloom: params.get('bloom') !== '0', aa: params.get('aa') !== '0' });
+  const post = new Post(renderer, scene, camera, { bloom: params.get('bloom') !== '0', aa: params.get('aa') !== '0', scale, preset: PRESET_ORDER[presetIdx] });
+  // Headlight shadow map: only the car bodies cast into it (the city does not cast), re-rendered
+  // every Nth frame by preset (stale by one frame = ~1 m of light travel at 130 km/h, invisible:
+  // map and light matrix stay paired, so shadows stay anchored to their casters).
+  const headShadows = visual.headlights.filter((s) => s.castShadow).map((s) => s.shadow);
+  for (const sh of headShadows) sh.autoUpdate = false;
 
   rig.update(1, pos.copy(car.body.translation() as THREE.Vector3), quat.copy(car.body.rotation() as THREE.Quaternion), new THREE.Vector3(), car.out);
   cityLights.update(1, camera);
   say('Compiling shaders…');
+  // Warm-up behind the loading screen: every pipeline the race can need is built now, not as a
+  // freeze mid-race. compileAsync covers the scene's materials; the post chains, shadow pass and
+  // render-target pipelines only exist once rendered, so every preset is RENDERED in each state:
+  // remote car clone, AI cars in the beam, headlights off, broken lights (their dark material
+  // clones), engine fire light on. Light states are intensity changes (never visibility), so they
+  // share pipelines; the dark light clones are new materials with the same program.
+  const warm = async () => {
+    await renderer.compileAsync(scene, camera);
+    for (const sh of headShadows) sh.needsUpdate = true;
+    post.warmup();
+  };
   net?.warmup(true);   // remote car shaders compiled now, not as a hitch when someone joins
-  await renderer.compileAsync(scene, camera);
+  await warm();
   net?.warmup(false);
   if (ai.cars.length) {
     // draw the AI cars once in the headlight beam (their pipelines + shadow pass), then send them off
@@ -186,12 +212,39 @@ async function main() {
     visual.update(pos, quat, car.out);
     ai.stage(pos.clone().setY(pos.y - core.info.cgHeight - 0.05), yaw);
     ai.update(1, camera);
-    await renderer.compileAsync(scene, camera);
-    post.render();
-    ai.reset();
+    await warm();
   }
+  {
+    const dmgInt = damage as unknown as { killLights(n: string[]): void; fireLight: THREE.PointLight };
+    visual.lightsOn = false; visual.applyHeadlights();
+    dmgInt.killLights([...visualCfg.front_lights, ...visualCfg.rear_lights]);
+    dmgInt.fireLight.intensity = 30;
+    await warm();
+    dmgInt.fireLight.intensity = 0;
+    damage.repair();
+    visual.lightsOn = true; visual.applyHeadlights();
+    post.warmup();
+  }
+  ai.reset();
+  {
+    // compileAsync builds pipelines, but an object's GPU buffers, bind groups and textures are only
+    // created the first time it is actually DRAWN. City blocks coming into view therefore stalled
+    // the first second of driving (one 200-280 ms frame ~0.8 s after the start, every run, no new
+    // pipeline). Draw everything once with frustum culling off, behind the loading screen.
+    const culled: THREE.Object3D[] = [];
+    scene.traverse((o) => { if (o.frustumCulled && (o as THREE.Mesh).isMesh) { o.frustumCulled = false; culled.push(o); } });
+    post.render();
+    for (const o of culled) o.frustumCulled = true;
+  }
+  await post.warmupFrames();
+  // The warm-up queued a dozen full renders on the GPU: wait until it has worked through them, or
+  // the first race frames block behind that backlog (a 130-220 ms frame 0.2-0.6 s after loading).
+  if (webgpu) await (renderer.backend as unknown as { device: GPUDevice }).device.queue.onSubmittedWorkDone();
+  const pipelinesAtStart =(renderer as unknown as { _pipelines: { caches: Map<string, unknown> } })._pipelines.caches.size;
   hud.show();
-  const setExtra = () => (hud.extra = `${backend} · ${renderer.domElement.width}×${renderer.domElement.height} · scale ${+scale.toFixed(2)}${adaptive ? '' : ' (pinned)'} · ${cityLights.mode}`
+  const setExtra = () => (hud.extra = `${backend} · ${Math.floor(renderer.domElement.width * scale)}×${Math.floor(renderer.domElement.height * scale)}`
+    + ` → ${renderer.domElement.width}×${renderer.domElement.height} · scale ${+scale.toFixed(2)}${adaptive ? '' : ' (pinned)'}`
+    + ` · ${post.preset}${presetPinned ? ' (pinned)' : ''} · ${cityLights.mode}`
     + (net ? ` · ${net.status}` : '') + (input.locked ? ' · calibrating…' : ''));
   setExtra();
   if (net) net.onChange = setExtra;
@@ -208,7 +261,21 @@ async function main() {
   let stepMs = 0;
   const trace: unknown[] = [];
   const g = window as unknown as { __game: object };
-  g.__game = { ai, visual, audio, rig, damage, trace, car, core, input, renderer, camera, scene,
+  // Hidden tab: requestAnimationFrame stops, so nothing renders; but the first window after coming
+  // back would average in the hidden time and read as "< 30 fps" -> a needless step down. Restart it.
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) { frameTimes.length = 0; winStart = performance.now() + 1000; lowRun = highRun = 0; prev = performance.now(); }
+  });
+  let frameNo = 0;
+  const setPreset = (i: number) => {
+    presetIdx = i;
+    post.preset = PRESET_ORDER[i];
+    try { localStorage.setItem(PRESET_KEY, post.preset); } catch { /* storage blocked */ }
+  };
+  g.__game = { ai, visual, audio, rig, damage, trace, car, core, input, renderer, camera, scene, post,
+    setPreset: (name: PresetName) => { setPreset(PRESET_ORDER.indexOf(name)); setExtra(); },
+    setScale: (x: number) => { scale = x; post.setScale(x); setExtra(); },
+    pipelines: () => ({ atStart: pipelinesAtStart, now: (renderer as unknown as { _pipelines: { caches: Map<string, unknown> } })._pipelines.caches.size }),
     // Rapier cost per step + what it simulates (static city colliders have no body: never integrated)
     physics: () => ({ stepMs, bodies: pw.world.bodies.len(), colliders: pw.world.colliders.len(),
       list: pw.world.bodies.getAll().map((b) => `${b === car.body ? 'car' : b.isKinematic() ? 'ai' : 'debris'}:${b.isSleeping() ? 'asleep' : 'awake'}`).join(' ') }),
@@ -276,7 +343,8 @@ async function main() {
     audio.update(car.out, car.out[OUT.speed]);
     net?.update(now, pos, quat);
     rig.update(frame, pos, quat, carAcc, car.out);
-    cityLights.update(frame, camera);
+    cityLights.update(frame, camera);   // WebGL 2 pool only (5 Hz); a no-op with clustered lighting
+    if (++frameNo % PRESETS[post.preset].shadowEvery === 0) for (const sh of headShadows) sh.needsUpdate = true;
     post.render();
     lap = race.update(raceCar, car.body.translation(), ticks * DT - raceT0);
     hud.update(now, frame, car.out, core.info, input.assists, damage.last, lap);
@@ -307,16 +375,28 @@ async function main() {
       winStart = now;
       lowRun = fps < (calibrating ? FPS_LOW : FPS_FLOOR) ? lowRun + 1 : 0;
       highRun = fps > FPS_HIGH && p90 < 22 ? highRun + 1 : 0;
-      let next = scale;
+      let next = scale, nextPreset = presetIdx;
+      const canDropPreset = !presetPinned && presetIdx < PRESET_ORDER.length - 1;
       if (calibrating) {
-        // stays locked until a window WITHOUT a resize, so the last resize hitch is never driven through
-        if (lowRun > 0 && calSteps > 0 && scale > MIN_SCALE) { next = scale - STEP; calSteps--; }
+        // stays locked until a window WITHOUT a change, so the last resize hitch is never driven through
+        if (lowRun > 0 && canDropPreset) nextPreset++;
+        else if (lowRun > 0 && calSteps > 0 && scale > MIN_SCALE) { next = scale - STEP; calSteps--; }
         else calibrating = false;
       } else if (lowRun >= CONFIRM_DOWN) {
-        next = scale - STEP;
-      } else if (highRun >= CONFIRM && now - lastUp >= upCooldown && now - lastDown >= upCooldown
-        && Math.abs(car.out[OUT.speed]) < 1) {                       // step up only when stopped: no hitch mid-drive
-        next = scale + STEP;
+        if (canDropPreset) nextPreset++;                              // cheaper post first (no hitch)
+        else next = scale - STEP;                                     // only then the resolution
+      } else if (highRun >= CONFIRM && now - lastUp >= upCooldown && now - lastDown >= upCooldown) {
+        // up in reverse order: resolution first (only when stopped: resize hitch), then the preset
+        if (scale < maxScale - 1e-6) { if (Math.abs(car.out[OUT.speed]) < 1) next = scale + STEP; }
+        else if (!presetPinned && presetIdx > 0) nextPreset--;
+      }
+      if (nextPreset !== presetIdx) {
+        // no resize, no recompile (every preset pipeline was built at load): applies at once
+        if (nextPreset > presetIdx) { if (now - lastUp < 20000) upCooldown = Math.min(80000, upCooldown * 2); lastDown = now; }
+        else lastUp = now;
+        setPreset(nextPreset);
+        lowRun = highRun = 0;
+        setExtra();
       }
       next = Math.min(maxScale, Math.max(MIN_SCALE, Math.round(next * 10) / 10));
       if (input.locked !== calibrating) { input.locked = calibrating; setExtra(); }
@@ -326,7 +406,7 @@ async function main() {
           lastDown = now;
         } else lastUp = now;
         scale = next;
-        renderer.setPixelRatio(baseRatio * scale);
+        post.setScale(scale);   // render targets + cluster grid resize: the hitch this logic schedules
         try { localStorage.setItem(SCALE_KEY, String(scale)); } catch { /* storage blocked */ }
         lowRun = highRun = 0;
         winStart = now + 1000;                                       // let the resize hitch pass

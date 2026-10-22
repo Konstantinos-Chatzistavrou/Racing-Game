@@ -26,7 +26,18 @@ export class GameAudio {
   muted = false;
 
   unlock() {
-    if (this.ctx) { if (this.ctx.state !== 'running') void this.ctx.resume(); return; }
+    if (!this.ctx) this.prepare();
+    if (this.ctx!.state !== 'running') void this.ctx!.resume();
+  }
+
+  /**
+   * Builds the context and the synth graph. Called during loading: creating an AudioContext opens
+   * the audio device synchronously (~170 ms of main thread measured), which used to freeze the
+   * first frame after the first key press. Before a user gesture the context just stays
+   * suspended (silent); unlock() resumes it.
+   */
+  prepare() {
+    if (this.ctx) return;
     const ctx = new AudioContext({ latencyHint: 'interactive' });
     this.ctx = ctx;
     this.out = ctx.createGain();
