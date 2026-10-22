@@ -54,6 +54,10 @@ export class CameraRig {
 
   constructor(readonly camera: THREE.PerspectiveCamera, private pw: PhysicsWorld, private car: RAPIER.RigidBody, private redline = 7000) {}
 
+  /** A different car (garage swap): follow its body, snap to it. */
+  setTarget(car: RAPIER.RigidBody, redline: number) { this.car = car; this.redline = redline; this.first = true; }
+  snap() { this.first = true; }
+
   toggle() { this.mode = this.mode === 'chase' ? 'bumper' : 'chase'; this.first = true; }
 
   update(dt: number, carPos: THREE.Vector3, carQuat: THREE.Quaternion, carAcc: THREE.Vector3, out: Float64Array) {

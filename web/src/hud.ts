@@ -32,6 +32,8 @@ export class Hud {
   private warnHtml = '';
   private assistHtml = '';
   extra = '';
+  /** Race mode: lap count shown as 'n / total' (0 = free run, counted forever). */
+  lapTotal = 0;
   fps = 60;
   private el = { needle: $('needle'), rev: $('revfill') };
   private needleKey = '';
@@ -57,7 +59,9 @@ export class Hud {
     $('revtrack').setAttribute('d', arc(0, 1, 110));
   }
 
-  show() { ($('hud') as HTMLElement).hidden = false; $('loading').remove(); }
+  show() { ($('hud') as HTMLElement).hidden = false; document.getElementById('loading')?.remove(); }
+  hide() { ($('hud') as HTMLElement).hidden = true; }
+  get visible() { return !($('hud') as HTMLElement).hidden; }
   toggle() { const h = $('hud') as HTMLElement; h.hidden = !h.hidden; }
 
   /** Every frame: the dial animates at frame rate; text updates at 10 Hz. */
@@ -126,7 +130,7 @@ export class Hud {
   }
 
   private updateLaps(lap: LapInfo, dt: number) {
-    this.text('lapno', String(lap.laps + 1));
+    this.text('lapno', this.lapTotal ? `${Math.min(lap.laps + 1, this.lapTotal)} / ${this.lapTotal}` : String(lap.laps + 1));
     this.text('lapcur', formatLap(lap.current) === '—' ? '0:00.000' : formatLap(lap.current));
     this.text('laplast', formatLap(lap.last));
     this.text('lapbest', formatLap(lap.best));

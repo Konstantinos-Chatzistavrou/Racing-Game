@@ -6,9 +6,7 @@
 // per material per tile, culled per tile by three's frustum test).
 import * as THREE from 'three/webgpu';
 import { texture, uv, floor, hash, vec3, float, mix, step, smoothstep, positionWorld, mx_noise_float } from 'three/tsl';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
-import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { gltfLoader } from './loaders';
 import type { PhysicsWorld } from '../physics/world';
 import type { CarInfo } from '../physics/core';
 import { CityInstances, type PropsJson } from './instancing';
@@ -20,20 +18,8 @@ export interface City {
   update: (camera: THREE.Camera, force?: boolean) => void;
 }
 
-// Shared loader: meshopt geometry + KTX2 textures (the Basis transcoder is served from /basis/, a
-// copy of three/examples/jsm/libs/basis). City-local for now (a shared scene/loaders.ts may replace
-// it); detectSupport needs the initialised renderer to pick BC7 / ETC2 / ASTC.
-let loader: GLTFLoader | null = null;
-function cityLoader(renderer: THREE.WebGPURenderer) {
-  if (loader) return loader;
-  const ktx2 = new KTX2Loader().setTranscoderPath('/basis/').detectSupport(renderer);
-  loader = new GLTFLoader().setKTX2Loader(ktx2).setMeshoptDecoder(MeshoptDecoder);
-  return loader;
-}
-
-export async function loadCity(scene: THREE.Scene, pw: PhysicsWorld, surfaces: CarInfo['surfaces'], onProgress: (f: number) => void,
-  renderer: THREE.WebGPURenderer): Promise<City> {
-  const L = cityLoader(renderer);
+export async function loadCity(scene: THREE.Scene, pw: PhysicsWorld, surfaces: CarInfo['surfaces'], onProgress: (f: number) => void): Promise<City> {
+  const L = gltfLoader();   // shared meshopt + KTX2 decoders (initLoaders ran after renderer.init)
   const prog = [0, 0];
   const report = () => onProgress(prog[0] * 0.75 + prog[1] * 0.25);
   const [gltf, lib, props] = await Promise.all([

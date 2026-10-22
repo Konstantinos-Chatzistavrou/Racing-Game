@@ -39,9 +39,13 @@ export class Dents {
 
   constructor() {
     const ptU = uniformArray(this.pt, 'vec4'), dirU = uniformArray(this.dir, 'vec4');
-    const toModel = uniform(new THREE.Matrix4()).onObjectUpdate(({ object }: Obj) => (object?.userData.dentToModel as THREE.Matrix4) ?? I4);
-    const toLocal = uniform(new THREE.Matrix4()).onObjectUpdate(({ object }: Obj) => (object?.userData.dentToLocal as THREE.Matrix4) ?? I4);
-    const on = uniform(0, 'int').onObjectUpdate(({ object }: Obj) => (object?.userData.dentToModel ? 1 : 0));
+    // Object3D.clone() JSON-copies userData: on a cloned mesh (remote players' cars) the matrices are
+    // plain objects, not Matrix4. Those meshes are never dented: identity and off.
+    const isM4 = (m: unknown): m is THREE.Matrix4 => !!(m as { isMatrix4?: boolean } | undefined)?.isMatrix4;
+    const mat = (m: unknown) => (isM4(m) ? m : I4);
+    const toModel = uniform(new THREE.Matrix4()).onObjectUpdate(({ object }: Obj) => mat(object?.userData.dentToModel));
+    const toLocal = uniform(new THREE.Matrix4()).onObjectUpdate(({ object }: Obj) => mat(object?.userData.dentToLocal));
+    const on = uniform(0, 'int').onObjectUpdate(({ object }: Obj) => (isM4(object?.userData.dentToModel) ? 1 : 0));
     const count = this.countU;
     this.positionNode = Fn(() => {
       const p = toModel.mul(vec4(positionLocal, 1)).xyz.toVar();
