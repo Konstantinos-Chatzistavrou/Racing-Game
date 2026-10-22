@@ -94,7 +94,7 @@ async function main() {
   ]);
   const core = new CoreCar(carJson);
   const pw = new PhysicsWorld();
-  const city = await loadCity(scene, pw, core.info.surfaces, (f) => say(`Loading city… ${Math.round(f * 100)}%`));
+  const city = await loadCity(scene, pw, core.info.surfaces, (f) => say(`Loading city… ${Math.round(f * 100)}%`), renderer);
   const cityLights = new CityLighting(scene, city.lights, webgpu, num('lights', 12));
   // Reflections: capture the lit city once from street level (the car isn't in the scene yet).
   {
@@ -176,6 +176,7 @@ async function main() {
 
   rig.update(1, pos.copy(car.body.translation() as THREE.Vector3), quat.copy(car.body.rotation() as THREE.Quaternion), new THREE.Vector3(), car.out);
   cityLights.update(1, camera);
+  city.update(camera, true);
   say('Compiling shaders…');
   net?.warmup(true);   // remote car shaders compiled now, not as a hitch when someone joins
   await renderer.compileAsync(scene, camera);
@@ -208,7 +209,7 @@ async function main() {
   let stepMs = 0;
   const trace: unknown[] = [];
   const g = window as unknown as { __game: object };
-  g.__game = { ai, visual, audio, rig, damage, trace, car, core, input, renderer, camera, scene,
+  g.__game = { city, ai, visual, audio, rig, damage, trace, car, core, input, renderer, camera, scene,
     // Rapier cost per step + what it simulates (static city colliders have no body: never integrated)
     physics: () => ({ stepMs, bodies: pw.world.bodies.len(), colliders: pw.world.colliders.len(),
       list: pw.world.bodies.getAll().map((b) => `${b === car.body ? 'car' : b.isKinematic() ? 'ai' : 'debris'}:${b.isSleeping() ? 'asleep' : 'awake'}`).join(' ') }),
@@ -277,6 +278,7 @@ async function main() {
     net?.update(now, pos, quat);
     rig.update(frame, pos, quat, carAcc, car.out);
     cityLights.update(frame, camera);
+    city.update(camera);
     post.render();
     lap = race.update(raceCar, car.body.translation(), ticks * DT - raceT0);
     hud.update(now, frame, car.out, core.info, input.assists, damage.last, lap);
