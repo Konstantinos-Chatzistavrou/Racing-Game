@@ -47,6 +47,11 @@ De-branded: no real-world logos, brand names or trademarked signs. Neon signs us
   `assets_source/licenses/downloaded_cars_2026-10-18/`. The CC BY licence does not cover the real car's or the sponsors'
   trademarks; none remain in this model.
 
+- **Harrier GT** (`web/public/assets/cars/v4/harrier_gt_hero.glb`): modified from "2018 Mercedes C-Coupé DTM" by Dave Love
+  SketchFab, https://sketchfab.com/3d-models/2018-mercedes-c-coupe-dtm-5708f2acc5ef40839b6eb50970e1c173, licensed CC BY 4.0.
+  Changes as for the Kestrel GT (livery, sponsor and manufacturer marks, grille emblem, plates removed; re-shaped; splitter,
+  grille, diffuser, wing and light bars replaced; flat materials; `assets_source/scripts/make_car5.py`).
+
 ## Software
 - three.js (MIT), Rapier (Apache-2.0), meshoptimizer (MIT), Basis Universal transcoder
   (Apache-2.0), glTF-Transform (MIT, build tool), KTX-Software (Apache-2.0, build tool),

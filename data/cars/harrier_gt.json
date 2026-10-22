@@ -1,0 +1,185 @@
+{
+  "schema": "car/1",
+  "name": "Harrier GT",
+  "notes": "Harrier GT: vela_gtr numbers (mass, power, grip) with its own body (modified from '2018 Mercedes C-Coup\u00e9 DTM' by Dave Love SketchFab (CC BY 4.0, CREDITS.md)). Starting values: tune with feel.",
+  "chassis": {
+    "mass_kg": 1390,
+    "cg_height_m": 0.47,
+    "weight_front": 0.48,
+    "wheelbase_m": 2.65,
+    "inertia_roll_kgm2": 527,
+    "inertia_pitch_kgm2": 2013,
+    "inertia_yaw_kgm2": 2253
+  },
+  "front_axle": {
+    "track_m": 1.61,
+    "spring_rate_n_per_m": 78000,
+    "spring_rest_length_m": 0.25,
+    "max_compression_m": 0.07,
+    "bump_stop_rate_n_per_m": 300000,
+    "damper_bump_ns_per_m": 3335,
+    "damper_rebound_ns_per_m": 6555,
+    "anti_roll_rate_n_per_m": 37500,
+    "roll_centre_height_m": 0.06,
+    "max_steer_deg": 32,
+    "ackermann": 0.5,
+    "handbrake_torque_nm": 0,
+    "steer_compliance_deg_per_kn": 0.12
+  },
+  "rear_axle": {
+    "track_m": 1.6,
+    "spring_rate_n_per_m": 90000,
+    "spring_rest_length_m": 0.25,
+    "max_compression_m": 0.07,
+    "bump_stop_rate_n_per_m": 300000,
+    "damper_bump_ns_per_m": 3565,
+    "damper_rebound_ns_per_m": 7015,
+    "anti_roll_rate_n_per_m": 22500,
+    "roll_centre_height_m": 0.1,
+    "handbrake_torque_nm": 1500
+  },
+  "tire_front": {
+    "size": "245/35 R19",
+    "radius_m": 0.327,
+    "inertia_kgm2": 1.2,
+    "fz0_n": 4000,
+    "longitudinal": {
+      "C": 1.65,
+      "mu": 1.33,
+      "load_sensitivity": -0.1,
+      "E": 0.1,
+      "slip_stiffness_per_load": 25.0
+    },
+    "lateral": {
+      "C": 1.3,
+      "mu": 1.27,
+      "load_sensitivity": -0.12,
+      "E": -0.5,
+      "cornering_stiffness_per_fz0": 30.0,
+      "cornering_stiffness_peak_load": 2.0
+    },
+    "combined": {
+      "rBx1": 12.0,
+      "rBx2": 10.0,
+      "rCx1": 1.0,
+      "rBy1": 10.0,
+      "rBy2": 10.0,
+      "rCy1": 1.0
+    },
+    "relaxation_length_long_m": 0.12,
+    "relaxation_length_lat_m": 0.35,
+    "rolling_resistance": 0.012
+  },
+  "tire_rear": {
+    "size": "285/30 R19",
+    "radius_m": 0.328,
+    "inertia_kgm2": 1.35,
+    "fz0_n": 4000,
+    "longitudinal": {
+      "C": 1.65,
+      "mu": 1.36,
+      "load_sensitivity": -0.1,
+      "E": 0.1,
+      "slip_stiffness_per_load": 26.0
+    },
+    "lateral": {
+      "C": 1.3,
+      "mu": 1.3,
+      "load_sensitivity": -0.1,
+      "E": -0.5,
+      "cornering_stiffness_per_fz0": 34.0,
+      "cornering_stiffness_peak_load": 2.0
+    },
+    "combined": {
+      "rBx1": 12.0,
+      "rBx2": 10.0,
+      "rCx1": 1.0,
+      "rBy1": 10.0,
+      "rBy2": 10.0,
+      "rCy1": 1.0
+    },
+    "relaxation_length_long_m": 0.12,
+    "relaxation_length_lat_m": 0.35,
+    "rolling_resistance": 0.012
+  },
+  "brakes": {
+    "max_total_torque_nm": 7000,
+    "bias_front": 0.67
+  },
+  "engine": {
+    "torque_curve": [
+      [
+        1000,
+        345
+      ],
+      [
+        2000,
+        540
+      ],
+      [
+        3000,
+        627
+      ],
+      [
+        4000,
+        644
+      ],
+      [
+        5000,
+        632
+      ],
+      [
+        6000,
+        598
+      ],
+      [
+        7000,
+        535
+      ],
+      [
+        7500,
+        483
+      ]
+    ],
+    "idle_rpm": 900,
+    "redline_rpm": 7500,
+    "inertia_kgm2": 0.22,
+    "friction_const_nm": 25,
+    "friction_linear_nm_per_radps": 0.035
+  },
+  "drivetrain": {
+    "layout": "rwd",
+    "gear_ratios": [
+      -3.2,
+      0,
+      3.4,
+      2.3,
+      1.7,
+      1.32,
+      1.08,
+      0.88
+    ],
+    "final_drive": 3.73,
+    "efficiency": 0.92,
+    "clutch_max_torque_nm": 900,
+    "driveline_inertia_kgm2": 0.06,
+    "rear_diff": {
+      "type": "lsd",
+      "preload_nm": 60,
+      "power_ramp": 0.35,
+      "coast_ramp": 0.2
+    }
+  },
+  "aero": {
+    "drag_area_m2": 0.7,
+    "downforce_area_m2": 0.55,
+    "front_balance": 0.45
+  },
+  "surface_grip": {
+    "asphalt": 1.0,
+    "kerb": 0.92,
+    "pavement": 0.85,
+    "grass": 0.6,
+    "wall": 0.5
+  }
+}

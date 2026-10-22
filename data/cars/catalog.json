@@ -30,6 +30,14 @@
       "physics": "cars/kestrel_gt.json",
       "visual": "cars/kestrel_gt.visual.json",
       "paint": "#2a6df4"
+    },
+    {
+      "id": "harrier_gt",
+      "name": "Harrier GT",
+      "tag": "Wide, planted touring-car coupe. Big grip, short tail, loud aero.",
+      "physics": "cars/harrier_gt.json",
+      "visual": "cars/harrier_gt.visual.json",
+      "paint": "#14b8a6"
     }
   ]
 }
