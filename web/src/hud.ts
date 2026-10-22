@@ -65,8 +65,10 @@ export class Hud {
   toggle() { const h = $('hud') as HTMLElement; h.hidden = !h.hidden; }
 
   /** Every frame: the dial animates at frame rate; text updates at 10 Hz. */
+  /** A frame was actually drawn (the fps readout counts these, not display refreshes: the 30 fps cap skips some). */
+  rendered(now: number) { this.frames.push(now); }
+
   update(now: number, dt: number, out: Float64Array, info: CarInfo, assists: AssistToggles, dmg: Damage | null, lap: LapInfo | null) {
-    this.frames.push(now);
     while (this.frames.length && this.frames[0] < now - 1000) this.frames.shift();
 
     // dial: the needle eases toward the true speed (critically damped feel, no ticking)

@@ -573,6 +573,9 @@ async function main() {
   }
   setExtra();
 
+  const capFps = params.has('cap') ? num('cap', 30) : 30;
+  const capInterval = capFps > 0 ? 1000 / capFps : 0;
+  let lastRenderAt = 0;
   renderer.setAnimationLoop(() => {
     const now = performance.now();
     const frame = Math.min(0.1, (now - prev) / 1000);
@@ -622,8 +625,16 @@ async function main() {
     }
     cityLights.update(frame, camera);   // WebGL 2 pool only (5 Hz); a no-op with clustered lighting
     city.update(camera);
-    if (++frameNo % PRESETS[post.preset].shadowEvery === 0) for (const sh of headShadows) sh.needsUpdate = true;
-    post.render();
+    // Frame cap (default 30 fps: the quality target; ?cap=0 uncapped, ?cap=45 etc.). Simulation, camera and HUD run every
+    // display refresh; only the draw is skipped, so the picture holds still between rendered frames. The cap is off while
+    // the graphics tuner measures (it needs the uncapped speed), and the slot clock advances by whole intervals so a
+    // 60/120/144 Hz display averages exactly the cap instead of rounding down.
+    if (capInterval === 0 || tuning || now - lastRenderAt >= capInterval - 2) {
+      lastRenderAt = capInterval && now - lastRenderAt < capInterval * 1.5 ? lastRenderAt + capInterval : now;
+      if (++frameNo % PRESETS[post.preset].shadowEvery === 0) for (const sh of headShadows) sh.needsUpdate = true;
+      post.render();
+      hud.rendered(now);
+    }
     if (state === 'race') {
       lap = race.update(raceCar, car.body.translation(), ticks * DT - raceT0);
       if (lap.laps > lapTimes.length) lapTimes.push(lap.last);
