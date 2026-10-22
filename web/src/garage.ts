@@ -2,7 +2,7 @@
 // core is created), paint, and the saved selection. No DOM and no three.js here (menu.ts draws it).
 
 export interface CatalogCar { id: string; name: string; tag: string; physics: string; paint: string }
-export type Finish = 'gloss' | 'satin' | 'metallic' | 'matte';
+export type Finish = 'gloss' | 'satin' | 'metallic' | 'pearl' | 'candy' | 'matte';
 export type ModKey = 'engine' | 'tyres' | 'weight' | 'aero';
 export type Mods = Record<ModKey, number>;   // level 0 (stock) .. 3
 export type Mode = 'free' | 'race' | 'online';
@@ -17,10 +17,13 @@ export interface Selection {
   server: string;
 }
 
-export const FINISHES: Record<Finish, { label: string; clearcoat: number; roughness: number; metalness: number }> = {
+/** iridescence: strength of the angle-dependent colour shift of pearl paint (0 = none). */
+export const FINISHES: Record<Finish, { label: string; clearcoat: number; roughness: number; metalness: number; iridescence?: number }> = {
   gloss:    { label: 'Gloss',    clearcoat: 1,   roughness: 0.32, metalness: 0.35 },
   satin:    { label: 'Satin',    clearcoat: 0.3, roughness: 0.45, metalness: 0.25 },
   metallic: { label: 'Metallic', clearcoat: 1,   roughness: 0.22, metalness: 0.9 },
+  pearl:    { label: 'Pearl',    clearcoat: 1,   roughness: 0.24, metalness: 0.6, iridescence: 1 },
+  candy:    { label: 'Candy',    clearcoat: 1,   roughness: 0.16, metalness: 0.95 },
   matte:    { label: 'Matte',    clearcoat: 0,   roughness: 0.8,  metalness: 0.1 },
 };
 

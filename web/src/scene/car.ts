@@ -23,6 +23,45 @@ export interface CarVisualConfig extends DamageVisualConfig {
   headlights: [number, number, number][];
 }
 
+/**
+ * Orange peel: the faint waviness of a sprayed clear coat. A tileable 256x256 fractal value-noise
+ * height field turned into a normal map, used as the clear coat's own normal (the base metal keeps
+ * the model's flake normal map). Built once, shared by every car.
+ */
+let peelTex: THREE.DataTexture | null = null;
+function orangePeel() {
+  if (peelTex) return peelTex;
+  const N = 256, h = new Float32Array(N * N);
+  let seed = 12345;
+  const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  for (let oct = 0, cells = 32, amp = 1; oct < 3; oct++, cells *= 2, amp *= 0.5) {
+    const g = new Float32Array(cells * cells).map(rnd);
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const fx = (x / N) * cells, fy = (y / N) * cells, x0 = Math.floor(fx), y0 = Math.floor(fy);
+      const tx = fx - x0, ty = fy - y0, sx = tx * tx * (3 - 2 * tx), sy = ty * ty * (3 - 2 * ty);
+      const a = g[(y0 % cells) * cells + (x0 % cells)], b = g[(y0 % cells) * cells + ((x0 + 1) % cells)];
+      const c = g[((y0 + 1) % cells) * cells + (x0 % cells)], d = g[((y0 + 1) % cells) * cells + ((x0 + 1) % cells)];
+      h[y * N + x] += amp * (a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy);
+    }
+  }
+  const px = new Uint8Array(N * N * 4);
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const dx = h[y * N + ((x + 1) % N)] - h[y * N + ((x + N - 1) % N)];
+    const dy = h[((y + 1) % N) * N + x] - h[((y + N - 1) % N) * N + x];
+    const nx = -dx * 6, ny = -dy * 6, l = Math.hypot(nx, ny, 1), i = (y * N + x) * 4;
+    px[i] = (nx / l * 0.5 + 0.5) * 255; px[i + 1] = (ny / l * 0.5 + 0.5) * 255; px[i + 2] = (1 / l * 0.5 + 0.5) * 255; px[i + 3] = 255;
+  }
+  peelTex = new THREE.DataTexture(px, N, N, THREE.RGBAFormat);
+  peelTex.wrapS = peelTex.wrapT = THREE.RepeatWrapping;
+  peelTex.repeat.set(24, 24);
+  peelTex.generateMipmaps = true;
+  peelTex.minFilter = THREE.LinearMipmapLinearFilter;
+  peelTex.magFilter = THREE.LinearFilter;
+  peelTex.anisotropy = 4;
+  peelTex.needsUpdate = true;
+  return peelTex;
+}
+
 const Y = new THREE.Vector3(0, 1, 0), X = new THREE.Vector3(1, 0, 0), ONE = new THREE.Vector3(1, 1, 1);
 
 /**
@@ -50,6 +89,10 @@ export function setupCarMaterials(model: THREE.Object3D, cfg: CarVisualConfig, p
           paintMat = src.isMeshPhysicalMaterial ? src.clone() : new THREE.MeshPhysicalMaterial({ name: mat.name, metalness: 0.35, roughness: 0.32 });
           paintMat.clearcoat = 1;
           paintMat.clearcoatRoughness = 0.04;
+          paintMat.clearcoatNormalMap = orangePeel();
+          paintMat.clearcoatNormalScale.set(0.12, 0.12);
+          paintMat.iridescenceIOR = 1.7;
+          paintMat.iridescenceThicknessRange = [200, 520];
           paintMat.color.copy(color);
         }
         if (Array.isArray(m.material)) m.material[i] = paintMat; else m.material = paintMat;
@@ -108,6 +151,7 @@ export class CarVisual {
     const f = FINISHES[finish];
     m.color.set(hex);
     m.clearcoat = f.clearcoat; m.roughness = f.roughness; m.metalness = f.metalness;
+    m.iridescence = f.iridescence ?? 0;
     m.needsUpdate = true;
   }
 
