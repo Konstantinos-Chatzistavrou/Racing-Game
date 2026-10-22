@@ -17,7 +17,7 @@ export interface CityLight { pos: THREE.Vector3; color: THREE.Color; intensity: 
 export interface City {
   root: THREE.Object3D; lights: CityLight[]; lamps: number; neon: number; props: CityInstances;
   /** per frame: re-pick the visible prop instances / LODs (skipped while the camera is still) */
-  update: (camera: THREE.Camera) => void;
+  update: (camera: THREE.Camera, force?: boolean) => void;
 }
 
 // Shared loader: meshopt geometry + KTX2 textures (the Basis transcoder is served from /basis/, a
@@ -91,7 +91,7 @@ export async function loadCity(scene: THREE.Scene, pw: PhysicsWorld, surfaces: C
     l.removeFromParent();
   }
   scene.add(root);
-  return { root, lights: out, lamps, neon, props: inst, update: (camera) => inst.update(camera) };
+  return { root, lights: out, lamps, neon, props: inst, update: (camera, force) => inst.update(camera, force) };
 }
 
 function meshesOf(o: THREE.Object3D): THREE.Mesh[] {

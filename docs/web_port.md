@@ -150,3 +150,16 @@ calibrates (1 s windows, HUD "calibrating…", 40 fps threshold) and stays locke
 without a resize. The settled scale is stored in localStorage per window size, so later sessions
 start there with one check. While driving only < 30 fps for 3 windows steps down, and steps up only
 happen while stopped. Result: all hitches before the start, no driving frame over 60 ms at scale 0.7.
+
+## Hi-fi city (branch wip/hifi-city)
+- Sources: CC0 Poly Haven / ambientCG (`assets_source/scripts/fetch_city_assets.py`, credits in `CREDITS.md`). Pipeline:
+  `make_city.py` (static city, tiles merged per material) + `make_city_props.py` (prop library with 3 LODs, writes
+  `data/city_props.json` placements) -> `build_city_assets.sh` (dedup/prune/resize, KTX2: UASTC normals, ETC1S colour+roughness,
+  meshopt geometry with 16-bit quantization) -> `web/public/assets/city/city.glb` + `city_props.glb`.
+- Runtime: `scene/instancing.ts` (one InstancedMesh per asset per LOD, 120 m cells, per-asset draw distance, frustum + LOD
+  picked per frame, skipped when the camera is still); `city.update(camera)` is called from the main loop. Sidewalk props
+  get static Rapier boxes (`PhysicsWorld.addStaticBox`).
+- Measured (city_bench.mjs, 0.7 scale, 5 fixed spots, laptop shared): before = 36 MB city.glb + PNG textures, 34.7 MB city
+  download, 281 MB texture memory, 130-230 draw calls, 90-130k tris. After = 26.8 MB (21.2 + 5.8 props), 91 MB GPU memory
+  (54 MB textures), 180-275 draw calls, 150-204k tris; frame time unchanged (60 fps vsync, p95 33 ms).
+- Draco was not used: meshopt decodes faster, keeps vertex-cache order and its decoder is ~20 KB.

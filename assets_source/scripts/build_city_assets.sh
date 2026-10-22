@@ -13,8 +13,8 @@
 # repeats: 12 bit would visibly shift textures).
 # Textures: KTX2 / Basis Universal, transcoded at load to BC7/ETC2/ASTC and kept COMPRESSED in VRAM
 # (PNG/JPEG decode to raw RGBA: the old city used 270 MB of texture memory). ETC1S for colour maps
-# (baseColor, emissive: small, a little blocky in flat gradients), UASTC for data maps (normal,
-# metallic-roughness, occlusion: ETC1S artefacts would show as bumpy lighting), zstd-supercompressed.
+# (baseColor, emissive: small, a little blocky in flat gradients), UASTC for normal/occlusion maps (ETC1S artefacts would show as bumpy lighting);
+# roughness (a smooth single channel) goes ETC1S too, which halves its size, zstd-supercompressed.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 KTX_DIR="$(ls -d "$ROOT"/tools/ktx/KTX-Software-*/ 2>/dev/null | head -1)"
@@ -31,8 +31,8 @@ pack() {   # pack <in> <out> <max texture size>
   $G dedup "$in" "$t.1.glb"
   $G prune "$t.1.glb" "$t.2.glb"
   $G resize "$t.2.glb" "$t.3.glb" --width "$size" --height "$size"
-  $G uastc "$t.3.glb" "$t.4.glb" --slots "{normalTexture,occlusionTexture,metallicRoughnessTexture}" --level 2 --rdo --rdo-lambda 2 --zstd 18
-  $G etc1s "$t.4.glb" "$t.5.glb" --slots "{baseColorTexture,emissiveTexture}" --quality 160
+  $G uastc "$t.3.glb" "$t.4.glb" --slots "{normalTexture,occlusionTexture}" --level 2 --rdo --rdo-lambda 5 --zstd 18
+  $G etc1s "$t.4.glb" "$t.5.glb" --slots "{baseColorTexture,emissiveTexture,metallicRoughnessTexture}" --quality 192
   $G meshopt "$t.5.glb" "$out" --level high --quantize-position 16 --quantize-texcoord 16
   rm -f "$t".*.glb
   ls -la "$out"
