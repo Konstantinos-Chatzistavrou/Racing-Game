@@ -8,10 +8,10 @@
 // (night lighting test: the player's headlights should be the only way to see them).
 import * as THREE from 'three/webgpu';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { GROUP_CAR, type PhysicsWorld } from './physics/world';
 import { materialsOf } from './scene/city';
-import type { CarVisualConfig } from './scene/car';
+import { setupCarMaterials, type CarVisualConfig } from './scene/car';
+import { assetUrl, loadGLTF } from './scene/loaders';
 
 interface RouteSample { x: number; y: number; z: number; curvature: number; width_left: number; width_right: number }
 
@@ -100,9 +100,10 @@ export class AiTraffic {
     const starts = [45, 140, 260].slice(0, count);
     const ai = new AiTraffic(pw, samples, starts);
     if (!count) return ai;
-    // Own copy of the model: the player's is dented by the damage system, these never are.
-    // The AI cars share it (geometry and all) between them.
-    const gltf = await new GLTFLoader().loadAsync(cfg.model.replace('res://assets/', '/assets/'));
+    // The traffic version of the car (lod_model: same parts and materials, ~28k triangles, 1k
+    // textures): the player's hero model is dented by the damage system, these never are. The AI
+    // cars (and remote players, net.ts) share it, geometry and all.
+    const gltf = await loadGLTF(assetUrl(cfg.lod_model ?? cfg.model));
     const blackMat = new THREE.MeshStandardMaterial({ name: 'ai_black', color: 0x000000, roughness: 0.6, metalness: 0 });
     // Black paint: black albedo reflects nothing diffusely, so the car only shows through specular.
     // Measured in the night test: a full-strength layer (F0 4 %, or clear coat 1) on the rear panel
@@ -115,23 +116,28 @@ export class AiTraffic {
     const cb = cfg.collision_box;
     for (const [i, s] of starts.entries()) {
       const model = gltf.scene.clone(true);
-      const paint = new THREE.MeshPhysicalMaterial({ name: 'ai_paint', color: PAINTS[i % PAINTS.length], metalness: 0.35, roughness: 0.32, clearcoat: 1, clearcoatRoughness: 0.04 });
       const wheels: AiCar['wheels'] = [];
       for (const name of Object.values(cfg.wheel_nodes)) {
         const node = model.getObjectByName(name);
         if (node) wheels.push({ node, rest: node.quaternion.clone() });
       }
-      model.traverse((o) => {
-        const m = o as THREE.Mesh;
-        if (!m.isMesh) return;
-        m.castShadow = true;        // in the player's headlight beam (the only shadow caster)
-        m.receiveShadow = false;
-        const mat = materialsOf(m)[0];
-        if (mat.name === 'light_beam') { m.visible = false; return; }
-        if (black) m.material = mat.name === cfg.paint_material ? blackPaint : blackMat;
-        else if (mat.name === cfg.paint_material) m.material = paint;
-        else if (mat.name === 'glass') { mat.transparent = true; mat.opacity = 0.35; mat.roughness = 0.02; }
-      });
+      // The body follows the lane on the ground, the wheels stay at their modelled hubs: drop the
+      // model so the hub sits at the rolling radius (the modelled tyre is 0.345 m).
+      if (wheels.length) model.position.y = WHEEL_R - wheels[0].node.position.y;
+      // own paint colour per car (a clone of the file's clear-coat paint), shadows cast only:
+      // they are in the player's headlight beam (the only shadow caster)
+      if (!black) setupCarMaterials(model, cfg, PAINTS[i % PAINTS.length], false);
+      else {
+        model.traverse((o) => {
+          const m = o as THREE.Mesh;
+          if (!m.isMesh) return;
+          m.castShadow = true;
+          m.receiveShadow = false;
+          const mat = materialsOf(m)[0];
+          if (mat.name === 'light_beam') { m.visible = false; return; }
+          m.material = mat.name === cfg.paint_material ? blackPaint : blackMat;
+        });
+      }
       const root = new THREE.Group();
       root.add(model);
       scene.add(root);
@@ -140,7 +146,7 @@ export class AiTraffic {
       let light: THREE.SpotLight | null = null;
       if (!black) {
         light = new THREE.SpotLight(0xfff3e0, 700, 55, 0.5, 0.5, 2);
-        light.position.set(0, 0.6, 2.4);
+        light.position.set(0, 0.55, 2.2);   // at the projector lenses (vela_gt.visual.json headlights)
         light.target.position.set(0, -0.5, 16);
         root.add(light, light.target);
       }
