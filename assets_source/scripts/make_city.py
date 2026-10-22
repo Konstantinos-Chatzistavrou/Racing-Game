@@ -1,16 +1,30 @@
 """Procedural night city for illegal street racing ("Old Harbour District").
 
-Run:  tools/blender/blender -b --factory-startup --python assets_source/scripts/make_city.py
+Run:  tools/blender/blender -b --factory-startup --python assets_source/scripts/gen_city_textures.py   (once)
+      tools/blender/blender -b --factory-startup --python assets_source/scripts/make_city_props.py     (once)
+      tools/blender/blender -b --factory-startup --python assets_source/scripts/make_city.py
+      bash assets_source/scripts/build_city_assets.sh          (compress -> web/public/assets/city/)
 Out:  assets_source/models/city.blend         (source of truth)
-      game/assets/city/city.glb               (visual tiles, "-colonly" collision, lamp lights)
+      assets_source/build/city_raw.glb        (visual tiles, "-colonly" collision, lamp lights; gitignored)
+      data/city_props.json                    (city_props/1: instance transforms for the props library)
       data/tracks/city_route.json             (route/1: race loop for AI + lap timing)
       data/tracks/city.json                   (city/1: streets, lamps, parked-car spots, grid)
+(game/assets/city/city.glb is the old uncompressed export, kept for the legacy Godot build.)
 
 No racing infrastructure: ordinary streets. Street types (kerb to kerb):
   alley      4.6 m  one lane, one-way           sidewalk 1.5 m   buildings 3-5 floors
   street     7.0 m  one lane each way           sidewalk 2.5 m   buildings 4-7 floors
   boulevard 17.0 m  2 lanes each way + parking  sidewalk 4.5 m   buildings 6-11 floors
 Blender axes: Z up, metres. Terrain: gentle hills, grades up to ~8 %.
+
+Hi-fi pass (2026-10): the LAYOUT (streets, blocks, building footprints and heights, collision,
+lamps, route) is unchanged and still drawn from random.seed(11) in the same order; everything new
+(materials, decals, facade detail, props) uses its own generator DRNG, so the physics and the race
+route match the previous build exactly. Facades are PBR "window bays" (gen_city_textures.py);
+street furniture and wall clutter are INSTANCES of the props library (make_city_props.py), placed
+here into data/city_props.json and drawn by web/src/scene/instancing.ts (InstancedMesh per asset per
+LOD, cell culling). Every prop position is checked against the street network (assert_off_road):
+nothing may stand in a carriageway (a lamp once spawned mid-street and wrecked the AI cars).
 """
 import bmesh
 import bpy
@@ -23,10 +37,14 @@ from mathutils import Vector
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 TEX = os.path.join(ROOT, "assets_source", "textures")
 BLEND_OUT = os.path.join(ROOT, "assets_source", "models", "city.blend")
-GLB_OUT = os.path.join(ROOT, "game", "assets", "city", "city.glb")
+GLB_OUT = os.path.join(ROOT, "assets_source", "build", "city_raw.glb")
+PROPS_OUT = os.path.join(ROOT, "data", "city_props.json")
+DL = os.path.join(ROOT, "assets_source", "downloads")
+GEN = os.path.join(ROOT, "assets_source", "build", "textures")
 ROUTE_OUT = os.path.join(ROOT, "data", "tracks", "city_route.json")
 CITY_OUT = os.path.join(ROOT, "data", "tracks", "city.json")
 random.seed(11)
+DRNG = random.Random(2026)          # decoration only: never touches the layout's random sequence
 
 TYPES = {
     "alley": {"width": 4.6, "walk": 1.5, "floors": (3, 5)},
@@ -69,11 +87,24 @@ def crown(across, half_width, along_from_end):
 
 # ============================================================================ materials
 def img(name):
-    return bpy.data.images.get(name + ".png") or bpy.data.images.load(os.path.join(TEX, name + ".png"))
+    """Image by name: a full path (downloads / generated maps) or a legacy assets_source/textures name."""
+    path = name if os.path.isabs(name) else os.path.join(TEX, name + ".png")
+    key = os.path.basename(path)
+    return bpy.data.images.get(key) or bpy.data.images.load(path)
+
+
+def ph(tid, kind):
+    """Poly Haven texture map from the downloads (kind: diff / nor_gl / rough)."""
+    d = os.path.join(DL, "polyhaven", tid)
+    return os.path.join(d, sorted(f for f in os.listdir(d) if f"_{kind}" in f)[0])
+
+
+def gen(name):
+    return os.path.join(GEN, name + ".png")
 
 
 def tex_mat(name, albedo=None, normal=None, rough=None, rough_val=0.8, emission=None, emis_strength=0.0,
-            color=(0.5, 0.5, 0.5), metallic=0.0):
+            color=(0.5, 0.5, 0.5), metallic=0.0, alpha=False):
     m = bpy.data.materials.new(name)
     nt = m.node_tree
     b = nt.nodes["Principled BSDF"]
@@ -87,6 +118,8 @@ def tex_mat(name, albedo=None, normal=None, rough=None, rough_val=0.8, emission=
             if nonc:
                 t.image.colorspace_settings.name = "Non-Color"
             nt.links.new(t.outputs["Color"], b.inputs[sock])
+            if alpha and sock == "Base Color":           # decals: albedo alpha = coverage (alpha-tested in city.ts)
+                nt.links.new(t.outputs["Alpha"], b.inputs["Alpha"])
     if normal:
         t = nt.nodes.new("ShaderNodeTexImage")
         t.image = img(normal)
@@ -118,16 +151,19 @@ M = {}
 
 
 def make_materials():
-    M["road"] = tex_mat("road_asphalt", "asphalt_albedo", "asphalt_normal", "asphalt_rough")
-    M["paint"] = flat_mat("road_paint", (0.75, 0.75, 0.72), rough=0.45)
-    M["walk"] = tex_mat("concrete", "concrete_albedo", "concrete_normal", "concrete_rough")
-    M["facade0"] = tex_mat("facade_office", "facade0_albedo", None, "facade0_rough", emission="facade0_emission", emis_strength=3.0)
-    M["facade1"] = tex_mat("facade_brick", "facade1_albedo", None, "facade1_rough", emission="facade1_emission", emis_strength=3.0)
-    M["shop"] = tex_mat("shopfront", "shopfront_albedo", None, None, rough_val=0.15, emission="shopfront_emission", emis_strength=3.0)
+    # Road: Poly Haven asphalt_02 (3 m tile, 2k) - its own roughness map; city.ts adds large-scale
+    # puddles (roughness mask) and colour variation in the shader so the tiling doesn't show.
+    M["road"] = tex_mat("road_asphalt", ph("asphalt_02", "diff"), ph("asphalt_02", "nor_gl"), ph("asphalt_02", "rough"))
+    M["paint"] = tex_mat("road_paint", gen("paint_albedo"), None, gen("paint_rough"), alpha=True)
+    M["decal"] = tex_mat("road_decal", gen("decal_albedo"), gen("decal_normal"), gen("decal_rough"), alpha=True)
+    M["walk"] = tex_mat("sidewalk", ph("concrete_pavement", "diff"), ph("concrete_pavement", "nor_gl"), ph("concrete_pavement", "rough"))
+    M["curb"] = tex_mat("curb_granite", ph("granite_tile", "diff"), ph("granite_tile", "nor_gl"), ph("granite_tile", "rough"))
+    for v in ("brick", "plaster", "render"):
+        M[f"facade_{v}"] = tex_mat(f"facade_{v}", gen(f"facade_{v}_albedo"), gen(f"facade_{v}_normal"), gen(f"facade_{v}_rough"),
+                                   emission=gen(f"facade_{v}_emit"), emis_strength=1.0)
+    M["shop"] = tex_mat("shopfront", gen("shop_albedo"), gen("shop_normal"), gen("shop_rough"), emission=gen("shop_emit"), emis_strength=1.0)
     M["roof"] = flat_mat("roof", (0.03, 0.03, 0.035), rough=0.9)
     M["steel"] = flat_mat("steel_dark", (0.08, 0.08, 0.09), rough=0.45, metallic=0.9)
-    M["lamp"] = flat_mat("lamp_head", (1, 1, 1), emission=(1.0, 0.86, 0.68), strength=20.0)
-    M["board"] = flat_mat("sign_board", (0.02, 0.02, 0.025), rough=0.7)
     M["tl_red"] = flat_mat("traffic_red", (0.3, 0, 0), emission=(1, 0.05, 0.02), strength=10.0)
     M["tl_green"] = flat_mat("traffic_green", (0, 0.3, 0.1), emission=(0.1, 1, 0.4), strength=10.0)
     for nm, c in (("neon_pink", (1.0, 0.1, 0.55)), ("neon_cyan", (0.1, 0.85, 1.0)),
@@ -221,7 +257,7 @@ def build_roads():
         for j, y in enumerate(HY):
             wv, wh = street_w(V_TYPES[i]), street_w(H_TYPES[j])
             grid("road", x - wv / 2, x + wv / 2, y - wh / 2, y + wh / 2, across[V_TYPES[i]], across[H_TYPES[j]],
-                 lambda X, Y: terrain(X, Y), 4.0, collide="col_asphalt")
+                 lambda X, Y: terrain(X, Y), 3.0, collide="col_asphalt")
     # N-S segments
     for i, x in enumerate(VX):
         w = street_w(V_TYPES[i])
@@ -229,7 +265,7 @@ def build_roads():
             ya, yb = HY[j] + street_w(H_TYPES[j]) / 2, HY[j + 1] - street_w(H_TYPES[j + 1]) / 2
             n = max(2, int((yb - ya) / 3.0))
             z = lambda X, Y, x=x, w=w, ya=ya, yb=yb: terrain(X, Y) + crown(X - x, w / 2, min(Y - ya, yb - Y))
-            grid("road", x - w / 2, x + w / 2, ya, yb, across[V_TYPES[i]], n, z, 4.0, collide="col_asphalt")
+            grid("road", x - w / 2, x + w / 2, ya, yb, across[V_TYPES[i]], n, z, 3.0, collide="col_asphalt")
             build_markings(V_TYPES[i], (x, ya), (x, yb), z, j)
     # E-W segments
     for j, y in enumerate(HY):
@@ -238,7 +274,7 @@ def build_roads():
             xa, xb = VX[i] + street_w(V_TYPES[i]) / 2, VX[i + 1] - street_w(V_TYPES[i + 1]) / 2
             n = max(2, int((xb - xa) / 3.0))
             z = lambda X, Y, y=y, w=w, xa=xa, xb=xb: terrain(X, Y) + crown(Y - y, w / 2, min(X - xa, xb - X))
-            grid("road", xa, xb, y - w / 2, y + w / 2, n, across[H_TYPES[j]], z, 4.0, collide="col_asphalt")
+            grid("road", xa, xb, y - w / 2, y + w / 2, n, across[H_TYPES[j]], z, 3.0, collide="col_asphalt")
             build_markings(H_TYPES[j], (xa, y), (xb, y), z, i)
 
 
@@ -249,6 +285,7 @@ def line_strip(a, b, offset, width, zfun, dash=None, gap=None):
     L = d.length
     t = d / L
     n = Vector((-t.y, t.x, 0))
+    phase = DRNG.uniform(0, 4)
     s = 1.0
     while s < L - 1.0:
         e = min(L - 1.0, s + (dash if dash else 4.0))
@@ -256,7 +293,8 @@ def line_strip(a, b, offset, width, zfun, dash=None, gap=None):
         p1 = a + t * e + n * offset
         pts = [p0 - n * width / 2, p1 - n * width / 2, p1 + n * width / 2, p0 + n * width / 2]
         pts = [Vector((p.x, p.y, zfun(p.x, p.y) + 0.012)) for p in pts]
-        quad(VIS.get("paint", p0.x, p0.y), pts)
+        v0, v1 = (s + phase) / 4.0, (e + phase) / 4.0         # worn-paint mask: u across, v along (4 m)
+        quad(VIS.get("paint", p0.x, p0.y), pts, [(0, v0), (0, v1), (1, v1), (1, v0)])
         s = e + (gap if dash else 0.0)
 
 
@@ -279,7 +317,48 @@ def build_markings(kind, a, b, zfun, idx):
                 p = c + n * (k * 1.0)
                 pts = [p - n * 0.25 - t * 1.5, p + n * 0.25 - t * 1.5, p + n * 0.25 + t * 1.5, p - n * 0.25 + t * 1.5]
                 pts = [Vector((q.x, q.y, zfun(q.x, q.y) + 0.012)) for q in pts]
-                quad(VIS.get("paint", p.x, p.y), pts)
+                v0 = DRNG.uniform(0, 1)
+                quad(VIS.get("paint", p.x, p.y), pts, [(0, v0), (1, v0), (1, v0 + 0.75), (0, v0 + 0.75)])
+    road_decals(kind, a, b, zfun)
+
+
+def decal(cx, cy, size_a, size_b, ang, rect, zfun, n=1):
+    """Flat decal (alpha-tested atlas region rect = (u0, v0, u1, v1)) lying on the road surface,
+    split n x n so it follows the crown; 8 mm above the asphalt (paint is at 12 mm)."""
+    ca, sa = math.cos(ang), math.sin(ang)
+    bm = VIS.get("decal", cx, cy)
+    for i in range(n):
+        for j in range(n):
+            pts, uvs = [], []
+            for di, dj in ((0, 0), (1, 0), (1, 1), (0, 1)):
+                fa, fb = (i + di) / n - 0.5, (j + dj) / n - 0.5
+                x = cx + ca * fa * size_a - sa * fb * size_b
+                y = cy + sa * fa * size_a + ca * fb * size_b
+                pts.append(Vector((x, y, zfun(x, y) + 0.008)))
+                uvs.append((rect[0] + (rect[2] - rect[0]) * (fa + 0.5), rect[1] + (rect[3] - rect[1]) * (fb + 0.5)))
+            quad(bm, pts, uvs)
+
+
+def road_decals(kind, a, b, zfun):
+    """Manhole covers in the lanes (ambientCG ManholeCover009) and patched asphalt
+    (AsphaltDamage001): flush decals, no collision, so they may lie in the carriageway."""
+    A, B = Vector((a[0], a[1], 0)), Vector((b[0], b[1], 0))
+    L = (B - A).length
+    t = (B - A) / L
+    n = Vector((-t.y, t.x, 0))
+    lanes = {"alley": [0.0], "street": [-1.75, 1.75], "boulevard": [-5.0, -1.7, 1.7, 5.0]}[kind]
+    s = DRNG.uniform(8, 25)
+    while s < L - 8:
+        p = A + t * s + n * DRNG.choice(lanes)
+        decal(p.x, p.y, 0.8, 0.8, DRNG.uniform(0, math.tau), (0.0, 0.0, 0.5, 1.0), zfun)
+        s += DRNG.uniform(30, 60)
+    s = DRNG.uniform(5, 30)
+    while s < L - 6:
+        half = TYPES[kind]["width"] / 2 - 1.2
+        p = A + t * s + n * DRNG.uniform(-half, half)
+        w = DRNG.uniform(1.5, 3.5)
+        decal(p.x, p.y, w, w * DRNG.uniform(0.6, 1.0), math.atan2(t.y, t.x) + DRNG.uniform(-0.3, 0.3), (0.5, 0.0, 1.0, 1.0), zfun, n=3)
+        s += DRNG.uniform(25, 70)
 
 
 # ============================================================================ blocks, buildings
@@ -296,7 +375,7 @@ def build_block(x0, x1, y0, y1, kinds, outer=False):
     """Raised sidewalk + kerb face + buildings. kinds = (west, east, south, north) street kinds
     or None where the block has no street (outer ring)."""
     nx, ny = max(2, int((x1 - x0) / 5)), max(2, int((y1 - y0) / 5))
-    grid("walk", x0, x1, y0, y1, nx, ny, walk_z, 3.0, collide="col_pavement")
+    grid("walk", x0, x1, y0, y1, nx, ny, walk_z, 1.8, collide="col_pavement")
     # kerb faces (vertical) along sides that face a street
     sides = [((x0, y0), (x0, y1), Vector((-1, 0, 0)), kinds[0]), ((x1, y1), (x1, y0), Vector((1, 0, 0)), kinds[1]),
              ((x1, y0), (x0, y0), Vector((0, -1, 0)), kinds[2]), ((x0, y1), (x1, y1), Vector((0, 1, 0)), kinds[3])]
@@ -311,8 +390,9 @@ def build_block(x0, x1, y0, y1, kinds, outer=False):
             q = A + (B - A) * ((k + 1) / n)
             pts = [Vector((p.x, p.y, terrain(p.x, p.y) - 0.12)), Vector((q.x, q.y, terrain(q.x, q.y) - 0.12)),
                    Vector((q.x, q.y, walk_z(q.x, q.y))), Vector((p.x, p.y, walk_z(p.x, p.y)))]
-            quad(VIS.get("walk", p.x, p.y), pts, [(k * 0.3, 0), ((k + 1) * 0.3, 0), ((k + 1) * 0.3, 0.05), (k * 0.3, 0.05)], out)
-            quad(COL.get("col_pavement", p.x, p.y), pts, None, out)
+            curb_stone(p, q, out, k * (L / n), (k + 1) * (L / n))
+            quad(COL.get("col_pavement", p.x, p.y), pts, None, out)       # collision: unchanged flat kerb face
+        BLOCK_SIDES.append((A, B, out, kind))
     # buildings: set back by the sidewalk width of each side's street
     sb = [TYPES[k]["walk"] if k else 0.0 for k in kinds]
     bx0, bx1, by0, by1 = x0 + sb[0], x1 - sb[1], y0 + sb[2], y1 - sb[3]
@@ -335,39 +415,123 @@ def build_block(x0, x1, y0, y1, kinds, outer=False):
             p0 = A + t * s
             p1 = A + t * (s + w)
             shop = kinds[side] is not None and kinds[side] != "alley" and random.random() < 0.55
-            building(p0, p1, inward, depth, fl * 3.2, shop)
+            building(p0, p1, inward, depth, fl * 3.2, shop, kinds[side])
             if shop:
                 shops.append((p0, p1, inward))
             s += w
     return shops
 
 
-def building(p0, p1, inward, depth, height, shop):
+BLOCK_SIDES = []      # (A, B, out, street kind): kerb lines, for placing sidewalk props
+FACES = []            # facade faces (dicts), for placing wall clutter after the lamps exist
+BAY_W, FLOOR = 3.0, 3.2
+
+
+def curb_stone(p, q, out, s0, s1):
+    """Granite kerb stone between p and q (on the kerb line, `out` = toward the road): vertical
+    face, 2 cm chamfer, 16 cm top strip. Visual only (collision keeps the flat kerb face)."""
+    inn = -out
+    bm = VIS.get("curb", p.x, p.y)
+    zp, zq = terrain(p.x, p.y), terrain(q.x, q.y)
+    wp, wq = walk_z(p.x, p.y), walk_z(q.x, q.y)
+    c = 0.025
+    u0, u1 = s0 / 2.3, s1 / 2.3
+    P = lambda pt, d, z: Vector((pt.x + inn.x * d, pt.y + inn.y * d, z))
+    quad(bm, [P(p, 0, zp - 0.12), P(q, 0, zq - 0.12), P(q, 0, wq - c), P(p, 0, wp - c)], [(u0, 0), (u1, 0), (u1, 0.06), (u0, 0.06)], out)
+    quad(bm, [P(p, 0, wp - c), P(q, 0, wq - c), P(q, c, wq + 0.003), P(p, c, wp + 0.003)], [(u0, 0.06), (u1, 0.06), (u1, 0.07), (u0, 0.07)], out + Vector((0, 0, 1)))
+    quad(bm, [P(p, c, wp + 0.003), P(q, c, wq + 0.003), P(q, 0.18, wq + 0.003), P(p, 0.18, wp + 0.003)], [(u0, 0.07), (u1, 0.07), (u1, 0.14), (u0, 0.14)])
+
+
+def building(p0, p1, inward, depth, height, shop, front_kind=None):
+    """Building shell. The random calls (facade variant, texture offset) are the same as before so
+    the city layout is unchanged; the facade itself is now PBR window bays:
+      u = bays along the wall (whole bays per face, ~3 m), v = storeys above the ground line zg
+      shop front: plinth + shopfront bays (4 m) below the first floor
+      other faces: granite plinth up to 0.45 m; parapet above the top floor; cornice on street faces."""
     corners = [p0, p1, p1 + inward * depth, p0 + inward * depth]
     zmin = min(terrain(c.x, c.y) for c in corners) - 1.0
     zmax = max(terrain(c.x, c.y) for c in corners) + CURB + height
-    variant = "facade0" if random.random() < 0.5 else "facade1"
+    variant = "facade_brick" if random.random() < 0.5 else ("facade_plaster" if DRNG.random() < 0.5 else "facade_render")
     cx, cy = (p0.x + p1.x) / 2, (p0.y + p1.y) / 2
-    u_off = random.uniform(0, 96)
-    acc = u_off
+    u_off = int(random.uniform(0, 96))
+    fl = int(round(height / FLOOR))
+    zg = terrain((p0.x + p1.x) / 2, (p0.y + p1.y) / 2) + CURB          # ground-floor line (front)
+    ztop = zg + fl * FLOOR
+    zwall = max(zmax, ztop) + 0.8                                       # parapet
+    centre = sum(corners, Vector()) / 4
     for k in range(4):
         a, b = corners[k], corners[(k + 1) % 4]
-        out = ((a + b) / 2 - (sum(corners, Vector()) / 4)).normalized()
+        out = ((a + b) / 2 - centre).normalized()
         seg = (b - a).length
-        base = zmin + 1.0 + CURB if (k == 0 and shop) else zmin      # front face starts above the shop band
-        za = base + (4.0 if (k == 0 and shop) else 0.0)
-        pts = [Vector((a.x, a.y, za)), Vector((b.x, b.y, za)), Vector((b.x, b.y, zmax)), Vector((a.x, a.y, zmax))]
-        uvs = [(acc / 24, (za - zmin) / 24), ((acc + seg) / 24, (za - zmin) / 24), ((acc + seg) / 24, (zmax - zmin) / 24), (acc / 24, (zmax - zmin) / 24)]
-        quad(VIS.get(variant, cx, cy), pts, uvs, out)
-        acc += seg
-        if k == 0 and shop:                                  # shopfront band on the street face
-            zs = terrain((a.x + b.x) / 2, (a.y + b.y) / 2) + CURB
-            pts = [Vector((a.x, a.y, zmin)), Vector((b.x, b.y, zmin)), Vector((b.x, b.y, zs + 4.0)), Vector((a.x, a.y, zs + 4.0))]
-            uvs = [(0, (zmin - zs) / 4), (seg / 12, (zmin - zs) / 4), (seg / 12, 1), (0, 1)]
-            quad(VIS.get("shop", cx, cy), pts, uvs, out)
-        # collision: one wall quad per face
+        nb = max(1, int(round(seg / BAY_W)))
+        bw = seg / nb
+        u0 = u_off + 7 * k
+        front_shop = k == 0 and shop
+        bm = VIS.get(variant, cx, cy)
+
+        def face(bmk, z0, z1, v0, v1, uscale=1.0, uo=u0):
+            quad(bmk, [Vector((a.x, a.y, z0)), Vector((b.x, b.y, z0)), Vector((b.x, b.y, z1)), Vector((a.x, a.y, z1))],
+                 [(uo, v0), (uo + nb * uscale, v0), (uo + nb * uscale, v1), (uo, v1)], out)
+
+        if front_shop:
+            sh = VIS.get("shop", cx, cy)
+            face(sh, zmin, zg + 0.15, 0.005, 0.035)                       # plinth part of the shop texture
+            face(sh, zg + 0.15, zg + 4.0, 0.15 / 4.0, 1.0)
+            zbase = zg + 4.0
+        else:
+            cb = VIS.get("curb", cx, cy)
+            quad(cb, [Vector((a.x, a.y, zmin)), Vector((b.x, b.y, zmin)), Vector((b.x, b.y, zg + 0.45)), Vector((a.x, a.y, zg + 0.45))],
+                 [(0, zmin / 2.3), (seg / 2.3, zmin / 2.3), (seg / 2.3, (zg + 0.45) / 2.3), (0, (zg + 0.45) / 2.3)], out)
+            zbase = zg + 0.45
+        face(bm, zbase, ztop, (zbase - zg) / FLOOR, fl)                    # window bays
+        face(bm, ztop, zwall, 0.03, 0.22)                                  # parapet: plain wall band of the bay
+        q = (a + b) / 2 + out * 2.0
+        exposed = k == 0 and front_kind is not None or street_at(q.x, q.y, 1.0) is not None
+        if exposed:
+            cornice(bm, a, b, out, ztop - 0.05, ztop + 0.3, 0.22, u0, nb)
+        FACES.append({"a": a.copy(), "b": b.copy(), "out": out.copy(), "zg": zg, "fl": fl, "nb": nb, "bw": bw, "shop": front_shop,
+                      "exposed": exposed, "kind": front_kind if k == 0 else (street_at(q.x, q.y, 1.0) or [None])[0]})
+        # collision: one wall quad per face (unchanged)
         quad(COL.get("col_wall", cx, cy), [Vector((a.x, a.y, zmin)), Vector((b.x, b.y, zmin)), Vector((b.x, b.y, zmax)), Vector((a.x, a.y, zmax))], None, out)
     quad(VIS.get("roof", cx, cy), [Vector((c.x, c.y, zmax)) for c in corners])
+
+
+def cornice(bm, a, b, out, z0, z1, d, u0, nb):
+    """Projecting cornice band under the parapet (underside, face, top, end caps)."""
+    A, B = a + out * d, b + out * d
+    V = lambda p, z: Vector((p.x, p.y, z))
+    uv = lambda v0, v1: [(u0, v0), (u0 + nb, v0), (u0 + nb, v1), (u0, v1)]
+    quad(bm, [V(a, z0), V(b, z0), V(B, z0), V(A, z0)], uv(0.05, 0.07), Vector((0, 0, -1)))
+    quad(bm, [V(A, z0), V(B, z0), V(B, z1), V(A, z1)], uv(0.07, 0.17), out)
+    quad(bm, [V(A, z1), V(B, z1), V(b, z1), V(a, z1)], uv(0.17, 0.2), Vector((0, 0, 1)))
+    t = (b - a).normalized()
+    for p, P, s in ((a, A, -1), (b, B, 1)):
+        quad(bm, [V(p, z0), V(P, z0), V(P, z1), V(p, z1)], [(0, 0.07), (0.07, 0.07), (0.07, 0.17), (0, 0.17)], t * s)
+
+
+def street_at(x, y, pad=0.0):
+    """(kind, axis, centre, width) of a street whose carriageway + sidewalk (+ pad) contains (x, y),
+    or None. Streets run between the first and last cross street (the ring blocks close them)."""
+    for i, vx in enumerate(VX):
+        k = V_TYPES[i]
+        if abs(x - vx) <= street_w(k) / 2 + TYPES[k]["walk"] + pad and HY[0] - street_w(H_TYPES[0]) / 2 <= y <= HY[-1] + street_w(H_TYPES[-1]) / 2:
+            return (k, "y", vx, street_w(k))
+    for j, hy in enumerate(HY):
+        k = H_TYPES[j]
+        if abs(y - hy) <= street_w(k) / 2 + TYPES[k]["walk"] + pad and VX[0] - street_w(V_TYPES[0]) / 2 <= x <= VX[-1] + street_w(V_TYPES[-1]) / 2:
+            return (k, "x", hy, street_w(k))
+    return None
+
+
+def in_carriageway(x, y, pad=0.0):
+    """True if (x, y) is on (or within `pad` of) any road surface: kerb-to-kerb of any street."""
+    for i, vx in enumerate(VX):
+        if abs(x - vx) < street_w(V_TYPES[i]) / 2 + pad and HY[0] - street_w(H_TYPES[0]) / 2 - pad <= y <= HY[-1] + street_w(H_TYPES[-1]) / 2 + pad:
+            return True
+    for j, hy in enumerate(HY):
+        if abs(y - hy) < street_w(H_TYPES[j]) / 2 + pad and VX[0] - street_w(V_TYPES[0]) / 2 - pad <= x <= VX[-1] + street_w(V_TYPES[-1]) / 2 + pad:
+            return True
+    return False
 
 
 def build_city_blocks():
@@ -409,19 +573,9 @@ def lamp(x, y, toward):
     z0 = walk_z(x, y)
     h = 7.0
     head = Vector((x, y, 0)) + toward * 1.4
-    bm = VIS.get("steel", x, y)
-    r = bmesh.ops.create_cone(bm, cap_ends=False, segments=8, radius1=0.11, radius2=0.07, depth=h)
-    for v in r["verts"]:
-        v.co = Vector((v.co.x + x, v.co.y + y, v.co.z + z0 + h / 2))
-    arm = bmesh.ops.create_cube(bm, size=1.0)
-    mid = (Vector((x, y, 0)) + head) / 2
-    for v in arm["verts"]:
-        lx, ly = v.co.x * (1.4 if abs(toward.x) > 0.5 else 0.08), v.co.y * (1.4 if abs(toward.y) > 0.5 else 0.08)
-        v.co = Vector((mid.x + lx, mid.y + ly, z0 + h + v.co.z * 0.08))
-    hb = VIS.get("lamp", x, y)
-    c = bmesh.ops.create_cube(hb, size=1.0)
-    for v in c["verts"]:
-        v.co = Vector((head.x + v.co.x * 0.6, head.y + v.co.y * 0.6, z0 + h - 0.1 + v.co.z * 0.1))
+    # the lamp itself is an instance of the props library (pole, curved arm, LED head toward +X)
+    add_prop("street_lamp", x, y, z0, math.atan2(toward.y, toward.x))
+    POLES.append((x, y))
     col = COL.get("col_wall", x, y)                         # you can hit lamp posts
     cc = bmesh.ops.create_cube(col, size=1.0)
     for v in cc["verts"]:
@@ -479,6 +633,7 @@ def build_traffic_lights():
             for k, (sx, sy) in enumerate(((1, 1), (-1, 1), (-1, -1), (1, -1))):
                 px, py = x + sx * wv, y + sy * wh
                 z0 = walk_z(px, py)
+                POLES.append((px, py))
                 bm = VIS.get("steel", px, py)
                 r = bmesh.ops.create_cone(bm, cap_ends=False, segments=8, radius1=0.08, radius2=0.08, depth=3.4)
                 for v in r["verts"]:
@@ -525,6 +680,12 @@ def build_neon(shops):
         bpy.context.view_layer.objects.active = ob
         ob.select_set(True)
         bpy.ops.object.convert(target="MESH")
+        # merge the sign into its tile's neon bucket (one draw call per colour per tile, not 28 objects)
+        me = ob.data
+        me.transform(ob.matrix_world)
+        VIS.get(mat, mid.x, mid.y).from_mesh(me)
+        bpy.data.objects.remove(ob)
+        bpy.data.meshes.remove(me)
         col = M[mat].node_tree.nodes["Principled BSDF"].inputs["Emission Color"].default_value
         add_light(f"neon_light_{k:02d}", "POINT", (mid.x + out.x * 1.2, mid.y + out.y * 1.2, z), (col[0], col[1], col[2]), 200.0)
 
@@ -547,6 +708,178 @@ def parking_spots():
                         PARKING.append({"x": round(px, 2), "y": round(py, 2), "z": round(terrain(px, py), 2),
                                         "heading": 0.0 if side < 0 else math.pi})
                 x += 6.2
+
+
+# ============================================================================ props (instances)
+PROPS = {}            # asset -> [[x, y, z, yaw, sx], ...] in Blender coordinates
+POLES = []            # lamp + traffic-light poles (x, y): sidewalk props keep clear of them
+FLOOR_PTS = []        # placed floor props (x, y, radius)
+# Runtime metadata per asset (web/src/scene/instancing.ts): LOD switch distances (m), draw distance,
+# bounding radius for culling, optional box collider (half extents + centre, Blender local axes).
+ASSET_META = {
+    "street_lamp": {"lod": [30, 80], "draw": 230, "radius": 4.0},
+    "window_sill": {"lod": [28, 70], "draw": 70, "radius": 1.0},
+    "hydrant": {"lod": [18, 45], "draw": 110, "radius": 0.5, "box": [[0.16, 0.16, 0.4], [0, 0, 0.4]]},
+    "trash_can": {"lod": [18, 45], "draw": 110, "radius": 0.6, "box": [[0.3, 0.28, 0.46], [0, 0, 0.46]]},
+    "trash_can_rust": {"lod": [18, 45], "draw": 110, "radius": 0.6, "box": [[0.3, 0.28, 0.46], [0, 0, 0.46]]},
+    "utility_box_a": {"lod": [20, 50], "draw": 120, "radius": 0.8, "box": [[0.26, 0.215, 0.56], [0, -0.215, 0.56]]},
+    "utility_box_b": {"lod": [20, 50], "draw": 120, "radius": 0.9, "box": [[0.46, 0.215, 0.56], [0, -0.215, 0.56]]},
+    "aircon": {"lod": [20, 50], "draw": 120, "radius": 0.7},
+    "shutter_bay": {"lod": [25, 60], "draw": 150, "radius": 2.2},
+    "shutter_door": {"lod": [25, 60], "draw": 140, "radius": 1.6},
+    "security_light": {"lod": [15, 40], "draw": 90, "radius": 0.5},
+    "wall_lantern": {"lod": [15, 40], "draw": 100, "radius": 1.0},
+    "fire_escape": {"lod": [30, 70], "draw": 170, "radius": 3.2},
+    "fire_escape_bottom": {"lod": [30, 70], "draw": 170, "radius": 3.0},
+    "downpipe": {"lod": [20, 50], "draw": 100, "radius": 1.8},
+}
+
+
+def add_prop(asset, x, y, z, yaw, sx=1.0):
+    PROPS.setdefault(asset, []).append([x, y, z, yaw, sx])
+
+
+def wall_yaw(out):
+    """Yaw that turns a wall prop's front (-Y) to face `out`."""
+    return math.atan2(out.x, -out.y)
+
+
+def floor_clear(x, y, r):
+    """Sidewalk prop at (x, y) with radius r: on a sidewalk, clear of every carriageway by 0.3 m
+    (cross streets: 2.5 m, so corners and crossings stay free), of poles and of other props."""
+    if in_carriageway(x, y, r + 0.3):
+        return False
+    if street_at(x, y) is None:
+        return False
+    if any(math.hypot(x - px, y - py) < r + 1.2 for px, py in POLES):
+        return False
+    if any(math.hypot(x - px, y - py) < r + pr + 0.8 for px, py, pr in FLOOR_PTS):
+        return False
+    return True
+
+
+def decorate_sidewalks():
+    """Hydrants and bins near the kerb, utility boxes against the walls (streets/boulevards); bins
+    against the wall in alleys (1.5 m sidewalks)."""
+    for A, B, out, kind in BLOCK_SIDES:
+        L = (B - A).length
+        t = (B - A) / L
+        inn = -out
+        walk = TYPES[kind]["walk"]
+        corner = lambda s: min(s, L - s) > 6.0 + walk         # keep the corners and crossings free
+
+        def place(asset, s, d, r, yaw):
+            p = A + t * s + inn * d
+            if not corner(s) or not floor_clear(p.x, p.y, r):
+                return
+            add_prop(asset, p.x, p.y, walk_z(p.x, p.y), yaw)
+            FLOOR_PTS.append((p.x, p.y, r))
+
+        if kind != "alley":
+            s = DRNG.uniform(10, 40)
+            while s < L:
+                place("hydrant", s, 0.55, 0.25, DRNG.uniform(0, math.tau))
+                s += DRNG.uniform(55, 95)
+            s = DRNG.uniform(20, 60)
+            while s < L:
+                a = DRNG.choice(["utility_box_a", "utility_box_b"])
+                place(a, s, walk - 0.02, 0.55, wall_yaw(out))
+                s += DRNG.uniform(60, 120)
+        s = DRNG.uniform(5, 30)
+        while s < L:
+            d = 0.5 if kind != "alley" else walk - 0.4
+            place(DRNG.choice(["trash_can", "trash_can", "trash_can_rust"]), s, d, 0.4, DRNG.uniform(0, math.tau))
+            s += DRNG.uniform(22, 50)
+
+
+def decorate_facades():
+    """Wall clutter on the faces that can be seen from a street: stone sills under every window,
+    downpipes, aircon units, fire escapes (alleys and side streets), shutters on closed shops,
+    garage shutters and security lights in alleys, wall lanterns on street faces."""
+    for f in FACES:
+        if not f["exposed"]:
+            continue
+        a, b, out, zg, fl, nb, bw = f["a"], f["b"], f["out"], f["zg"], f["fl"], f["nb"], f["bw"]
+        t = (b - a).normalized()
+        seg = (b - a).length
+        yaw = wall_yaw(out)
+        kind = f["kind"]
+        at = lambda s: a + t * s
+        # fire escape: alleys / side streets, wide enough faces, no lamp pole in front of it
+        escape = None
+        if kind in ("alley", "street") and not f["shop"] and fl >= 4 and seg >= 7.0 and DRNG.random() < (0.45 if kind == "alley" else 0.2):
+            sc = seg / 2
+            mid = at(sc)
+            if all(math.hypot(mid.x - px, mid.y - py) > 4.5 for px, py in POLES):
+                escape = sc
+                add_prop("fire_escape_bottom", mid.x, mid.y, zg + FLOOR, yaw)
+                for k in range(2, fl):
+                    add_prop("fire_escape", mid.x, mid.y, zg + k * FLOOR, yaw)
+        # windows: sills (and the odd aircon) on every bay of every storey with windows
+        f0 = 1 if f["shop"] else 0
+        for i in range(nb):
+            s = (i + 0.5) * bw
+            p = at(s)
+            for k in range(f0, fl):
+                add_prop("window_sill", p.x, p.y, zg + (k + 0.30) * FLOOR, yaw, bw / BAY_W)
+                if k >= 1 and escape is None and DRNG.random() < 0.06:
+                    q = at(s + DRNG.choice((-0.35, 0.35)) * bw)
+                    add_prop("aircon", q.x, q.y, zg + (k + 0.30) * FLOOR - 1.05, yaw)
+        # downpipe at one end of the face (one 3.2 m piece per storey)
+        if seg > 4 and DRNG.random() < 0.7:
+            p = at(0.25 if DRNG.random() < 0.5 else seg - 0.25)
+            for k in range(fl):
+                add_prop("downpipe", p.x, p.y, zg + k * FLOOR, yaw)
+        # ground floor
+        if f["shop"]:
+            for i in range(nb):
+                if DRNG.random() < 0.35:                          # closed shop: rolled-down shutter
+                    p = at((i + 0.5) * bw)
+                    add_prop("shutter_bay", p.x, p.y, zg + 0.35, yaw, bw * 0.93 / 3.0)
+        elif kind == "alley":
+            for i in range(nb):
+                if DRNG.random() < 0.3:
+                    p = at((i + 0.5) * bw)
+                    add_prop("shutter_door", p.x, p.y, zg, yaw)
+            if DRNG.random() < 0.5 and nb >= 2:
+                p = at(DRNG.randint(1, nb - 1) * bw)
+                add_prop("security_light", p.x, p.y, zg + 3.0, yaw)
+        elif kind in ("street", "boulevard") and nb >= 2 and DRNG.random() < 0.3:
+            p = at(DRNG.randint(1, nb - 1) * bw)
+            add_prop("wall_lantern", p.x, p.y, zg + 2.0, yaw)
+
+
+def assert_off_road():
+    """Every instance (and its footprint radius, for floor props) must be off the carriageway."""
+    bad = []
+    for asset, rows in PROPS.items():
+        r = 0.0 if asset in ("street_lamp",) else 0.1
+        for x, y, z, yaw, sx in rows:
+            if in_carriageway(x, y, r):
+                bad.append((asset, round(x, 2), round(y, 2)))
+    if bad:
+        raise RuntimeError(f"[city] {len(bad)} props on the road, e.g. {bad[:5]}")
+
+
+def export_props():
+    """data/city_props.json in three.js coordinates (x, y up, z = -y_blender); yaw is the same angle
+    (a rotation about Blender +Z is a rotation about three +Y). Flat rows of 5: x, y, z, yaw, sx."""
+    assets = {}
+    for asset, rows in sorted(PROPS.items()):
+        meta = dict(ASSET_META[asset])
+        if "box" in meta:
+            (hx, hy, hz), (ox, oy, oz) = meta.pop("box")
+            meta["collider"] = {"half": [hx, hz, hy], "centre": [ox, oz, -oy]}
+        flat = []
+        for x, y, z, yaw, sx in rows:
+            flat += [round(x, 2), round(z, 2), round(-y, 2), round(yaw, 3), round(sx, 3)]
+        meta["count"] = len(rows)
+        meta["data"] = flat
+        assets[asset] = meta
+    with open(PROPS_OUT, "w") as f:
+        json.dump({"schema": "city_props/1", "units": "three.js: Y up, m, rad; rows of [x, y, z, yaw, sx]",
+                   "library": "/assets/city/city_props.glb", "cell": 120, "assets": assets}, f, separators=(",", ":"))
+    print("[city] props:", ", ".join(f"{a}={len(r)}" for a, r in sorted(PROPS.items())))
 
 
 # ============================================================================ route
@@ -634,16 +967,18 @@ def main():
     build_traffic_lights()
     build_neon(shops)
     parking_spots()
+    decorate_sidewalks()
+    decorate_facades()
+    assert_off_road()
     build_ground()
-    mat_key = {"road": "road", "paint": "paint", "walk": "walk", "facade0": "facade0", "facade1": "facade1", "shop": "shop",
-               "roof": "roof", "steel": "steel", "lamp": "lamp", "tl_red": "tl_red", "tl_green": "tl_green"}
-    VIS.flush(lambda k: M[mat_key[k]])
+    VIS.flush(lambda k: M[k])
     COL.flush(lambda k: M["walk"])
     for ob in list(bpy.data.objects):          # collision objects get the Godot "-colonly" suffix
         if ob.name.startswith("col_"):
             ob.name = ob.name + "-colonly"
     build_route()
     export_city_json()
+    export_props()
     tris = sum(sum(len(p.vertices) - 2 for p in o.data.polygons) for o in bpy.data.objects
                if o.type == "MESH" and "colonly" not in o.name)
     print(f"[city] {len(VX)}x{len(HY)} streets, lamps={len(LAMPS)}, parking={len(PARKING)}, "

@@ -43,6 +43,17 @@ export class PhysicsWorld {
     this.surfaceOf.set(col.handle, surface);
   }
 
+  /**
+   * Static box (no parent body = fixed, like the trimeshes): the city's sidewalk props (hydrants,
+   * bins, utility boxes) so the car can't drive through them. ~200 boxes, all fixed: they are never
+   * integrated and never paired with each other, so the step cost doesn't change measurably.
+   */
+  addStaticBox(centre: THREE.Vector3, half: THREE.Vector3, rot: THREE.Quaternion, surface: number) {
+    const col = this.world.createCollider(RAPIER.ColliderDesc.cuboid(half.x, half.y, half.z)
+      .setTranslation(centre.x, centre.y, centre.z).setRotation(rot).setFriction(0.4).setRestitution(0.05));
+    this.surfaceOf.set(col.handle, surface);
+  }
+
   surface(c: RAPIER.Collider): number { return this.surfaceOf.get(c.handle) ?? 0; }
 
   /**
