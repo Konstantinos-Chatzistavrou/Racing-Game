@@ -183,4 +183,13 @@ export class Post {
     for (const name of PRESET_ORDER) { this.preset = name; this.render(); }
     this.preset = keep;
   }
+
+  /** Same, one preset per real frame: three updates per-frame nodes once per frame, so presets
+   * rendered back to back inside one frame can skip work that the first real use would then do. */
+  async warmupFrames() {
+    const keep = this.preset;
+    const frame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
+    for (let i = 0; i < 2; i++) for (const name of PRESET_ORDER) { this.preset = name; this.render(); await frame(); }
+    this.preset = keep;
+  }
 }

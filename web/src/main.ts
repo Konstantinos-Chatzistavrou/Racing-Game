@@ -236,6 +236,7 @@ async function main() {
     post.render();
     for (const o of culled) o.frustumCulled = true;
   }
+  await post.warmupFrames();
   // The warm-up queued a dozen full renders on the GPU: wait until it has worked through them, or
   // the first race frames block behind that backlog (a 130-220 ms frame 0.2-0.6 s after loading).
   if (webgpu) await (renderer.backend as unknown as { device: GPUDevice }).device.queue.onSubmittedWorkDone();
