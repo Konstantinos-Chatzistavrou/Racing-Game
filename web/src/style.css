@@ -117,6 +117,8 @@ body.touch #perf { font-size: 9px; top: calc(34px + env(safe-area-inset-top)); l
 #menu button.primary { background: var(--accent); border-color: var(--accent); font-weight: 700; letter-spacing: .06em; }
 #menu button.primary:hover:not(:disabled) { background: #ff5b78; }
 #menu .huge { font-size: 18px; padding: 14px 40px; }
+#menu .btnrow { display: flex; gap: 12px; flex-wrap: wrap; }
+#menu .btnrow button:not(.primary) { background: #0b0f17cc; border-color: #ffffff55; backdrop-filter: blur(6px); font-weight: 600; letter-spacing: .06em; }
 #menu .btns { display: flex; gap: 10px; justify-content: center; margin-top: 18px; }
 #menu .btns.col { flex-direction: column; }
 #menu .chip { padding: 6px 12px; font-size: 13px; border-radius: 999px; }
