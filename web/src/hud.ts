@@ -30,8 +30,12 @@ export class Hud {
   private lapsSeen = 0;
   private toastTimer = 0;
   private warnHtml = '';
+  private assistHtml = '';
   extra = '';
   fps = 60;
+  private el = { needle: $('needle'), rev: $('revfill') };
+  private needleKey = '';
+  private revKey = -1;
 
   constructor() {
     const ticks = $('ticks');
@@ -65,14 +69,22 @@ export class Hud {
     const kmh = Math.abs(out[OUT.speed]) * 3.6;
     this.needle += (kmh - this.needle) * (1 - Math.exp(-dt * 14));
     this.rev += (Math.min(1, out[OUT.rpm] / info.redline) - this.rev) * (1 - Math.exp(-dt * 20));
+    // DOM writes only when the drawn value changes (0.1 px needle, 0.1 % rev ring): an SVG
+    // attribute write invalidates style + paint even when the value is the same, every frame.
     const f = Math.min(1, this.needle / MAX_KMH);
     const [nx, ny] = at(f, 86);
-    const needle = $('needle');
-    needle.setAttribute('x2', nx.toFixed(1));
-    needle.setAttribute('y2', ny.toFixed(1));
-    const rf = $('revfill');
-    rf.setAttribute('d', this.rev > 0.002 ? arc(0, this.rev, 110) : '');
-    rf.classList.toggle('red', this.rev > 0.92);
+    const nk = `${nx.toFixed(1)} ${ny.toFixed(1)}`;
+    if (nk !== this.needleKey) {
+      this.needleKey = nk;
+      this.el.needle.setAttribute('x2', nx.toFixed(1));
+      this.el.needle.setAttribute('y2', ny.toFixed(1));
+    }
+    const rk = this.rev > 0.002 ? Math.round(this.rev * 1000) : 0;
+    if (rk !== this.revKey) {
+      this.revKey = rk;
+      this.el.rev.setAttribute('d', rk ? arc(0, rk / 1000, 110) : '');
+      this.el.rev.classList.toggle('red', this.rev > 0.92);
+    }
 
     if (lap) this.updateLaps(lap, dt);
 
@@ -80,15 +92,16 @@ export class Hud {
     this.last = now;
     const fps = (this.fps = this.frames.length);
     const worst = this.frames.reduce((m, t, i, a) => (i ? Math.max(m, t - a[i - 1]) : m), 0);
-    $('perf').textContent = `${fps} fps   worst ${worst.toFixed(1)} ms\n${this.extra}`;
-    $('speed').textContent = Math.round(kmh).toString();
+    this.text('perf', `${fps} fps   worst ${worst.toFixed(1)} ms\n${this.extra}`);
+    this.text('speed', Math.round(kmh).toString());
     const g = out[OUT.gear];
-    $('gear').textContent = g === 0 ? 'R' : g === 1 ? 'N' : String(g - 1);
+    this.text('gear', g === 0 ? 'R' : g === 1 ? 'N' : String(g - 1));
     const on = (n: string, v: boolean, act = false) => (v ? `<b>${act ? '● ' : ''}${n}</b>` : n);
-    $('assists').innerHTML = [
+    const assistHtml = [
       on('ABS', assists.abs, out[OUT.abs] > 0), on('TC', assists.tc, out[OUT.tc] > 0.01),
       on('ESC', assists.esc, out[OUT.esc] !== 0), on('AUTO', assists.autoGearbox),
     ].join(' · ');
+    if (assistHtml !== this.assistHtml) $('assists').innerHTML = this.assistHtml = assistHtml;
     this.updateWarnings(dmg);
     const el = $('damage');
     if (!dmg || dmg.totalKj < 1) { el.textContent = ''; return; }
@@ -113,10 +126,10 @@ export class Hud {
   }
 
   private updateLaps(lap: LapInfo, dt: number) {
-    $('lapno').textContent = String(lap.laps + 1);
-    $('lapcur').textContent = formatLap(lap.current) === '—' ? '0:00.000' : formatLap(lap.current);
-    $('laplast').textContent = formatLap(lap.last);
-    $('lapbest').textContent = formatLap(lap.best);
+    this.text('lapno', String(lap.laps + 1));
+    this.text('lapcur', formatLap(lap.current) === '—' ? '0:00.000' : formatLap(lap.current));
+    this.text('laplast', formatLap(lap.last));
+    this.text('lapbest', formatLap(lap.best));
     if (lap.laps > this.lapsSeen) {          // a lap just finished: fade a card in, then out
       this.lapsSeen = lap.laps;
       const best = lap.last > 0 && Math.abs(lap.last - lap.best) < 1e-6;
@@ -126,6 +139,12 @@ export class Hud {
       this.toastTimer = 3;
     }
     if (this.toastTimer > 0 && (this.toastTimer -= dt) <= 0) $('toast').classList.remove('show');
+  }
+
+  /** textContent only when it changed (a same-value write still replaces the text node). */
+  private texts = new Map<string, string>();
+  private text(id: string, v: string) {
+    if (this.texts.get(id) !== v) { this.texts.set(id, v); $(id).textContent = v; }
   }
 
   resetLaps() { this.lapsSeen = 0; this.toastTimer = 0; $('toast').classList.remove('show'); }

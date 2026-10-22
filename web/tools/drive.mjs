@@ -17,6 +17,8 @@ const chrome = spawn('google-chrome', [
   '--enable-unsafe-webgpu', '--enable-features=Vulkan', `--window-size=${process.env.WIN ?? '1280,800'}`,
   // other windows (e.g. a full-screen Chrome) must not throttle the test window's frame rate
   '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling',
+  // HEADLESS=1: no window at all (a hidden/occluded test window stops requestAnimationFrame)
+  ...(process.env.HEADLESS ? ['--headless=new', '--use-angle=vulkan', '--ignore-gpu-blocklist'] : []),
   'about:blank',
 ], { stdio: 'ignore' });
 
@@ -92,12 +94,96 @@ try {
     const a = r.slice(5).sort((x, y) => x - y), q = (p) => a[Math.min(a.length - 1, Math.floor(p * a.length))].toFixed(1);
     console.log(`bench median ${q(0.5)} ms  p95 ${q(0.95)}  p99 ${q(0.99)}  max ${a[a.length - 1].toFixed(1)}  >40ms: ${a.filter((x) => x > 40).length}/${a.length}  | ${(await evaluate(info)).perf}`);
   }
-  if (scenario === 'profile') {
+  if (scenario === 'perf') {
+    // Render cost A/B: frame intervals AND GPU time per frame (WebGPU timestamp queries, enabled
+    // here at runtime) plus GPU-independent counts (draw calls, triangles) from renderer.info.
+    // Parked for 4 s, then full throttle for 6 s. Other GPU users contaminate the frame intervals;
+    // the GPU time is the sum of this page's passes and moves much less. PERF_JS: page code run
+    // before measuring (e.g. a switch to compare).
+    if (process.env.PERF_JS) console.log('perf_js', await evaluate(process.env.PERF_JS));
+    await evaluate(`(() => { const g = window.__game, r = g.renderer, be = r.backend;
+      be.trackTimestamp = r.hasFeature('timestamp-query');
+      const S = window.__perf = { ft: [], gpu: [], calls: [], tris: [], on: false, pending: false, n: 0 };
+      let p = performance.now();
+      const f = (t) => { if (S.on) { S.ft.push(t - p); S.calls.push(r.info.render.drawCalls); S.tris.push(r.info.render.triangles); S.n++;
+          if (be.trackTimestamp && !S.pending) { S.pending = true;
+            Promise.all([r.resolveTimestampsAsync('render'), r.resolveTimestampsAsync('compute')]).then(([a, c]) => { if (a) S.gpu.push(a + (c || 0)); S.pending = false; }); } }
+        p = t; requestAnimationFrame(f); };
+      requestAnimationFrame(f); return be.trackTimestamp; })()`).then((t) => console.log('gpu timestamps', t));
+    const stats = `(() => { const S = window.__perf, q = (a, p) => a.length ? a[Math.min(a.length - 1, Math.floor(p * a.length))].toFixed(1) : '-';
+      const ft = S.ft.slice(3).sort((x, y) => x - y), gp = S.gpu.slice(3).sort((x, y) => x - y), c = S.calls.slice().sort((x, y) => x - y), tr = S.tris.slice().sort((x, y) => x - y);
+      const r = 'frames ' + ft.length + '  frame median ' + q(ft, 0.5) + ' p95 ' + q(ft, 0.95) + ' max ' + q(ft, 1) + ' ms | GPU median ' + q(gp, 0.5) + ' p95 ' + q(gp, 0.95) + ' ms (' + gp.length + ') | draws ' + q(c, 0.5) + ' tris ' + (+q(tr, 0.5) / 1000).toFixed(0) + 'k'
+        + '  >100ms at s: ' + (() => { let t = 0; return S.ft.map((x) => { t += x; return x > 100 ? (t / 1000).toFixed(1) + '(' + Math.round(x) + ')' : ''; }).filter(Boolean).join(' '); })();
+      S.ft.length = S.gpu.length = S.calls.length = S.tris.length = 0; return r; })()`;
+    await evaluate(`(window.__perf.on = true, 1)`);
+    await sleep(4000);
+    console.log('parked', await evaluate(stats));
+    await shot('perf_parked.png');
     await key('keyDown', 'KeyW', 'w');
-    await sleep(1500);
+    await sleep(6000);
+    console.log('drive ', await evaluate(stats), '|', (await evaluate(info)).kmh, 'km/h');
+    await shot('perf_drive.png');
+    await key('keyUp', 'KeyW', 'w');
+    console.log('hud   ', (await evaluate(info)).perf);
+  }
+  if (scenario === 'switch') {
+    // Quality-preset switches must not hitch: while driving, cycle the presets every 0.7 s and record
+    // the frame interval around each switch; then two render-scale changes for comparison (those
+    // DO reallocate render targets). Also renders one screenshot per preset.
+    const rec = `(() => { window.__ft = []; let p = performance.now(); const f = (t) => { window.__ft.push(t - p); p = t; if (window.__ft.length < 600) requestAnimationFrame(f); }; requestAnimationFrame(f); return 1; })()`;
+    const worst = `(() => { const a = window.__ft.slice(2).sort((x, y) => x - y); window.__ft.length = 600; return 'median ' + a[a.length >> 1].toFixed(1) + ' p95 ' + a[Math.floor(a.length * 0.95)].toFixed(1) + ' max ' + a[a.length - 1].toFixed(1) + ' ms (' + a.length + ' frames)'; })()`;
+    for (const p of ['high', 'medium', 'low']) { await evaluate(`(window.__game.setPreset('${p}'), 1)`); await sleep(700); await shot(`preset_${p}.png`); }
+    await evaluate(`(window.__game.setPreset('high'), 1)`);
+    await key('keyDown', 'KeyW', 'w');
+    await sleep(1000);
+    await evaluate(rec);
+    await sleep(3000);
+    console.log('no switch    ', await evaluate(worst));
+    await evaluate(rec);
+    for (const p of ['medium', 'low', 'medium', 'high', 'low', 'high']) { await evaluate(`(window.__game.setPreset('${p}'), 1)`); await sleep(500); }
+    console.log('6 switches   ', await evaluate(worst));
+    await key('keyUp', 'KeyW', 'w');
+    const pipes = await evaluate(`JSON.stringify(window.__game.pipelines())`);
+    console.log('pipelines', pipes);
+    const s0 = await evaluate(`window.__game.post.scale`);
+    for (const s of [s0 - 0.1, s0]) {
+      await evaluate(rec); await evaluate(`(window.__game.setScale(${s}), 1)`); await sleep(5000);
+      console.log(`scale -> ${s.toFixed(1)}`, await evaluate(worst));
+    }
+  }
+  if (scenario === 'warm') {
+    // First 30 s after the loading screen (run with SETTLE=0): drive, lights off/on, a heavy
+    // injected crash front and rear (lights break -> dark material clones, parts fly off), engine
+    // fire, repair. Reports the worst frames and how many GPU pipelines were created AFTER loading
+    // (GPU-independent: each one is a compile that can freeze a frame).
+    const pipes = `window.__game.renderer._pipelines.caches.size`;
+    const p0 = await evaluate(pipes);
+    await evaluate(`(() => { window.__ft = []; window.__t0 = performance.now(); let p = window.__t0; const f = (t) => { window.__ft.push([t - window.__t0, t - p]); p = t; if (t - window.__t0 < 31000) requestAnimationFrame(f); }; requestAnimationFrame(f); return 1; })()`);
+    const tap = async (code, k) => { await key('keyDown', code, k); await key('keyUp', code, k); };
+    await key('keyDown', 'KeyW', 'w'); await sleep(4000); await key('keyUp', 'KeyW', 'w');
+    await tap('KeyL', 'l'); await sleep(800); await tap('KeyL', 'l'); await sleep(500);
+    await evaluate(`(() => { const g = window.__game, t = g.car.body.translation(), r = g.car.body.rotation();
+      const q = { x: r.x, y: r.y, z: r.z, w: r.w }, f = [2 * (q.x * q.z + q.w * q.y), 2 * (q.y * q.z - q.w * q.x), 1 - 2 * (q.x * q.x + q.y * q.y)];
+      for (let i = 0; i < 3; i++) g.core.contact({ x: t.x + f[0] * 2.2, y: t.y + 0.1, z: t.z + f[2] * 2.2 }, g.core.info.mass * 25 / 3, 777);
+      for (let i = 0; i < 3; i++) g.core.contact({ x: t.x - f[0] * 2.2, y: t.y + 0.1, z: t.z - f[2] * 2.2 }, g.core.info.mass * 25 / 3, 777);
+      return 1; })()`);
+    await sleep(14000);   // smoulder -> fire
+    console.log('fire', await evaluate(`Math.round(window.__game.damage.fireLight.intensity)`));
+    await tap('KeyR', 'r'); await sleep(1500);
+    await key('keyDown', 'KeyW', 'w'); await sleep(3000); await key('keyUp', 'KeyW', 'w');
+    while ((await evaluate(`performance.now() - window.__t0`)) < 31000) await sleep(250);
+    console.log('warm  ', await evaluate(`(() => { const a = window.__ft.slice(1), s = a.map((x) => x[1]).sort((x, y) => x - y);
+      const big = a.filter((x) => x[1] > 100).map((x) => (x[0] / 1000).toFixed(1) + 's:' + Math.round(x[1]) + 'ms');
+      return 'frames ' + s.length + '  median ' + s[s.length >> 1].toFixed(1) + '  p99 ' + s[Math.floor(s.length * 0.99)].toFixed(1) + '  worst ' + s[s.length - 1].toFixed(1) + ' ms  >100ms: ' + big.length + ' [' + big.join(' ') + ']'; })()`));
+    console.log('pipelines created after loading:', (await evaluate(pipes)) - p0, `(${p0} at start)`);
+  }
+  if (scenario === 'profile') {
+    // PROFILE_EARLY=1: profile from the throttle press (the first second of driving)
+    if (!process.env.PROFILE_EARLY) { await key('keyDown', 'KeyW', 'w'); await sleep(1500); }
     await send('Profiler.enable');
     await send('Profiler.setSamplingInterval', { interval: 200 });
     await send('Profiler.start');
+    if (process.env.PROFILE_EARLY) await key('keyDown', 'KeyW', 'w');
     await sleep(4000);
     const { profile } = await send('Profiler.stop');
     await key('keyUp', 'KeyW', 'w');
