@@ -18,7 +18,8 @@ import { Dents } from './dents';
 const ZONES = ['front', 'rear', 'left', 'right'] as const;
 // Crush direction per zone in model space (X left, Y up, Z forward): the dent goes INTO the car.
 const INWARD = [new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 0, 1), new THREE.Vector3(-1, 0, 0), new THREE.Vector3(1, 0, 0)];
-const SKIP = ['wheel_', 'caliper_', 'interior_shell', 'seat', 'dashboard', 'steering', 'wheel_well'];
+// never dented: wheels, calipers, the cabin and the underbody (the old model's names, then v3's)
+const SKIP = ['wheel_', 'caliper_', 'interior', 'seat', 'dashboard', 'steering', 'wheel_well', 'underbody', 'hood_inner'];
 // Break-off thresholds in metres of zone crush (same as the Godot build).
 const BREAK_CRUSH: Record<string, number> = { bumper_front: 0.3, bumper_rear: 0.3, mirror_L: 0.12, mirror_R: 0.12 };
 const LIGHTS_CRUSH = 0.12;

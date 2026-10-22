@@ -49,6 +49,9 @@ body.touch #warn { right: auto; left: 50%; transform: translateX(-50%) scale(.85
 
 /* ---- touch controls (phones, tablets) ---------------------------------------------------- */
 body.touch #help { display: none; }
+#credits { position: absolute; left: 50%; top: 6px; transform: translateX(-50%); max-width: 92vw; font-size: 10px; color: var(--dim); opacity: .7; text-align: center; text-shadow: 0 1px 2px #000; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#credits a { color: inherit; pointer-events: auto; }
+body.touch #credits { top: auto; bottom: calc(2px + env(safe-area-inset-bottom)); }
 body.touch #dash { right: 50%; transform: translateX(50%) scale(.62); transform-origin: top center; bottom: auto; top: calc(2px + env(safe-area-inset-top)); }
 body.touch #laps { top: auto; bottom: calc(14px + env(safe-area-inset-bottom)); right: auto; left: 50%; transform: translateX(-50%) scale(.85); transform-origin: bottom center; }
 body.touch #toast { top: 40%; }

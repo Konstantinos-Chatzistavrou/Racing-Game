@@ -3,7 +3,8 @@
 // Remote cars are drawn ~100 ms in the past, interpolated between the network frames around that
 // time (lerp position, slerp rotation), briefly extrapolated when a frame is late, snapped on teleports.
 import * as THREE from 'three/webgpu';
-import type { CarVisual } from './scene/car';
+import { setupCarMaterials, type CarVisual } from './scene/car';
+import { assetUrl, loadGLTF } from './scene/loaders';
 
 const SEND_HZ = 20;
 const HEARTBEAT_MS = 1000;      // resend an unchanged pose this often (keeps the newcomer view and timelines fresh)
@@ -42,6 +43,15 @@ export class Net {
   constructor(private url: string, private scene: THREE.Scene, private visual: CarVisual) {
     this.proto = visual.model.clone(true);
     this.proto.traverse((o) => { if ((o as THREE.Light).isLight) o.visible = false; });
+    // Remote cars use the light traffic model (~28k triangles, shared with the AI cars) once it is
+    // in; until then (or if it fails) a copy of the player's model. Same CG offset as the player's.
+    if (visual.cfg.lod_model) {
+      loadGLTF(assetUrl(visual.cfg.lod_model)).then((g) => {
+        const p = g.scene.clone(true);
+        p.position.copy(visual.cg).negate();
+        this.proto = p;
+      }).catch(() => {});
+    }
     this.connect();
   }
 
@@ -129,22 +139,11 @@ export class Net {
     root.name = `player_${id}`;
     const model = this.proto.clone(true);
     const paint = new THREE.Color().setHSL(((id * 0.618034) % 1), 0.75, 0.45, THREE.SRGBColorSpace);
-    const mats = new Map<THREE.Material, THREE.Material>();
+    // own clone of the clear-coat paint in that colour (setupCarMaterials), flagged for dispose()
+    const paintMat = setupCarMaterials(model, this.visual.cfg, paint, false);
     model.traverse((o) => {
       const m = o as THREE.Mesh;
-      if (!m.isMesh) return;
-      const tint = (mat: THREE.Material) => {
-        if (mat.name !== this.visual.cfg.paint_material) return mat;
-        let c = mats.get(mat);
-        if (!c) {
-          c = mat.clone();
-          (c as THREE.MeshPhysicalMaterial).color?.copy(paint);
-          mats.set(mat, c);
-        }
-        m.userData.netPaint = true;
-        return c;
-      };
-      m.material = Array.isArray(m.material) ? m.material.map(tint) : tint(m.material);
+      if (m.isMesh && paintMat && (Array.isArray(m.material) ? m.material.includes(paintMat) : m.material === paintMat)) m.userData.netPaint = true;
     });
     root.add(model);
     return root;

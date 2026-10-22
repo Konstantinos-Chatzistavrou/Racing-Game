@@ -25,3 +25,7 @@
 /.playwright-mcp/
 .DS_Store
 /.claude/worktrees/
+
+# Raw third-party downloads (fetch per docs/car_model_v3.md; never committed) and the KTX tools
+/assets_source/downloads/
+/tools/ktx/
