@@ -88,7 +88,8 @@ export class Menu {
     const g = (k: Gfx, label: string) => `<button class="chip ${this.gfx === k ? 'on' : ''}" data-act="gfx" data-v="${k}">${label}</button>`;
     return `${this.tuning ? '<div class="cover"><div class="card center"><div class="spin"></div><p>Tuning graphics for this device…</p><span class="dim">A few seconds, once. The picture will flicker.</span></div></div>' : ''}
       <div class="title"><div class="logo">NIGHT<span>RUN</span></div><div class="sub">A night street racing sim in your browser</div>
-      <button class="primary huge" data-act="start" ${this.tuning ? 'disabled' : ''}>Start</button>
+      <div class="btnrow"><button class="primary huge" data-act="go" ${this.tuning ? 'disabled' : ''}>Play</button>
+      <button class="huge" data-act="start" ${this.tuning ? 'disabled' : ''}>Garage</button></div>
       <div class="gfx"><span class="dim">Graphics</span>${g('auto', 'Auto')}${g('high', 'High')}${g('medium', 'Medium')}${g('low', 'Low')}</div>
       <div class="dim note">${esc(this.gfxNote)}</div></div>`;
   }
