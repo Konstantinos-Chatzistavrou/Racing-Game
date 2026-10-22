@@ -60,7 +60,7 @@ async function main() {
   const maxScale = 1;
   // Start near ~0.9 megapixels rendered (1.07 MP measured too heavy on the laptop iGPU at 60 Hz).
   // The scale settled on last time on this device (a calibration costs a resize hitch per step).
-  const SCALE_KEY = `nr.scale.${innerWidth}x${innerHeight}`;
+  let SCALE_KEY = `nr.scale.${innerWidth}x${innerHeight}`;
   let stored = NaN;
   try { stored = Number(localStorage.getItem(SCALE_KEY) ?? NaN); } catch { /* storage blocked */ }
   let scale = params.has('scale') ? num('scale', 1) : gfx !== 'auto' ? GFX_SCALE[gfx] : stored >= 0.5 && stored <= maxScale ? stored
@@ -68,7 +68,7 @@ async function main() {
   renderer.setPixelRatio(baseRatio);
   renderer.setSize(innerWidth, innerHeight);
   // Quality preset (post.ts PRESETS), lowered by the adaptive system BEFORE the scale; stored like it.
-  const PRESET_KEY = `nr.preset.${innerWidth}x${innerHeight}`;
+  let PRESET_KEY = `nr.preset.${innerWidth}x${innerHeight}`;
   let presetPinned = PRESET_ORDER.includes(params.get('quality') as PresetName) || gfx !== 'auto';
   let storedPreset: string | null = null;
   try { storedPreset = localStorage.getItem(PRESET_KEY); } catch { /* storage blocked */ }
@@ -103,6 +103,12 @@ async function main() {
     renderer.setSize(innerWidth, innerHeight);
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
+    syncToSize();
+  });
+  addEventListener('keydown', (e) => {
+    if (e.code !== 'KeyF' || e.repeat || e.ctrlKey || e.metaKey || e.altKey || (e.target as HTMLElement).tagName === 'INPUT') return;
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void document.documentElement.requestFullscreen?.({ navigationUI: 'hide' }).catch(() => {});
   });
 
   // --- physics + content ----------------------------------------------------------------------
@@ -316,6 +322,25 @@ async function main() {
     post.setScale(scale);   // render targets + cluster grid resize: the hitch the cover hides
     try { localStorage.setItem(SCALE_KEY, String(scale)); } catch { /* storage blocked */ }
   };
+  /**
+   * Window or fullscreen size changed: the settled scale and preset are per size. Take the ones stored for the new
+   * size, else the ~0.9 MP-render guess (never the old size's scale: a windowed 1.0 would render 2.5x the pixels
+   * at 1080p fullscreen). Not while the graphics are pinned (URL, or a fixed High/Medium/Low).
+   */
+  let lastSize = `${innerWidth}x${innerHeight}`;
+  function syncToSize() {
+    const k = `${innerWidth}x${innerHeight}`;
+    if (k === lastSize) return;
+    lastSize = k;
+    SCALE_KEY = `nr.scale.${k}`; PRESET_KEY = `nr.preset.${k}`;
+    if (!adaptive) return;
+    let sc = NaN, pr: string | null = null;
+    try { sc = Number(localStorage.getItem(SCALE_KEY) ?? NaN); pr = localStorage.getItem(PRESET_KEY); } catch { /* storage blocked */ }
+    stored = sc;
+    applyScale(sc >= MIN_SCALE && sc <= maxScale ? sc : startScale());
+    if (pr && PRESET_ORDER.includes(pr as PresetName)) { presetIdx = PRESET_ORDER.indexOf(pr as PresetName); post.preset = pr as PresetName; }
+    setExtra();
+  }
   const startTuning = (full: boolean) => {
     tuning = true; wentDown = false; tuneStart = performance.now();
     calSteps = full || Number.isNaN(stored) ? 3 : 1;
