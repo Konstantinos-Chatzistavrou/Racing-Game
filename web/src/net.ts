@@ -14,7 +14,7 @@ const SNAP_M = 15;              // a jump this big between frames is a reset: no
 const MOVED_M = 0.02, TURNED = 0.005;   // "changed meaningfully": 2 cm or ~0.6 deg
 
 interface Frame { t: number; p: THREE.Vector3; q: THREE.Quaternion }
-interface Remote { root: THREE.Group; frames: Frame[] }
+interface Remote { root: THREE.Group; frames: Frame[]; paint?: number }
 type Pose = { x: number; y: number; z: number; qx: number; qy: number; qz: number; qw: number };
 
 /** Relay URL from the page URL, or null for single-player. */
@@ -38,6 +38,9 @@ export class Net {
   private v = new THREE.Vector3();
   id = 0;
   connected = false;
+  private closed = false;
+  /** Our paint colour (0xrrggbb), sent with every pose so the others see our car in it. */
+  paint = -1;
   onChange = () => {};
 
   constructor(private url: string, private scene: THREE.Scene, private visual: CarVisual) {
@@ -53,6 +56,16 @@ export class Net {
       }).catch(() => {});
     }
     this.connect();
+  }
+
+  /** Leave the server and take the remote cars away (back to the garage). */
+  close() {
+    this.closed = true;
+    this.onChange = () => {};
+    this.ws?.close();
+    this.ws = null;
+    this.connected = false;
+    for (const id of [...this.remotes.keys()]) this.remove(id, false);
   }
 
   /** HUD text: connection state and player count (us included). */
@@ -83,17 +96,18 @@ export class Net {
       this.ws = null;
       for (const id of [...this.remotes.keys()]) this.remove(id, false);
       if (was) this.onChange();
+      if (this.closed) return;
       setTimeout(() => this.connect(), this.retry);
       this.retry = Math.min(10000, this.retry * 2);
     };
   }
 
   private receive(m: Record<string, unknown>) {
-    if (typeof m.id !== 'number' || m.id === this.id || !finite(m, 'x', 'y', 'z', 'qx', 'qy', 'qz', 'qw')) return;
-    const s = m as unknown as Pose & { id: number };
+    if (this.closed || typeof m.id !== 'number' || m.id === this.id || !finite(m, 'x', 'y', 'z', 'qx', 'qy', 'qz', 'qw')) return;
+    const s = m as unknown as Pose & { id: number; c?: number };
     let r = this.remotes.get(s.id);
     if (!r) {
-      r = { root: this.makeCar(s.id), frames: [] };
+      r = { root: this.makeCar(s.id, Number.isInteger(s.c) ? s.c : undefined), frames: [], paint: s.c };
       this.remotes.set(s.id, r);
       this.scene.add(r.root);
       this.onChange();
@@ -134,11 +148,11 @@ export class Net {
   }
 
   /** A copy of the loaded car with its own paint colour (geometry and other materials shared). */
-  private makeCar(id: number) {
+  private makeCar(id: number, rgb?: number) {
     const root = new THREE.Group();
     root.name = `player_${id}`;
     const model = this.proto.clone(true);
-    const paint = new THREE.Color().setHSL(((id * 0.618034) % 1), 0.75, 0.45, THREE.SRGBColorSpace);
+    const paint = rgb !== undefined && rgb >= 0 && rgb <= 0xffffff ? new THREE.Color(rgb) : new THREE.Color().setHSL(((id * 0.618034) % 1), 0.75, 0.45, THREE.SRGBColorSpace);
     // own clone of the clear-coat paint in that colour (setupCarMaterials), flagged for dispose()
     const paintMat = setupCarMaterials(model, this.visual.cfg, paint, false);
     model.traverse((o) => {
@@ -156,7 +170,7 @@ export class Net {
       if (moved || now - this.lastSend >= HEARTBEAT_MS) {
         const r3 = (v: number) => Math.round(v * 1000) / 1000, r4 = (v: number) => Math.round(v * 10000) / 10000;
         this.ws.send(JSON.stringify({
-          type: 'state', x: r3(pos.x), y: r3(pos.y), z: r3(pos.z), qx: r4(quat.x), qy: r4(quat.y), qz: r4(quat.z), qw: r4(quat.w),
+          type: 'state', ...(this.paint >= 0 ? { c: this.paint } : {}), x: r3(pos.x), y: r3(pos.y), z: r3(pos.z), qx: r4(quat.x), qy: r4(quat.y), qz: r4(quat.z), qw: r4(quat.w),
         }));
         this.sentPos.copy(pos);
         this.sentQuat.copy(quat);
@@ -184,4 +198,19 @@ export class Net {
       }
     }
   }
+}
+
+/** Open the server briefly: resolves with the number of players that could be seen, or null if unreachable. */
+export function probeServer(url: string, timeoutMs = 4000): Promise<{ players: number } | null> {
+  return new Promise((resolve) => {
+    let ws: WebSocket;
+    try { ws = new WebSocket(url); } catch { resolve(null); return; }
+    const done = (v: { players: number } | null) => { clearTimeout(t); ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null; try { ws.close(); } catch { /* closed */ } resolve(v); };
+    const t = setTimeout(() => done(null), timeoutMs);
+    ws.onmessage = (e) => {
+      try { const m = JSON.parse(e.data as string); if (m?.type === 'welcome') done({ players: Array.isArray(m.players) ? m.players.length : 0 }); } catch { /* ignore */ }
+    };
+    ws.onerror = () => done(null);
+    ws.onclose = () => done(null);
+  });
 }

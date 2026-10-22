@@ -163,3 +163,24 @@ happen while stopped. Result: all hitches before the start, no driving frame ove
   download, 281 MB texture memory, 130-230 draw calls, 90-130k tris. After = 26.8 MB (21.2 + 5.8 props), 91 MB GPU memory
   (54 MB textures), 180-275 draw calls, 150-204k tris; frame time unchanged (60 fps vsync, p95 33 ms).
 - Draco was not used: meshopt decodes faster, keeps vertex-cache order and its decoder is ~20 KB.
+
+
+## Front end: title, garage, modes (2026-10)
+
+State machine in `web/src/main.ts` (`boot -> title -> garage -> busy -> countdown/race <-> paused -> results`),
+screens in `web/src/menu.ts`, data in `web/src/garage.ts` + `data/cars/catalog.json`.
+
+- **Graphics tuning** happens only on the title screen, behind an opaque cover: 1 s windows of the parked
+  showroom view; < 40 fps lowers the post preset first, then the render scale (-0.1, min 0.5); > 55 fps raises the
+  scale if nothing was lowered. The result is stored per window size, so later visits take one window.
+  There is no adaptive change while driving or in the garage (the old in-race adaptation is gone: it was the visible
+  quality transition). A drive costs more than the parked view, hence the 40 fps bar. Auto / High / Medium / Low
+  in the title menu; `?scale=` / `?quality=` still pin for the test tools.
+- **Cars**: Touring, GT, GT-R share the v3 body (`data/cars/vela_gt.visual.json`) and differ in physics JSON.
+  Changing car or tuning rebuilds the core car and Rapier body at session start; paint and finish only touch the
+  paint material.
+- **Tuning** (`applyMods`): engine +5 % torque per stage, tyres +5 % grip, weight -3 % mass and inertia, aero
+  +25 % downforce / +6 % drag per stage. Levels 0-3; stats bars read the patched JSON.
+- **Modes**: Free run (traffic, laps counted forever), Race (N laps against the clock, countdown, results; the AI cars
+  are traffic, not racers), Online (relay in `server/`; players' paint colour is sent as `c` with each pose).
+- `?menu=0` skips the front end (free run at once) for `web/tools/drive.mjs`; scenarios `menu` and `online` walk the UI.

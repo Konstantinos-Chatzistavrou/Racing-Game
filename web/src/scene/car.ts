@@ -8,6 +8,7 @@ import { materialsOf } from './city';
 import { assetUrl, loadGLTF } from './loaders';
 
 import type { DamageVisualConfig } from './damage';
+import { FINISHES, type Finish } from '../garage';
 
 export interface CarVisualConfig extends DamageVisualConfig {
   model: string;
@@ -73,6 +74,8 @@ export class CarVisual {
   lightsOn = true;
   lightsBroken = false;
   readonly velocity = new THREE.Vector3();   // m/s, world (for debris)
+  /** The car's own clone of the paint material (garage colour + finish). */
+  readonly paint: THREE.MeshPhysicalMaterial | null;
 
   private constructor(readonly cfg: CarVisualConfig, readonly model: THREE.Object3D) {
     this.cg = new THREE.Vector3(...cfg.cg_in_model_m);
@@ -84,7 +87,7 @@ export class CarVisual {
       const caliper = model.getObjectByName(name.replace('wheel', 'caliper'));
       this.wheels.push({ node, rest: node.quaternion.clone(), caliper });
     }
-    setupCarMaterials(model, cfg, null);
+    this.paint = setupCarMaterials(model, cfg, null);
     // Headlights: two shadow-casting spots (the only dynamic shadows in the scene).
     for (const [i, hp] of cfg.headlights.entries()) {
       const s = new THREE.SpotLight(0xfff3e0, this.headlightIntensity, 70, 0.42, 0.45, 2);
@@ -97,6 +100,15 @@ export class CarVisual {
       this.root.add(s, s.target);
       this.headlights.push(s);
     }
+  }
+
+  setPaint(hex: string, finish: Finish) {
+    const m = this.paint;
+    if (!m) return;
+    const f = FINISHES[finish];
+    m.color.set(hex);
+    m.clearcoat = f.clearcoat; m.roughness = f.roughness; m.metalness = f.metalness;
+    m.needsUpdate = true;
   }
 
   /** Spot intensity from the switch and the damage state. */

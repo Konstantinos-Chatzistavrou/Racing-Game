@@ -43,6 +43,7 @@ function parseState(m) {
   const n = Math.hypot(s.qx, s.qy, s.qz, s.qw);
   if (n < 0.5 || n > 1.5) return null;
   s.qx /= n; s.qy /= n; s.qz /= n; s.qw /= n;
+  if (Number.isInteger(m.c) && m.c >= 0 && m.c <= 0xffffff) s.c = m.c;   // paint colour, optional
   return s;
 }
 

@@ -17,7 +17,7 @@ const telemetry: Plugin = {
   },
 };
 
-// public/data and public/assets are symlinks to ../data and ../game/assets (single source of truth).
+// public/data is a symlink to ../data; public/assets holds the car and city glTF files.
 export default defineConfig({
   plugins: [telemetry],
   server: { fs: { allow: ['..'] }, host: '127.0.0.1', port: 5173 },

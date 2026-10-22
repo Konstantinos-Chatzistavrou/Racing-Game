@@ -1,12 +1,14 @@
 // Drives the game in the system Chrome with WebGPU enabled (Linux needs the flags) through the
 // DevTools protocol: load, idle, full throttle, brake. Prints telemetry + fps, saves screenshots.
-// Usage: node tools/drive.mjs [url] [outdir] [straight|crash|mobile|bench|profile|night]   (CDP_PORT=9334 to change the DevTools port)
+// Usage: node tools/drive.mjs [url] [outdir] [straight|crash|mobile|bench|profile|night|menu|online]   (CDP_PORT=9334 to change the DevTools port)
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const url = process.argv[2] ?? 'http://127.0.0.1:5173/';
+// ?menu=0: straight into a free run (the title and garage are for people). ?menu=1 in the URL keeps them.
+const url0 = process.argv[2] ?? 'http://127.0.0.1:5173/';
+const url = /[?&]menu=/.test(url0) ? url0 : url0 + (url0.includes('?') ? '&' : '?') + 'menu=0';
 const out = process.argv[3] ?? path.join(os.tmpdir(), 'drive');
 const scenario = process.argv[4] ?? 'straight';
 fs.mkdirSync(out, { recursive: true });
@@ -93,6 +95,45 @@ try {
     const r = await evaluate(`new Promise((res) => { const ft = []; let p = performance.now(); const f = (t) => { ft.push(t - p); p = t; if (ft.length < 240) requestAnimationFrame(f); else res(ft); }; requestAnimationFrame(f); })`);
     const a = r.slice(5).sort((x, y) => x - y), q = (p) => a[Math.min(a.length - 1, Math.floor(p * a.length))].toFixed(1);
     console.log(`bench median ${q(0.5)} ms  p95 ${q(0.95)}  p99 ${q(0.99)}  max ${a[a.length - 1].toFixed(1)}  >40ms: ${a.filter((x) => x > 40).length}/${a.length}  | ${(await evaluate(info)).perf}`);
+  }
+  if (scenario === 'menu') {
+    // Front end walk-through (run with ?menu=1): title (graphics tuning), garage (car, paint, tuning, mode), race start, pause, back.
+    const click = (q) => evaluate(`(() => { const e = document.querySelector('${q}'); if (!e) return 'MISSING ${q}'; e.click(); return 'ok'; })()`);
+    const st = () => evaluate(`JSON.stringify({ state: window.__game.state, tuning: window.__game.menu().tuning, screen: window.__game.menu().screen, kmh: Math.round(window.__game.car.out[102] * 3.6) })`);
+    for (let i = 0; i < 90 && (await evaluate(`window.__game.menu().tuning`)); i++) await sleep(500);
+    console.log('title ', await st(), await evaluate(`document.querySelector('.note')?.textContent`));
+    await shot('m1_title.png');
+    await click('[data-act=start]'); await sleep(2500); await shot('m2_garage.png');
+    await click(`[data-act=car][data-v=${process.env.MENU_CAR ?? 'vela_gtr'}]`); await sleep(500);
+    await click('[data-act=paint][data-v="#1d4ed8"]'); await click('[data-act=finish][data-v=metallic]');
+    if (!process.env.NOMODS) { await click('[data-act=mod][data-k=engine][data-v="2"]'); await click('[data-act=mod][data-k=tyres][data-v="1"]'); }
+    await sleep(2500); await shot('m3_garage_gtr.png');
+    await click('[data-act=mode][data-v=race]'); await click('[data-act=laps][data-v="1"]'); await sleep(800); await shot('m4_garage_race.png');
+    await click('[data-act=go]'); await sleep(1500); console.log('count ', await st()); await shot('m5_countdown.png');
+    await sleep(3500); console.log('race  ', await st());
+    await evaluate(`(window.__game.input.hold = false, 1)`);
+    await sleep(2500); await shot('m6_race.png');
+    await evaluate(`(window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape' })), 1)`); await sleep(600);
+    if (process.env.DBG) console.log('dbg race ', await evaluate(fs.readFileSync(process.env.DBG, 'utf8')));
+    console.log('pause ', await st()); await shot('m7_pause.png');
+    await click('[data-act=garage]'); await sleep(1500); console.log('back  ', await st()); await shot('m8_garage_again.png');
+    if (process.env.DBG) console.log('dbg back ', await evaluate(fs.readFileSync(process.env.DBG, 'utf8')));
+    await click('[data-act=mode][data-v=online]'); await sleep(500); await shot('m9_online.png');
+  }
+  if (scenario === 'online') {
+    // Online path: needs the relay running (cd server && npm start). Also draws the results screen.
+    const click = (q) => evaluate(`(() => { const e = document.querySelector('${q}'); if (!e) return 'MISSING ${q}'; e.click(); return 'ok'; })()`);
+    for (let i = 0; i < 90 && (await evaluate(`window.__game.menu().tuning`)); i++) await sleep(500);
+    await click('[data-act=start]'); await sleep(800);
+    await click('[data-act=paint][data-v="#1d9d55"]'); await click('[data-act=mode][data-v=online]'); await sleep(300);
+    await click('[data-act=probe]'); await sleep(1500);
+    console.log('probe ', await evaluate(`document.getElementById('servernote').textContent`));
+    await shot('o1_online_probe.png');
+    await click('[data-act=go]'); await sleep(4000);
+    console.log('online', await evaluate(`JSON.stringify({ state: window.__game.state, perf: document.getElementById('perf').textContent })`));
+    await shot('o2_online_drive.png');
+    await evaluate(`(window.__game.menu().showResults({ total: 187.234, best: 61.5, laps: [64.2, 61.5, 61.534], laps_target: 3 }), 1)`); await sleep(500);
+    await shot('o3_results.png');
   }
   if (scenario === 'perf') {
     // Render cost A/B: frame intervals AND GPU time per frame (WebGPU timestamp queries, enabled

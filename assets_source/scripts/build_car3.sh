@@ -2,7 +2,7 @@
 # Builds the generation-3 car (docs/car_model_v3.md):
 #   1. Blender: make_car3.py de-brands + restyles the Khronos CarConcept -> raw GLBs (PNG textures)
 #   2. gltf-transform v4: dedup/prune, texture caps (hero 2048, traffic 1024), KTX2 (UASTC for
-#      normal maps, ETC1S for colour/ORM/AO/emissive), meshopt geometry -> game/assets/cars/v3/
+#      normal maps, ETC1S for colour/ORM/AO/emissive), meshopt geometry -> web/public/assets/cars/v3/
 # Needs: assets_source/downloads/CarConcept/CarConcept.glb (fetch: docs/car_model_v3.md),
 #        Blender 5.2 (BLENDER=..., default tools/blender/blender), KTX-Software 4.4 in tools/ktx/
 #        (release tarball, gitignored), node + npx. Usage: assets_source/scripts/build_car3.sh [--draco]
@@ -12,7 +12,7 @@ SRC="$ROOT/assets_source/downloads/CarConcept/CarConcept.glb"
 BLENDER="${BLENDER:-$ROOT/tools/blender/blender}"
 KTX="$ROOT/tools/ktx/KTX-Software-4.4.2-Linux-x86_64"
 TMP="${CAR3_TMP:-$ROOT/assets_source/downloads/build_car3}"
-OUT="$ROOT/game/assets/cars/v3"
+OUT="$ROOT/web/public/assets/cars/v3"
 G=(npx -y @gltf-transform/cli@4.5.1)
 [ -f "$SRC" ] || { echo "missing $SRC (see docs/car_model_v3.md)"; exit 1; }
 [ -x "$KTX/bin/ktx" ] || { echo "missing KTX-Software in tools/ktx (see docs/car_model_v3.md)"; exit 1; }

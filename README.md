@@ -2,7 +2,7 @@
 
 Realistic-handling street racing sim: an illegal night race through a city, with crash damage and
 AI rivals. The game runs in the browser on **WebGPU** (three.js r186). Its vehicle physics is an
-engine-independent C++ core compiled to WebAssembly, the same code the earlier Godot build used.
+engine-independent C++ core compiled to WebAssembly.
 
 ## Run the web build
 
@@ -44,6 +44,15 @@ Hosting: the Vercel deployment serves only the static game. The relay needs a lo
 Vercel Functions can accept WebSockets through `ws` with Fluid Compute, or run `server/` on
 Render or Fly.io. A page served over HTTPS must use `wss://`.
 
+## Playing
+
+The game opens on a title screen that tunes the graphics once for the device (resolution and effects
+level, behind a cover; the result is remembered; Auto / High / Medium / Low can be set there). Quality never
+changes while a car is on screen. **Start** opens the garage: pick a car (three trims of the Vela GT), paint
+and finish, four tuning steps (engine, tyres, weight, aero; applied to the physics data), then a mode:
+**Free run**, **Race** (1/3/5/10 laps, 3-2-1 start, results screen) or **Online** (enter a relay server address,
+Check, Join). Esc pauses: resume, restart or back to the garage. Details in `docs/web_port.md`.
+
 ## Layout
 
 | Path | What |
@@ -52,8 +61,6 @@ Render or Fly.io. A page served over HTTPS must use `wss://`.
 | `server/` | Optional multiplayer relay (Node, Express + ws) |
 | `web/` | Browser game: three.js WebGPU renderer, Rapier rigid bodies, WASM bridge (`web/wasm/bridge.cpp`) |
 | `data/` | Car and track data (JSON, engine-neutral) |
-| `game/` | Godot 4.7 build (reference) and the exported glTF assets the web build uses |
-| `godot_ext/` | GDExtension wrapper for the Godot build |
 | `assets_source/` | Blender sources and full-resolution textures |
 | `docs/` | Physics model, validation results, performance measurements, porting notes |
 | `archive/` | Earlier circuit prototype |
@@ -63,12 +70,6 @@ Render or Fly.io. A page served over HTTPS must use `wss://`.
 ```bash
 cmake -S core -B core/build && cmake --build core/build -j && ./core/build/rs_tests
 ```
-
-## Godot build (optional)
-
-Needs Godot 4.7.2 and [godot-cpp](https://github.com/godotengine/godot-cpp) checked out at
-`godot_ext/godot-cpp` (plus `godot --dump-extension-api` into `godot_ext/api/`); then
-`tools/build_ext.sh`. Neither is in the repo.
 
 ## Validation
 
