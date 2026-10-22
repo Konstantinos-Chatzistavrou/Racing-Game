@@ -445,6 +445,7 @@ async function main() {
 
   // Showroom camera: slow turntable around the parked car, drag to turn, wheel to zoom.
   const orbit = { az: 2.3, el: 0.17, dist: 7, drag: false, x: 0, y: 0, shift: 0 };
+  (g.__game as { orbit?: typeof orbit }).orbit = orbit;
   const dom = renderer.domElement;
   dom.addEventListener('pointerdown', (e) => { if (driving()) return; orbit.drag = true; orbit.x = e.clientX; orbit.y = e.clientY; dom.setPointerCapture(e.pointerId); });
   dom.addEventListener('pointermove', (e) => {
@@ -473,7 +474,7 @@ async function main() {
     if (camera.fov !== 42) { camera.fov = 42; camera.updateProjectionMatrix(); }
     showKey.position.copy(camera.position).add(tmpD.set(0, 3.5, 0));
     showKey.target.position.copy(tmpT);
-    showKey.intensity = 1100;
+    showKey.intensity = 650;
     showRim.position.copy(tmpT).addScaledVector(tmpP.sub(tmpT).normalize(), -5).add(tmpD.set(0, 1.4, 0));
     showRim.intensity = 260;
   };
@@ -554,7 +555,7 @@ async function main() {
     quat.slerpQuaternions(prevQuat, physQuat, alpha);
     const lv = car.body.linvel();
     visual.velocity.set(lv.x, lv.y, lv.z);
-    visual.update(pos, quat, car.out, physPos, physQuat);
+    visual.update(pos, quat, car.out, prevPos, prevQuat);   // car.out was computed from the pose BEFORE the last step
     ai.update(alpha, camera);
     damage.update(live ? frame : 0, () => core.damage());
     if (driving()) audio.update(car.out, car.out[OUT.speed]);

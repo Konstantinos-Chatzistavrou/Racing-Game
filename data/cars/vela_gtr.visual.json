@@ -15,7 +15,7 @@
     "rl": "wheel_RL",
     "rr": "wheel_RR"
   },
-  "wheel_visual_offset_m": 0.04,
+  "wheel_visual_offset_m": -0.04,
   "collision_box": {
     "size_m": [
       1.9,

@@ -123,7 +123,8 @@ export class CarVisual {
 
   /**
    * pos/quat: where to DRAW the body (interpolated between physics ticks); physPos/physQuat: the
-   * body at the last physics tick, which the core's wheel centres refer to. Wheels are converted to
+   * body pose the core's wheel centres refer to (the state the last tick STARTED from, i.e. one
+   * step before the body's current pose: using the newer pose shifted the wheels back by v*dt, 15 cm at 130 km/h). Wheels are converted to
    * car-local with the physics pose, then follow the drawn body: no drift between car and wheels.
    */
   update(pos: THREE.Vector3, quat: THREE.Quaternion, out: Float64Array, physPos = pos, physQuat = quat) {
