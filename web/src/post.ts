@@ -17,28 +17,42 @@
 // changes which pipeline renders: no material, light set or pipeline changes, no recompiles, no
 // render-target resizes of the scene. Measured: switching costs no frame over the normal budget.
 import * as THREE from 'three/webgpu';
-import { Fn, clamp, float, int, log, max, min, pass, positionView, renderOutput, rtt, screenUV, textureSize, uniform, uv, vec2, vec3, vec4 } from 'three/tsl';
+import { Fn, clamp, float, int, log, max, min, pass, positionView, rtt, screenUV, textureSize, uniform, uv, vec2, vec3, vec4 } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import * as SMAAModule from 'three/addons/tsl/display/SMAANode.js';
 import { fxaa } from 'three/addons/tsl/display/FXAANode.js';
+import { CURVES, GRADE, filmGrain, toneGrade, type CurveName } from './fx/grade';
+import { UltraFx } from './fx/gtaoTraa';
 import { ClusteredLighting } from 'three/addons/lighting/ClusteredLighting.js';
 
-export type PresetName = 'high' | 'medium' | 'low';
+export type PresetName = 'ultra' | 'high' | 'medium' | 'low';
 export interface Preset {
-  aa: 'smaa' | 'fxaa' | 'none';
+  aa: 'smaa' | 'fxaa' | 'traa' | 'none';
+  /** half-resolution GTAO (ultra only; uses its own MRT scene pass, see fx/gtaoTraa.ts) */
+  ao?: boolean;
   /** bloom resolution relative to the RENDER size; 0 = no bloom */
   bloom: number;
   /** headlight shadow map re-rendered every Nth frame (see main.ts) */
   shadowEvery: number;
+  /** fx/grade.ts: 'full' = contrast/saturation/split tone, 'tone' = tone curve only */
+  grade: 'full' | 'tone';
+  /** animated film grain in the final pass */
+  grain: boolean;
+  /** screen-space reflections on wet road / glass (fx/ssr.ts); rides on the ultra MRT pass (needs `ao`) */
+  ssr?: boolean;
 }
 // Ordered best -> cheapest. The GPU cost differences are small but real on the iGPU (measured with
 // timestamp queries, see docs/web_port.md): SMAA = 3 passes, FXAA = 1, bloom = ~11 small passes.
 export const PRESETS: Record<PresetName, Preset> = {
-  high: { aa: 'smaa', bloom: 0.25, shadowEvery: 2 },
-  medium: { aa: 'fxaa', bloom: 0.25, shadowEvery: 2 },
-  low: { aa: 'none', bloom: 0, shadowEvery: 3 },
+  ultra: { aa: 'traa', ao: true, ssr: true, bloom: 0.25, shadowEvery: 2, grade: 'full', grain: true },
+  high: { aa: 'smaa', bloom: 0.25, shadowEvery: 2, grade: 'full', grain: true },
+  medium: { aa: 'fxaa', bloom: 0.25, shadowEvery: 2, grade: 'full', grain: true },
+  low: { aa: 'none', bloom: 0, shadowEvery: 3, grade: 'tone', grain: false },
 };
-export const PRESET_ORDER: PresetName[] = ['high', 'medium', 'low'];
+/** final-image look defaults (fx/grade.ts); ?tm=agx|aces|neutral|uchimura, ?grade=0 for A/B */
+const DEFAULT_CURVE: CurveName = 'neutral';
+const BLOOM = { strength: 0.45, radius: 0.45, threshold: 1.0, knee: 0.5 };
+export const PRESET_ORDER: PresetName[] = ['ultra', 'high', 'medium', 'low'];
 
 export interface PostOptions { bloom: boolean; aa: boolean; scale: number; preset: PresetName }
 
@@ -97,7 +111,7 @@ export class ScaledClusteredLighting extends ClusteredLighting {
  * so at scale 1 it is plain RCAS and at 0.7 it reconstructs and sharpens in one go (no extra
  * render target). sharpness: 0 = strongest, 2 = none (RCAS convention).
  */
-function casUpscale(src: THREE.TextureNode, sharpness: THREE.UniformNode<'float', number>) {
+function casUpscale(src: THREE.TextureNode, sharpness: THREE.UniformNode<'float', number>, grain: boolean) {
   return Fn(() => {
     const t = vec2(1).div(vec2(textureSize(src) as unknown as THREE.Node<'ivec2'>));
     const p = uv();
@@ -111,7 +125,7 @@ function casUpscale(src: THREE.TextureNode, sharpness: THREE.UniformNode<'float'
     const lobeRGB = max(hitMin.negate(), hitMax).toConst();
     const lobe = max(float(-(0.25 - 1 / 16)), min(max(lobeRGB.r, max(lobeRGB.g, lobeRGB.b)), 0)).mul(sharpness.negate().exp2()).toConst();
     const rgb = b.rgb.add(d.rgb).add(f.rgb).add(h.rgb).mul(lobe).add(e.rgb).div(lobe.mul(4).add(1));
-    return vec4(rgb, 1);
+    return vec4(grain ? filmGrain(rgb) : rgb, 1);
   })();
 }
 
@@ -124,6 +138,7 @@ export class Post {
   private blooms: { node: BloomNode; res: number }[] = [];
   private scaled: { setResolutionScale(s: number): unknown }[] = [];
   private smaas: ScaledSMAA[] = [];
+  private ultra: UltraFx | null = null;
   private sharpness = uniform(0.5);
   private _scale = 1;
   preset: PresetName;
@@ -131,21 +146,31 @@ export class Post {
   constructor(private renderer: THREE.WebGPURenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera, private opts: PostOptions) {
     this.scenePass = pass(scene, camera);
     const color = this.scenePass.getTextureNode('output');
+    const q = new URLSearchParams(location.search);
+    const curve: CurveName = (CURVES as string[]).includes(q.get('tm') ?? '') ? (q.get('tm') as CurveName) : DEFAULT_CURVE;
+    const grading = q.get('grade') !== '0';
+    for (const k of ['contrast', 'sat', 'split', 'grain', 'lift', 'exposure'] as const) if (q.has(k)) (GRADE[k] as { value: number }).value = Number(q.get(k));
+    const bloomStrength = Number(q.get('bs') ?? BLOOM.strength), bloomRadius = Number(q.get('br') ?? BLOOM.radius);
+    const bloomThreshold = Number(q.get('bt') ?? BLOOM.threshold), bloomKnee = Number(q.get('bk') ?? BLOOM.knee);
     for (const name of PRESET_ORDER) {
       const pr = PRESETS[name];
       const p = new THREE.RenderPipeline(renderer);
-      let lit: THREE.Node<'vec4'> = color;
+      const fx = pr.ao && opts.aa ? (this.ultra = new UltraFx(scene, camera, 0.5, !!pr.ssr)) : null;
+      let lit: THREE.Node<'vec4'> = fx ? fx.occlude() : color;
       if (opts.bloom && pr.bloom > 0) {
-        const b = bloom(color, 0.35, 0.15, 1.2);
+        const b = bloom(fx ? fx.color : color, bloomStrength, bloomRadius, bloomThreshold);
+        (b as unknown as { smoothWidth: { value: number } }).smoothWidth.value = bloomKnee;
         this.blooms.push({ node: b, res: pr.bloom });
-        lit = color.add(b);
+        lit = lit.add(b);
       }
       // display-referred image at the render size (AA and the sharpening limiter expect 0..1)
-      const toned = rtt8(renderOutput(lit));
+      const toned = rtt8(toneGrade(lit, curve, pr.grade === 'full' && grading));
       this.scaled.push(toned);
       let src: THREE.TextureNode = toned;
       const aa = opts.aa ? pr.aa : 'none';
-      if (aa === 'smaa') {
+      if (aa === 'traa' && fx) {
+        src = fx.resolve(toned);
+      } else if (aa === 'smaa' || aa === 'traa') {
         const s = new ScaledSMAA(toned);
         this.smaas.push(s);
         src = s.getTextureNode();
@@ -155,7 +180,7 @@ export class Post {
         src = fx;
       }
       p.outputColorTransform = false;
-      p.outputNode = casUpscale(src, this.sharpness);
+      p.outputNode = casUpscale(src, this.sharpness, pr.grain && grading);
       this.pipelines.set(name, p);
     }
     this.preset = opts.preset;
@@ -168,6 +193,7 @@ export class Post {
   setScale(s: number) {
     this._scale = s;
     this.scenePass.setResolutionScale(s);
+    this.ultra?.setScale(s);
     for (const r of this.scaled) r.setResolutionScale(s);
     for (const m of this.smaas) m.scale = s;
     for (const b of this.blooms) b.node.setResolutionScale(b.res * s);

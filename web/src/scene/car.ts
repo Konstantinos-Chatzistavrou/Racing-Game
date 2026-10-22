@@ -131,6 +131,10 @@ export class CarVisual {
       this.wheels.push({ node, rest: node.quaternion.clone(), caliper });
     }
     this.paint = setupCarMaterials(model, cfg, null);
+    // The player's own car never needs to be in its headlight shadow map (the spots sit at its nose and shine away
+    // from it; screenshot-identical): skipping its 124k triangles + dent shader saves the biggest part of every
+    // shadow-update frame. Other cars (AI, remote) still cast.
+    model.traverse((o) => { if ((o as THREE.Mesh).isMesh) o.castShadow = false; });
     // Headlights: two shadow-casting spots (the only dynamic shadows in the scene). A garage car swap passes the
     // previous car's spots in: removing a shadow-casting light destroys its shadow map mid-frame (WebGPU validation
     // error) and changes the light count (shader recompile), so the same two lights move to the new body.
