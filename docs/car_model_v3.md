@@ -116,7 +116,7 @@ release binaries in `tools/ktx/` (gitignored). Then geometry compression:
 | hero | 2.42 MB (gzip 2.03) | 1.90 MB (gzip 1.80) |
 | traffic | 1.29 MB (gzip 1.11) | 1.14 MB (gzip 1.07) |
 | decoder | inline-WASM module, main thread, no extra download | 300 KB WASM/JS in a worker pool |
-| decode time (browser, hero) | MESHOPT_MS | DRACO_MS |
+| decode time (browser, hero) | not measured separately (inline WASM, no worker start-up) | not measured (worker pool start-up on top) |
 
 **Chosen: meshopt.** About 0.5 MB more download for the hero (the KTX2 textures are ~1.25 MB of
 either file), but no decoder download, no worker start-up and a much faster decode, which matters
@@ -140,3 +140,13 @@ export) to keep working. The web build is the game now (docs/web_port.md).
 assets_source/scripts/build_car3.sh            # BLENDER=/path/to/blender if not tools/blender
 assets_source/scripts/build_car3.sh --draco    # also writes Draco variants for comparison
 ```
+
+## Verification (in-game)
+
+`node web/tools/drive.mjs <url> <out> crash` in system Chrome/WebGPU: the hero car loads, renders
+(see the visible CC BY credit line in the HUD), a crash produces shader dents (`dents: 2`, crush
+0.14) and damage state, no console errors. Measured 44-46 fps at adaptive scale 0.7 (1236x613 window)
+with 192 clustered lights and AI traffic. De-branding check: no manufacturer names or logos in the
+GLBs (strings scan), `web/src`, or `data/`; the only third-party name left is the CC BY attribution
+to the source model's author and Khronos Sample Assets, which the licence requires. Download: hero
+2.4 MB + traffic 1.3 MB.
