@@ -30,3 +30,8 @@
 /assets_source/downloads/
 /assets_source/build/
 /tools/ktx/
+
+# New York city build: generated tiles (hosted outside git) and local python venv
+/web/public/assets/nyc/
+/tools/nyc/.venv/
+__pycache__/
