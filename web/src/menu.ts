@@ -18,6 +18,8 @@ export interface MenuHooks {
   resume(): void;
   restart(): void;
   garage(): void;
+  /** title buttons: benchmark (about a minute) / soak test (several minutes) */
+  bench(soak: boolean): void;
   /** the shown screen changed (title <-> garage move the camera) */
   screen(s: Screen): void;
 }
@@ -91,7 +93,8 @@ export class Menu {
       <div class="btnrow"><button class="primary huge" data-act="go" ${this.tuning ? 'disabled' : ''}>Play</button>
       <button class="huge" data-act="start" ${this.tuning ? 'disabled' : ''}>Garage</button></div>
       <div class="gfx"><span class="dim">Graphics</span>${g('auto', 'Auto')}${g('max', 'Max')}${g('ultra', 'Ultra')}${g('high', 'High')}${g('medium', 'Medium')}${g('low', 'Low')}</div>
-      <div class="dim note">${esc(this.gfxNote)}</div></div>`;
+      <div class="dim note">${esc(this.gfxNote)}</div>
+      <div class="btnrow"><button class="small" data-act="bench" ${this.tuning ? 'disabled' : ''}>Benchmark</button><button class="small" data-act="soak" ${this.tuning ? 'disabled' : ''}>Soak test</button></div></div>`;
   }
 
   private garage() {
@@ -174,6 +177,8 @@ export class Menu {
       case 'resume': this.hooks.resume(); break;
       case 'restart': this.hooks.restart(); break;
       case 'garage': this.hooks.garage(); break;
+      case 'bench': this.hooks.bench(false); break;
+      case 'soak': this.hooks.bench(true); break;
     }
   }
   private input(e: Event) {
