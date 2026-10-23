@@ -22,7 +22,7 @@ export class UltraFx {
   /** screen-space reflections on the wet road (fx/ssr.ts), sharing this pass; null when the preset has none */
   readonly ssr: ReturnType<typeof ssrNode> | null = null;
 
-  constructor(scene: THREE.Scene, private camera: THREE.PerspectiveCamera, private aoRes = 0.5, withSsr = false) {
+  constructor(scene: THREE.Scene, private camera: THREE.PerspectiveCamera, private aoRes = 0.5, withSsr = false, private withAo = true) {
     this.scenePass = pass(scene, camera);
     const so = withSsr ? ssrOptions() : null;
     // with SSR the normal attachment is the reflection normal (geometry normal on mirror-smooth puddles): fine for AO too
@@ -32,7 +32,7 @@ export class UltraFx {
     this.color = (this.ssr ? beauty.add(this.ssr.rgb) : beauty) as unknown as THREE.TextureNode;
     const depth = this.scenePass.getTextureNode('depth');
     const normal = this.scenePass.getTextureNode('normal');
-    this.ao = gtao(depth, normal, camera);
+    this.ao = gtao(depth, normal, camera);   // built even when switched off (?ao=0): it only runs if its texture is sampled
     this.ao.resolutionScale = aoRes;
     this.ao.useTemporalFiltering = true;
     this.ao.samples.value = 12;
@@ -43,6 +43,7 @@ export class UltraFx {
 
   /** HDR colour with the occlusion applied (before bloom / tone mapping). */
   occlude(): THREE.Node<'vec4'> {
+    if (!this.withAo) return this.color as unknown as THREE.Node<'vec4'>;
     const a = this.ao.getTextureNode();
     const luma = dot(this.color.rgb, vec3(0.2126, 0.7152, 0.0722));
     const k = smoothstep(0.5, 3.0, luma).oneMinus();

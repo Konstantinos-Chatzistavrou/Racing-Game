@@ -54,9 +54,9 @@ async function main() {
   // Graphics: 'auto' tunes resolution + preset ONCE behind a cover in the title menu (never while a
   // car is on screen); high/medium/low are fixed. ?scale / ?quality (test tools) pin on top of that.
   const GFX_KEY = 'nr.gfx';
-  const GFX_SCALE = { ultra: 1, high: 1, medium: 0.85, low: 0.7 } as const;
+  const GFX_SCALE = { max: 1, ultra: 1, high: 1, medium: 0.85, low: 0.7 } as const;
   let gfx: Gfx = 'auto';
-  try { const g = localStorage.getItem(GFX_KEY); if (g === 'ultra' || g === 'high' || g === 'medium' || g === 'low') gfx = g; } catch { /* storage blocked */ }
+  try { const g = localStorage.getItem(GFX_KEY); if (g === 'max' || g === 'ultra' || g === 'high' || g === 'medium' || g === 'low') gfx = g; } catch { /* storage blocked */ }
   let adaptive = gfx === 'auto' && !params.has('scale');
   const maxScale = 1;
   // Start near ~0.9 megapixels rendered (1.07 MP measured too heavy on the laptop iGPU at 60 Hz).
@@ -73,7 +73,7 @@ async function main() {
   let presetPinned = PRESET_ORDER.includes(params.get('quality') as PresetName) || gfx !== 'auto';
   let storedPreset: string | null = null;
   try { storedPreset = localStorage.getItem(PRESET_KEY); } catch { /* storage blocked */ }
-  let presetIdx = Math.max(0, PRESET_ORDER.indexOf((PRESET_ORDER.includes(params.get('quality') as PresetName) ? params.get('quality') : gfx !== 'auto' ? gfx : storedPreset ?? 'high') as PresetName));
+  let presetIdx = Math.max(0, PRESET_ORDER.indexOf((PRESET_ORDER.includes(params.get('quality') as PresetName) ? params.get('quality') : gfx !== 'auto' ? gfx : storedPreset ?? 'max') as PresetName));
   renderer.toneMapping = THREE.AgXToneMapping;
   renderer.toneMappingExposure = 1.1;
   renderer.shadowMap.enabled = params.get('shadows') !== '0';
@@ -318,7 +318,7 @@ async function main() {
   // the 40 fps bar rather than 30): below it -> cheaper preset first (no hitch), then -0.1 scale
   // (min 0.5); above 55 fps with 90 % of frames < 22 ms -> +0.1 (only if nothing was lowered).
   // The settled scale and preset are stored per window size, so the next visit is one window.
-  const WINDOW = 1000, FPS_LOW = 40, FPS_HIGH = 55, STEP = 0.1, MIN_SCALE = 0.5, TUNE_TIMEOUT = 30000;
+  const WINDOW = 1000, FPS_LOW = 33, FPS_HIGH = 55, STEP = 0.1, MIN_SCALE = 0.5, TUNE_TIMEOUT = 30000;
   let winStart = 0, tuning = false, calSteps = 0, upSteps = 0, wentDown = false, tuneStart = 0;
   const startScale = () => Math.min(maxScale, Math.max(0.5, Math.round(Math.sqrt(0.9e6 / (innerWidth * innerHeight * Math.min(devicePixelRatio, 1) ** 2)) * 10) / 10));
   const setPreset = (i: number) => {
@@ -641,7 +641,7 @@ async function main() {
     // 60/120/144 Hz display averages exactly the cap instead of rounding down.
     if (capInterval === 0 || tuning || now - lastRenderAt >= capInterval - 2) {
       lastRenderAt = capInterval && now - lastRenderAt < capInterval * 1.5 ? lastRenderAt + capInterval : now;
-      if (++frameNo % PRESETS[post.preset].shadowEvery === 0) for (const sh of headShadows) sh.needsUpdate = true;
+      if (++frameNo % (params.has('se') ? num('se', 2) : PRESETS[post.preset].shadowEvery) === 0) for (const sh of headShadows) sh.needsUpdate = true;
       post.render();
       probe?.update(pos, visual.root);
       hud.rendered(now);
