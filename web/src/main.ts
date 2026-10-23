@@ -24,6 +24,7 @@ import { Net } from './net';
 import { Menu, type Gfx } from './menu';
 import { applyMods, loadSelection, modsOf, paintOf, type CatalogCar } from './garage';
 import { AiTraffic } from './ai';
+import { autoCap, benchClose, benchProgress, benchResults, measureRefresh, recommend, stats, type BenchReport, type PhaseResult, type SoakWindow } from './bench';
 
 const params = new URLSearchParams(location.search);
 const num = (k: string, d: number) => (params.has(k) ? Number(params.get(k)) : d);
@@ -31,6 +32,7 @@ const loading = document.getElementById('loading')!;
 const say = (s: string) => (loading.textContent = s);
 
 async function main() {
+  const refreshP = measureRefresh();   // runs while the renderer and assets load
   // --- renderer -------------------------------------------------------------------------------
   // WebGPU is required (clustered lighting, compute). WebGL 2 only on explicit request, for debugging.
   const forceWebGL = params.get('webgl') === '1';
@@ -319,7 +321,11 @@ async function main() {
   // the 40 fps bar rather than 30): below it -> cheaper preset first (no hitch), then -0.1 scale
   // (min 0.5); above 55 fps with 90 % of frames < 22 ms -> +0.1 (only if nothing was lowered).
   // The settled scale and preset are stored per window size, so the next visit is one window.
-  const WINDOW = 1000, FPS_LOW = 33, FPS_HIGH = 55, STEP = 0.1, MIN_SCALE = 0.5, TUNE_TIMEOUT = 30000;
+  // Frame cap: ?cap=N, else the highest rate <= target (30 desktop, 45 touch) that divides the display refresh evenly (bench.ts autoCap).
+  const hz = await refreshP;
+  const capFps = params.has('cap') ? num('cap', 30) : autoCap(hz, wantsTouch() ? 45 : 30);
+  const capInterval = capFps > 0 ? 1000 / capFps : 0;
+  const WINDOW = 1000, FPS_LOW = Math.max(33, capFps * 1.1), FPS_HIGH = Math.max(55, capFps * 1.8), STEP = 0.1, MIN_SCALE = 0.5, TUNE_TIMEOUT = 30000;
   let winStart = 0, tuning = false, calSteps = 0, upSteps = 0, wentDown = false, tuneStart = 0;
   const startScale = () => Math.min(maxScale, Math.max(0.5, Math.round(Math.sqrt(0.9e6 / (innerWidth * innerHeight * Math.min(devicePixelRatio, 1) ** 2)) * 10) / 10));
   const setPreset = (i: number) => {
@@ -389,6 +395,7 @@ async function main() {
   let frameNo = 0;
   g.__game = { city, ai, visual, audio, rig, damage, trace, input, renderer, camera, scene, post,
     get car() { return car; }, get core() { return core; }, get state() { return state; }, menu: () => menu, sel,
+    bench: (soak = false) => runBench(soak),
     setPreset: (name: PresetName) => { setPreset(PRESET_ORDER.indexOf(name)); setExtra(); },
     setScale: (x: number) => { scale = x; post.setScale(x); setExtra(); },
     pipelines: () => ({ atStart: pipelinesAtStart, now: (renderer as unknown as { _pipelines: { caches: Map<string, unknown> } })._pipelines.caches.size }),
@@ -397,8 +404,67 @@ async function main() {
       list: pw.world.bodies.getAll().map((b) => `${b === car.body ? 'car' : b.isKinematic() ? 'ai' : 'debris'}:${b.isSleeping() ? 'asleep' : 'awake'}`).join(' ') }),
     info: () => ({ pos: car.body.translation(), speed: car.out[OUT.speed], rpm: car.out[OUT.rpm], gear: car.out[OUT.gear] }) };
 
-  // --- front end: title -> garage -> session -------------------------------------------------
+  // --- benchmark (bench.ts): scripted drive along the route, per preset: uncapped, then at the cap; optional soak ------------
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const bench = { active: false, uncap: false, dist: 0, speed: 26, dy: 0, stamps: [] as number[], cb: [] as number[], gpu: [] as number[], pending: false, ts: false };
+  const benchPos = new THREE.Vector3();
+  const benchStep = (frame: number) => {   // from the loop: the car is PLACED on the route each frame (same load every run, no physics noise)
+    bench.dist += bench.speed * frame;
+    const smp = route.samples[Math.floor(bench.dist / 2) % route.samples.length];
+    benchPos.set(smp.x, smp.z + bench.dy, -smp.y);
+    car.place(benchPos, Math.atan2(Math.cos(smp.heading), -Math.sin(smp.heading)), bench.speed);
+  };
+  const runBench = async (soak: boolean): Promise<BenchReport | null> => {
+    if (state !== 'title' || bench.active) return null;
+    const keepIdx = presetIdx, keepAdaptive = adaptive;
+    adaptive = false;
+    menu.show('none'); resetCar(); setState('race'); hud.show(); audio.muted = true;
+    bench.dy = car.body.translation().y - s0.z; bench.dist = 0;
+    bench.ts = (renderer as unknown as { hasFeature(f: string): boolean }).hasFeature('timestamp-query');
+    (renderer.backend as unknown as { trackTimestamp: boolean }).trackTimestamp = bench.ts;
+    bench.active = true;
+    const collect = async (ms: number, uncap: boolean) => {
+      bench.uncap = uncap; bench.stamps = []; bench.cb = []; bench.gpu = [];
+      await sleep(ms);
+      return stats(bench.stamps.slice(), bench.cb.slice(), bench.gpu.slice(), uncap ? 0 : capInterval);
+    };
+    const phases: PhaseResult[] = [];
+    for (const [i, name] of PRESET_ORDER.entries()) {
+      setPreset(i); setExtra();
+      benchProgress(`${name} (${i + 1}/${PRESET_ORDER.length}): warming up`);
+      bench.uncap = true; await sleep(2000);
+      benchProgress(`${name} (${i + 1}/${PRESET_ORDER.length}): uncapped (what the device can do)`);
+      const open = await collect(5000, true);
+      benchProgress(`${name} (${i + 1}/${PRESET_ORDER.length}): locked at ${capFps} fps`);
+      const capped = await collect(8000, false);
+      phases.push({ preset: name, open, capped });
+    }
+    const recommended = recommend(phases, capFps);
+    let soakRes: BenchReport['soak'];
+    if (soak) {
+      setPreset(PRESET_ORDER.indexOf(recommended as PresetName)); setExtra();
+      const windows: SoakWindow[] = [], total = num('soak', 300) * 1000, step = 15000;
+      for (let t = 0; t < total; t += step) {
+        benchProgress(`soak ${recommended}: ${Math.round(t / 1000)} / ${Math.round(total / 1000)} s`);
+        const st = await collect(step, false);
+        windows.push({ t: t / 1000, fps: st.fps, late: st.late, p99: st.p99 });
+      }
+      soakRes = { preset: recommended, windows };
+    }
+    bench.active = false; bench.uncap = false;
+    setPreset(keepIdx); adaptive = keepAdaptive; setExtra();
+    hud.hide(); audio.muted = true; resetCar(); setState('title'); menu.show('title');
+    benchClose();
+    const info = await navigator.gpu?.requestAdapter().then((a) => (a as unknown as { info?: { description?: string; vendor?: string; architecture?: string } } | null)?.info).catch(() => undefined);
+    const report: BenchReport = {
+      when: new Date().toISOString(), ua: navigator.userAgent, screen: [innerWidth, innerHeight], dpr: devicePixelRatio, hz, cap: capFps, scale, timestamps: bench.ts,
+      gpu: info ? (info.description || [info.vendor, info.architecture].filter(Boolean).join(' ')) || 'unknown GPU' : 'unknown GPU', phases, recommended, soak: soakRes,
+    };
+    benchResults(report, (p) => { setPreset(PRESET_ORDER.indexOf(p as PresetName)); setExtra(); menu.setTuning(false, `Graphics set from the benchmark: ${p}`); });
+    return report;
+  };
+
+  // --- front end: title -> garage -> session -------------------------------------------------
   const menu: Menu = new Menu(sel, catalog, physics, {
     preview: () => { void showCar().then(() => visual.setPaint(paintOf(sel, catalog), sel.finish)); },
     go: () => void startSession(),
@@ -406,6 +472,7 @@ async function main() {
     resume: () => resume(),
     restart: () => { menu.show('none'); if (sel.mode === 'race') void beginRace(); else { resetCar(); setState('race'); audio.muted = false; prev = performance.now(); } },
     garage: () => toGarage(),
+    bench: (soak) => void runBench(soak),
     screen: (sc) => { if (sc === 'title' || sc === 'garage') setState(sc); },
   });
   menu.gfx = gfx;
@@ -584,14 +651,14 @@ async function main() {
   }
   setExtra();
 
-  const capFps = params.has('cap') ? num('cap', 30) : 30;
-  const capInterval = capFps > 0 ? 1000 / capFps : 0;
   let lastRenderAt = 0;
   renderer.setAnimationLoop(() => {
     const now = performance.now();
+    const cb0 = bench.active ? now : 0;
     const frame = Math.min(0.1, (now - prev) / 1000);
     prev = now;
     const live = state !== 'paused';
+    if (bench.active) benchStep(frame);
     if (live) acc += frame;
     let steps = 0;
     while (acc >= DT && steps < 24) {
@@ -640,12 +707,20 @@ async function main() {
     // display refresh; only the draw is skipped, so the picture holds still between rendered frames. The cap is off while
     // the graphics tuner measures (it needs the uncapped speed), and the slot clock advances by whole intervals so a
     // 60/120/144 Hz display averages exactly the cap instead of rounding down.
-    if (capInterval === 0 || tuning || now - lastRenderAt >= capInterval - 2) {
-      lastRenderAt = capInterval && now - lastRenderAt < capInterval * 1.5 ? lastRenderAt + capInterval : now;
+    if (capInterval === 0 || tuning || bench.uncap || now - lastRenderAt >= capInterval - 2) {
+      lastRenderAt = capInterval && !bench.uncap && now - lastRenderAt < capInterval * 1.5 ? lastRenderAt + capInterval : now;
       if (++frameNo % (params.has('se') ? num('se', 2) : PRESETS[post.preset].shadowEvery) === 0) for (const sh of headShadows) sh.needsUpdate = true;
       post.render();
       probe?.update(pos, visual.root);
       hud.rendered(now);
+      if (bench.active) {
+        bench.stamps.push(now);
+        if (bench.ts && !bench.pending) {
+          bench.pending = true;
+          const r = renderer as unknown as { resolveTimestampsAsync(t: string): Promise<number | undefined> };
+          Promise.all([r.resolveTimestampsAsync('render'), r.resolveTimestampsAsync('compute')]).then(([a, c]) => { if (a) bench.gpu.push(a + (c || 0)); bench.pending = false; });
+        }
+      }
     }
     if (state === 'race') {
       lap = race.update(raceCar, car.body.translation(), ticks * DT - raceT0);
@@ -671,6 +746,7 @@ async function main() {
       if (!changed || now - tuneStart > TUNE_TIMEOUT) finishTuning();
       else { winStart = now + 1000; setExtra(); }   // let the resize hitch pass before measuring again
     }
+    if (bench.active) bench.cb.push(performance.now() - cb0);
   });
 }
 

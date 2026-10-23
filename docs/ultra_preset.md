@@ -42,3 +42,21 @@ bundles; the `max` preset (MRT scene pass) falls back automatically. Result on t
 `post.render()` CPU only 0.2-0.6 ms better (interleaved on/off test: 0.24 ms), identical picture, no errors, no hitches.
 Below the 0.5 ms bar, so it stays off. Worth re-testing on the phone (Mali: draw submission costs relatively more).
 Not attempted (gated on this): merging the player car's static meshes (~60 draws).
+
+## Built-in benchmark and refresh-rate-aware cap (2026-10-23)
+Title menu: **Benchmark** (~75 s) and **Soak test** (benchmark + 5 min capped run, `?soak=SECONDS` to change; phones throttle after minutes,
+so a 30 s test lies). `window.__game.bench(soak)` runs the same from the console / tools. `web/src/bench.ts`, loop hooks in `main.ts`.
+- The car is placed on the city route each frame at 26 m/s (identical camera path, streaming and LOD load every run; no physics noise).
+- Per preset (max, ultra, high, medium, low): 2 s warm-up, 5 s UNCAPPED (headroom: what the device can do), 8 s at the CAP (does the lock hold:
+  late frames = intervals > 1.5x the cap interval). Reported: fps, p50/p95/p99/worst interval, late %, GPU ms (timestamp queries, if the
+  browser has them), JS main-thread ms per frame, display Hz, GPU name, screen/DPR. Recommendation = best preset with uncapped fps >= 1.1 x cap,
+  <= 3 % late frames and p99 < 2.2 intervals; "Use <preset>" applies it, "Copy results" puts the JSON on the clipboard.
+- Cap: `?cap=N`, else the highest rate <= target (30 desktop, 45 touch) that DIVIDES the refresh rate (60 Hz -> 30, 90 -> 45, 120 -> 40,
+  144 -> 28.8): every Nth refresh = perfectly even pacing; 45 on a 60/120 Hz panel would alternate frame times (judder). The Auto tuner's bar
+  scales with the cap (1.1 x cap uncapped).
+- Laptop (i3-1315U, 60 Hz, cap 30): ultra 40 fps uncapped / 29.1 capped / 1.3-1.7 % late; high 43 / 30.0 / 0 %; medium and low only ~46-47 uncapped:
+  JS main thread ~9-11 ms per frame, so the LOW presets are CPU-bound here. Expect the same shape on a phone (CPU, not GPU, may be the limit).
+
+### Running it on the phone (no cable)
+Open the deployed game in Chrome on the Poco X8 Pro (needs a WebGPU-enabled Chrome), tap Benchmark, keep the screen on and the tab in front, then
+Copy results (JSON). Run Soak test unplugged and cool for the throttling picture.
