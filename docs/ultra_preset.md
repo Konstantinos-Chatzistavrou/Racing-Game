@@ -35,3 +35,10 @@ GPU median ~12 ms (p95 ~18-20), holds a locked 30 at scale 1 (HUD 30 fps, worst 
 Preset order: max > ultra > high > medium > low. Auto starts at max and steps down (FPS_LOW 33 uncapped, enough margin over the 30 cap):
 on the laptop it settles on Ultra at 100 %. Max is for stronger GPUs (select it under Graphics).
 Switches for A/B: `?quality=max|ultra|high`, `?ssr=0`, `?ao=0`, `?ssr=intensity:0.8,quality:0.5`, `?se=N` (shadow refresh every Nth frame).
+
+## Render bundles (tried, default OFF)
+`?bundle=1` records the static city (180 tile meshes, one BundleGroup per 160 m tile, tile-level frustum culling) into GPU render
+bundles; the `max` preset (MRT scene pass) falls back automatically. Result on the i3 laptop: draw calls 327 -> 179, but
+`post.render()` CPU only 0.2-0.6 ms better (interleaved on/off test: 0.24 ms), identical picture, no errors, no hitches.
+Below the 0.5 ms bar, so it stays off. Worth re-testing on the phone (Mali: draw submission costs relatively more).
+Not attempted (gated on this): merging the player car's static meshes (~60 draws).

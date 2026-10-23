@@ -207,7 +207,9 @@ export class Post {
     this.sharpness.value = s >= 0.99 ? 1.0 : 0.5;
   }
 
-  render() { this.pipelines.get(this.preset)!.render(); }
+  /** called with the preset before every render (main.ts: render bundles are off for the MRT scene pass of 'max') */
+  onPreset: ((p: PresetName) => void) | null = null;
+  render() { this.onPreset?.(this.preset); this.pipelines.get(this.preset)!.render(); }
 
   /** Renders every preset once (shader warm-up behind the loading screen). */
   warmup() {

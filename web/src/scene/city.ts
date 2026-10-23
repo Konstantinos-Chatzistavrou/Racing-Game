@@ -16,9 +16,12 @@ export interface City {
   root: THREE.Object3D; lights: CityLight[]; lamps: number; neon: number; props: CityInstances;
   /** per frame: re-pick the visible prop instances / LODs (skipped while the camera is still) */
   update: (camera: THREE.Camera, force?: boolean) => void;
+  /** record the static tile meshes into per-tile render bundles (?bundle=1); off for MRT scene passes. Idempotent. */
+  setBundled: (on: boolean) => void;
+  bundles: number;
 }
 
-export async function loadCity(scene: THREE.Scene, pw: PhysicsWorld, surfaces: CarInfo['surfaces'], onProgress: (f: number) => void): Promise<City> {
+export async function loadCity(scene: THREE.Scene, pw: PhysicsWorld, surfaces: CarInfo['surfaces'], onProgress: (f: number) => void, bundle = false): Promise<City> {
   const L = gltfLoader();   // shared meshopt + KTX2 decoders (initLoaders ran after renderer.init)
   const prog = [0, 0];
   const report = () => onProgress(prog[0] * 0.75 + prog[1] * 0.25);
@@ -77,7 +80,50 @@ export async function loadCity(scene: THREE.Scene, pw: PhysicsWorld, surfaces: C
     l.removeFromParent();
   }
   scene.add(root);
-  return { root, lights: out, lamps, neon, props: inst, update: (camera, force) => inst.update(camera, force) };
+
+  // Render bundles (three BundleGroup, static): the tile meshes are recorded once into a GPU render
+  // bundle per 160 m tile and replayed, instead of ~180 JS draw submissions per frame. A bundle draws
+  // everything it recorded (no per-mesh frustum test), so tiles are culled here as whole groups
+  // (group.visible) and the meshes inside have frustumCulled off while bundled.
+  const tiles: { group: THREE.BundleGroup; meshes: THREE.Mesh[]; box: THREE.Box3 }[] = [];
+  if (bundle) {
+    const byTile = new Map<string, THREE.Mesh[]>();
+    for (const c of [...root.children]) {
+      const m = c as THREE.Mesh;
+      const t = /_t(-?\d+)_(-?\d+)$/.exec(m.name);
+      if (!m.isMesh || (m as THREE.InstancedMesh).isInstancedMesh || !t || Array.isArray(m.material) || !m.visible) continue;
+      const k = t[1] + '_' + t[2];
+      (byTile.get(k) ?? byTile.set(k, []).get(k)!).push(m);
+    }
+    for (const meshes of byTile.values()) {
+      const box = new THREE.Box3();
+      for (const m of meshes) { m.geometry.computeBoundingBox(); box.union(m.geometry.boundingBox!.clone().applyMatrix4(m.matrixWorld)); }
+      const group = new THREE.BundleGroup();
+      root.add(group);
+      tiles.push({ group, meshes, box });
+    }
+  }
+  let bundled = false;
+  const frustum = new THREE.Frustum(), pv = new THREE.Matrix4();
+  const setBundled = (on: boolean) => {
+    if (on === bundled || !tiles.length) return;
+    bundled = on;
+    for (const t of tiles) {
+      for (const m of t.meshes) { (on ? t.group : root).add(m); m.frustumCulled = !on; }
+      t.group.visible = true;
+      t.group.needsUpdate = true;   // re-record on (re-)enable
+    }
+  };
+  const cull = (camera: THREE.Camera) => {
+    camera.updateMatrixWorld();
+    pv.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    frustum.setFromProjectionMatrix(pv, camera.coordinateSystem);
+    for (const t of tiles) t.group.visible = frustum.intersectsBox(t.box);
+  };
+  return {
+    root, lights: out, lamps, neon, props: inst, bundles: tiles.length, setBundled,
+    update: (camera, force) => { inst.update(camera, force); if (bundled) cull(camera); },
+  };
 }
 
 function meshesOf(o: THREE.Object3D): THREE.Mesh[] {
