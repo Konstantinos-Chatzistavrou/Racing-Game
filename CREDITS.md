@@ -52,6 +52,11 @@ De-branded: no real-world logos, brand names or trademarked signs. Neon signs us
   Changes as for the Kestrel GT (livery, sponsor and manufacturer marks, grille emblem, plates removed; re-shaped; splitter,
   grille, diffuser, wing and light bars replaced; flat materials; `assets_source/scripts/make_car5.py`).
 
+## New York (Midtown / Manhattan) city data
+- Street network, parks, water, trees, signals and street furniture: (c) OpenStreetMap contributors, Open Database Licence (ODbL), https://www.openstreetmap.org/copyright
+  (extract from download.bbbike.org). Building footprints, official roof heights, ground elevation and construction years: NYC Open Data "Building Footprints"
+  (dataset 5zhs-2jue) and "Borough Boundaries" (gthc-hcne), City of New York, public domain. Processing: tools/nyc/.
+
 ## Software
 - three.js (MIT), Rapier (Apache-2.0), meshoptimizer (MIT), Basis Universal transcoder
   (Apache-2.0), glTF-Transform (MIT, build tool), KTX-Software (Apache-2.0, build tool),
