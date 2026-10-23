@@ -121,6 +121,48 @@ try {
     if (process.env.DBG) console.log('dbg back ', await evaluate(fs.readFileSync(process.env.DBG, 'utf8')));
     await click('[data-act=mode][data-v=online]'); await sleep(500); await shot('m9_online.png');
   }
+  if (scenario === 'highspeed') {
+    // Drive at high speed (full throttle + steering wiggle), then Esc -> Back to garage: do the wheels/lights survive? (MENU_CAR=<id>)
+    const click = (q) => evaluate(`(() => { const e = document.querySelector('${q}'); if (!e) return 'MISSING ${q}'; e.click(); return 'ok'; })()`);
+    const wheels = `(() => { const g = window.__game, m = g.visual.model, r = (o) => o ? [o.position.x, o.position.y, o.position.z, o.quaternion.x, o.quaternion.y, o.quaternion.z, o.quaternion.w].map((v) => +v.toFixed(3)) : null;
+      return JSON.stringify({ car: g.sel.car, root: [g.visual.root.position.x, g.visual.root.position.y, g.visual.root.position.z].map((v) => +v.toFixed(2)), lightsOn: g.visual.lightsOn, broken: g.visual.lightsBroken,
+        spots: g.visual.headlights.map((s) => [+s.intensity.toFixed(0), +s.position.x.toFixed(2), +s.position.y.toFixed(2), +s.position.z.toFixed(2)]),
+        wheels: ['FL', 'FR', 'RL', 'RR'].map((k) => r(m.getObjectByName('wheel_' + k))), calipers: ['FL', 'RL'].map((k) => r(m.getObjectByName('caliper_' + k))) }); })()`;
+    for (let i = 0; i < 90 && (await evaluate(`window.__game.menu().tuning`)); i++) await sleep(500);
+    await click('[data-act=start]'); await sleep(1500);
+    await click(`[data-act=car][data-v=${process.env.MENU_CAR ?? 'vela_gt'}]`); await sleep(2500);
+    console.log('garage1', await evaluate(wheels)); await shot('h1_garage_before.png');
+    await click('[data-act=go]'); await sleep(2500);
+    await evaluate(`(window.__game.input.hold = false, 1)`);
+    await key('keyDown', 'KeyW', 'w');
+    if (process.env.STEER === '0') await sleep(9000);   // straight: no crash
+    else for (let i = 0; i < 9; i++) { await key('keyDown', i % 2 ? 'KeyA' : 'KeyD', i % 2 ? 'a' : 'd'); await sleep(500); await key('keyUp', i % 2 ? 'KeyA' : 'KeyD', i % 2 ? 'a' : 'd'); await sleep(500); }
+    console.log('speed ', JSON.stringify(await evaluate(info)));
+    await shot('h2_driving.png');
+    await evaluate(`(window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape' })), 1)`); await sleep(600);
+    await key('keyUp', 'KeyW', 'w');
+    console.log('during', await evaluate(wheels));
+    await click('[data-act=garage]'); await sleep(2500);
+    console.log('garage2', await evaluate(wheels)); await shot('h3_garage_after.png');
+    for (const [n, az, el, d] of [['side', 1.57, 0.1, 6], ['front', 3.14, 0.15, 6], ['rear', 0, 0.2, 6]]) {
+      await evaluate(`(Object.assign(window.__game.orbit, { az: ${az}, el: ${el}, dist: ${d}, drag: true }), 1)`); await sleep(1200); await shot(`h4_${n}.png`);
+    }
+  }
+  if (scenario === 'wheelmotion') {
+    // Straight at speed: per-frame wheel node motion (hop = y range, swing = z range, steer = yaw) for each car (CAR=<id> via ?car=).
+    await key('keyDown', 'KeyW', 'w');
+    await sleep(Number(process.env.RUNUP ?? 8000));
+    console.log('speed ', JSON.stringify(await evaluate(info)));
+    const r = await evaluate(`new Promise((res) => { const g = window.__game, m = g.visual.model, names = ['FL', 'FR', 'RL', 'RR'], S = names.map(() => ({ y: [], z: [], x: [], spin: [] })); let n = 0;
+      const f = () => { names.forEach((k, i) => { const o = m.getObjectByName('wheel_' + k); S[i].y.push(o.position.y); S[i].z.push(o.position.z); S[i].x.push(o.position.x);
+        const e = new (o.quaternion.constructor)().copy(o.quaternion); S[i].spin.push(2 * Math.atan2(e.x, e.w)); });
+        if (++n < 90) requestAnimationFrame(f); else res(JSON.stringify({ kmh: Math.round(Math.abs(g.car.out[102]) * 3.6), wheels: S.map((s, i) => ({ w: names[i],
+          y: [Math.min(...s.y), Math.max(...s.y)].map((v) => +v.toFixed(3)), z: [Math.min(...s.z), Math.max(...s.z)].map((v) => +v.toFixed(3)), x: [Math.min(...s.x), Math.max(...s.x)].map((v) => +v.toFixed(3)),
+          spinStep: +(s.spin.slice(1).map((v, j) => { let d = v - s.spin[j]; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return d; }).reduce((a, b) => a + b, 0) / (s.spin.length - 1)).toFixed(3) })) })); };
+      requestAnimationFrame(f); })`);
+    console.log('wheels', r);
+    await key('keyUp', 'KeyW', 'w');
+  }
   if (scenario === 'online') {
     // Online path: needs the relay running (cd server && npm start). Also draws the results screen.
     const click = (q) => evaluate(`(() => { const e = document.querySelector('${q}'); if (!e) return 'MISSING ${q}'; e.click(); return 'ok'; })()`);

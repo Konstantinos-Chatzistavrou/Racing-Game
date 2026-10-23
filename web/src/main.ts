@@ -145,6 +145,10 @@ async function main() {
     scene.environmentIntensity = 0.5;
   }
   say('Loading car…');
+  // Frame cap: ?cap=N, else the highest rate <= target (30 desktop, 45 touch) that divides the display refresh evenly (bench.ts autoCap).
+  const hz = await refreshP;
+  const capFps = params.has('cap') ? num('cap', 30) : autoCap(hz, wantsTouch() ? 45 : 30);
+  const capInterval = capFps > 0 ? 1000 / capFps : 0;
   // The player's body: each catalog car may bring its own model + visual config (garage swaps it).
   const visualPathOf = (id: string) => catalog.find((c) => c.id === id)?.visual ?? DEFAULT_VISUAL;
   const shapeOf = (cfg: CarVisualConfig): CarShape => {
@@ -161,6 +165,7 @@ async function main() {
   probe?.attach(visual.model, num('probei', 1));
   let net: Net | null = null;   // only while an Online session runs
   let shape = shapeOf(visualCfg);
+  visual.renderDt = capInterval ? capInterval / 1000 : 1 / 60;
   let car = new CarBody(pw, core, shape, visual.cg);
 
   // Rapier only indexes new colliders for queries during a step: step once so the spawn probe
@@ -203,7 +208,9 @@ async function main() {
   let state: State = 'boot';
   let pausedFrom: State = 'race';
   const driving = () => state === 'race' || state === 'countdown' || state === 'paused' || state === 'results';
-  const setState = (st: State) => { state = st; document.body.classList.toggle('menu', !driving()); };
+  const setState = (st: State) => { state = st; document.body.classList.toggle('menu', !driving()); syncHeadlights(); };
+  // In the showroom (title/garage/busy) the beams only bloom into a white veil over the car: nearly off there, full once driving.
+  const syncHeadlights = () => { visual.dim = driving() ? 1 : 0.06; visual.applyHeadlights(); };
   // brake 0.5, not 1: a full brake while stopped engages the pedal reverse
   const IDLE: RawInput = { steer: 0, throttle: 0, brake: 0.5, clutch: 0, handbrake: 1, shiftUp: false, shiftDown: false, device: 0 };
   let lapTimes: number[] = [], raceFinishedAt = -1;
@@ -321,10 +328,6 @@ async function main() {
   // the 40 fps bar rather than 30): below it -> cheaper preset first (no hitch), then -0.1 scale
   // (min 0.5); above 55 fps with 90 % of frames < 22 ms -> +0.1 (only if nothing was lowered).
   // The settled scale and preset are stored per window size, so the next visit is one window.
-  // Frame cap: ?cap=N, else the highest rate <= target (30 desktop, 45 touch) that divides the display refresh evenly (bench.ts autoCap).
-  const hz = await refreshP;
-  const capFps = params.has('cap') ? num('cap', 30) : autoCap(hz, wantsTouch() ? 45 : 30);
-  const capInterval = capFps > 0 ? 1000 / capFps : 0;
   const WINDOW = 1000, FPS_LOW = Math.max(33, capFps * 1.1), FPS_HIGH = Math.max(55, capFps * 1.8), STEP = 0.1, MIN_SCALE = 0.5, TUNE_TIMEOUT = 30000;
   let winStart = 0, tuning = false, calSteps = 0, upSteps = 0, wentDown = false, tuneStart = 0;
   const startScale = () => Math.min(maxScale, Math.max(0.5, Math.round(Math.sqrt(0.9e6 / (innerWidth * innerHeight * Math.min(devicePixelRatio, 1) ** 2)) * 10) / 10));
@@ -488,6 +491,8 @@ async function main() {
     scene.remove(visual.root);
     damage.dispose();
     visualPath = path; visualCfg = cfg; visual = next; shape = shapeOf(cfg);
+    visual.renderDt = capInterval ? capInterval / 1000 : 1 / 60;
+    syncHeadlights();
     scene.add(visual.root);
     visual.setPaint(paintOf(sel, catalog), sel.finish);
     damage = new DamageVisuals(visual, visualCfg, pw, scene);

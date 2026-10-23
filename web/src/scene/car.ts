@@ -3,6 +3,7 @@
 // shared loaders.ts. Its materials come from the file (clear-coat paint with a metal-flake normal
 // map, alpha glass, emissive lights); setupCarMaterials only adapts them for the game.
 import * as THREE from 'three/webgpu';
+import { float, smoothstep, uniform, uv } from 'three/tsl';
 import { OUT } from '../physics/core';
 import { materialsOf } from './city';
 import { assetUrl, loadGLTF } from './loaders';
@@ -106,7 +107,15 @@ export function setupCarMaterials(model: THREE.Object3D, cfg: CarVisualConfig, p
 
 export class CarVisual {
   readonly root = new THREE.Group();          // placed at the physics body (CG)
-  private wheels: { node: THREE.Object3D; rest: THREE.Quaternion; caliper?: THREE.Object3D }[] = [];
+  private wheels: { node: THREE.Object3D; rest: THREE.Quaternion; caliper?: THREE.Object3D; spin: number }[] = [];
+  /** seconds between DRAWN frames (main.ts sets it from the cap): decides when the spokes alias and the blur disc takes over */
+  renderDt = 1 / 30;
+  private blurMat: THREE.MeshStandardNodeMaterial | null = null;
+  /** blur disc strength (0..1): a shader uniform, because a plain material.opacity change is not picked up after the first compile */
+  private blurOp = uniform(0);
+  private lastUpdate = 0;
+  /** headlight strength factor: 1 driving, ~0.06 in the showroom (title/garage), where the beams only bloom into a white veil */
+  dim = 1;
   private qa = new THREE.Quaternion();
   private qb = new THREE.Quaternion();
   private physInv = new THREE.Matrix4();
@@ -128,7 +137,8 @@ export class CarVisual {
     for (const name of [n.fl, n.fr, n.rl, n.rr]) {
       const node = model.getObjectByName(name)!;
       const caliper = model.getObjectByName(name.replace('wheel', 'caliper'));
-      this.wheels.push({ node, rest: node.quaternion.clone(), caliper });
+      this.wheels.push({ node, rest: node.quaternion.clone(), caliper, spin: 0 });
+      this.addBlurDisc(node);
     }
     this.paint = setupCarMaterials(model, cfg, null);
     // The player's own car never needs to be in its headlight shadow map (the spots sit at its nose and shine away
@@ -153,6 +163,41 @@ export class CarVisual {
     }
   }
 
+  /**
+   * Wheel motion blur. A wheel at 150 km/h turns ~20 times a second; drawn 30 times a second the spokes land on unrelated angles each
+   * frame and strobe backwards and forwards (the "walking legs" look). Like racing games, a translucent soft disc is laid over the rim
+   * face and fades in as the rotation per DRAWN frame passes ~20 degrees (update()); the tyre stays crisp. One shared material, always
+   * visible (opacity 0 at rest): a mesh that first becomes visible mid-drive would compile its pipeline then (a hitch).
+   */
+  private addBlurDisc(node: THREE.Object3D) {
+    const box = new THREE.Box3(), all = new THREE.Box3(), tmp = new THREE.Box3();
+    node.children.forEach((c) => {
+      const m = c as THREE.Mesh;
+      if (!m.isMesh) return;
+      if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
+      m.updateMatrix();   // glTF nodes: position/rotation are set but `matrix` is only composed on the first render
+      tmp.copy(m.geometry.boundingBox!).applyMatrix4(m.matrix);
+      all.union(tmp);
+      if (/rim|hub/i.test(m.name)) box.union(tmp);
+    });
+    if (box.isEmpty()) box.copy(all);
+    if (box.isEmpty()) return;
+    const radius = Math.max(box.max.y - box.min.y, box.max.z - box.min.z) / 2;
+    const side = node.position.x >= 0 ? 1 : -1;
+    const x = side > 0 ? box.max.x : box.min.x;
+    if (!this.blurMat) {
+      const m = new THREE.MeshStandardNodeMaterial({ color: 0x3a3c44, roughness: 0.55, metalness: 0.5, transparent: true, depthWrite: false });
+      const r = uv().sub(0.5).length().mul(2);   // 0 at the centre, 1 at the rim
+      m.opacityNode = smoothstep(float(1.0), float(0.8), r).mul(this.blurOp);
+      this.blurMat = m;
+    }
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(radius * 0.97, 40), this.blurMat);
+    disc.name = `wheel_blur_${node.name}`;   // 'wheel_' prefix: never dented
+    disc.rotation.y = side * Math.PI / 2;
+    disc.position.set(x + side * 0.004, (box.max.y + box.min.y) / 2, (box.max.z + box.min.z) / 2);
+    node.add(disc);
+  }
+
   setPaint(hex: string, finish: Finish) {
     const m = this.paint;
     if (!m) return;
@@ -165,7 +210,7 @@ export class CarVisual {
 
   /** Spot intensity from the switch and the damage state. */
   applyHeadlights() {
-    for (const s of this.headlights) s.intensity = this.lightsOn && !this.lightsBroken ? this.headlightIntensity : 0;
+    for (const s of this.headlights) s.intensity = this.lightsOn && !this.lightsBroken ? this.headlightIntensity * this.dim : 0;
   }
 
   static async load(cfg: CarVisualConfig, sharedHeadlights?: THREE.SpotLight[]): Promise<CarVisual> {
@@ -185,15 +230,25 @@ export class CarVisual {
     this.root.updateMatrixWorld();
     const inv = this.physInv.compose(physPos, physQuat, ONE).invert();
     const off = this.cfg.wheel_visual_offset_m ?? 0;
+    const tNow = performance.now(), dtS = Math.max(0.001, (tNow - this.lastUpdate) / 1000);
+    const first = this.lastUpdate === 0;
+    this.lastUpdate = tNow;
+    let spinFrame = 0;
     for (let i = 0; i < 4; i++) {
       const w = this.wheels[i], o = OUT.wheel(i);
       const centre = new THREE.Vector3(out[o], out[o + 1], out[o + 2]).applyMatrix4(inv).add(this.cg);
       centre.x += Math.sign(centre.x) * off;                 // model track is a little wider than physics
       this.qa.setFromAxisAngle(Y, out[o + 3]);               // steer about the car's up axis
       this.qb.setFromAxisAngle(X, out[o + 4]);               // spin about the axle
+      if (!first) spinFrame = Math.max(spinFrame, Math.abs(out[o + 4] - w.spin) / dtS * this.renderDt);   // rad turned per DRAWN frame
+      w.spin = out[o + 4];
       w.node.position.copy(centre);
       w.node.quaternion.copy(this.qa).multiply(this.qb).multiply(w.rest);
       if (w.caliper) { w.caliper.position.copy(centre); w.caliper.quaternion.copy(this.qa); }
+    }
+    if (this.blurMat) {   // blur disc: 0 below ~20 deg of rotation per drawn frame, full above ~57 deg; eased so it never flickers
+      const target = 0.92 * THREE.MathUtils.smoothstep(spinFrame, 0.35, 1.0);
+      this.blurOp.value += (target - this.blurOp.value) * 0.25;
     }
   }
 }
