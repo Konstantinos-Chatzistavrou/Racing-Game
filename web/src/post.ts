@@ -23,9 +23,10 @@ import * as SMAAModule from 'three/addons/tsl/display/SMAANode.js';
 import { fxaa } from 'three/addons/tsl/display/FXAANode.js';
 import { CURVES, GRADE, filmGrain, toneGrade, type CurveName } from './fx/grade';
 import { UltraFx } from './fx/gtaoTraa';
+import { DepthFx } from './fx/depthFx';
 import { ClusteredLighting } from 'three/addons/lighting/ClusteredLighting.js';
 
-export type PresetName = 'ultra' | 'high' | 'medium' | 'low';
+export type PresetName = 'max' | 'ultra' | 'high' | 'medium' | 'low';
 export interface Preset {
   aa: 'smaa' | 'fxaa' | 'traa' | 'none';
   /** half-resolution GTAO (ultra only; uses its own MRT scene pass, see fx/gtaoTraa.ts) */
@@ -44,7 +45,8 @@ export interface Preset {
 // Ordered best -> cheapest. The GPU cost differences are small but real on the iGPU (measured with
 // timestamp queries, see docs/web_port.md): SMAA = 3 passes, FXAA = 1, bloom = ~11 small passes.
 export const PRESETS: Record<PresetName, Preset> = {
-  ultra: { aa: 'traa', ao: true, ssr: true, bloom: 0.25, shadowEvery: 2, grade: 'full', grain: true },
+  max: { aa: 'traa', ao: true, ssr: true, bloom: 0.25, shadowEvery: 2, grade: 'full', grain: true },
+  ultra: { aa: 'smaa', ssr: true, bloom: 0.25, shadowEvery: 2, grade: 'full', grain: true },
   high: { aa: 'smaa', bloom: 0.25, shadowEvery: 2, grade: 'full', grain: true },
   medium: { aa: 'fxaa', bloom: 0.25, shadowEvery: 2, grade: 'full', grain: true },
   low: { aa: 'none', bloom: 0, shadowEvery: 3, grade: 'tone', grain: false },
@@ -52,7 +54,7 @@ export const PRESETS: Record<PresetName, Preset> = {
 /** final-image look defaults (fx/grade.ts); ?tm=agx|aces|neutral|uchimura, ?grade=0 for A/B */
 const DEFAULT_CURVE: CurveName = 'neutral';
 const BLOOM = { strength: 0.45, radius: 0.45, threshold: 1.0, knee: 0.5 };
-export const PRESET_ORDER: PresetName[] = ['ultra', 'high', 'medium', 'low'];
+export const PRESET_ORDER: PresetName[] = ['max', 'ultra', 'high', 'medium', 'low'];
 
 export interface PostOptions { bloom: boolean; aa: boolean; scale: number; preset: PresetName }
 
@@ -139,6 +141,7 @@ export class Post {
   private scaled: { setResolutionScale(s: number): unknown }[] = [];
   private smaas: ScaledSMAA[] = [];
   private ultra: UltraFx | null = null;
+  private depthFx: DepthFx | null = null;
   private sharpness = uniform(0.5);
   private _scale = 1;
   preset: PresetName;
@@ -155,10 +158,12 @@ export class Post {
     for (const name of PRESET_ORDER) {
       const pr = PRESETS[name];
       const p = new THREE.RenderPipeline(renderer);
-      const fx = pr.ao && opts.aa ? (this.ultra = new UltraFx(scene, camera, 0.5, !!pr.ssr)) : null;
-      let lit: THREE.Node<'vec4'> = fx ? fx.occlude() : color;
+      const fx = pr.ao && opts.aa ? (this.ultra = new UltraFx(scene, camera, 0.5, !!pr.ssr && q.get('ssr') !== '0', q.get('ao') !== '0')) : null;
+      const lite = !fx && pr.ssr ? (this.depthFx ??= new DepthFx(this.scenePass, camera)) : null;   // 'ultra': depth-only reflections, shared scene pass
+      const base: THREE.Node<'vec4'> = lite ? lite.color : color;
+      let lit: THREE.Node<'vec4'> = fx ? fx.occlude() : base;
       if (opts.bloom && pr.bloom > 0) {
-        const b = bloom(fx ? fx.color : color, bloomStrength, bloomRadius, bloomThreshold);
+        const b = bloom(fx ? fx.color : base, bloomStrength, bloomRadius, bloomThreshold);
         (b as unknown as { smoothWidth: { value: number } }).smoothWidth.value = bloomKnee;
         this.blooms.push({ node: b, res: pr.bloom });
         lit = lit.add(b);
@@ -194,6 +199,7 @@ export class Post {
     this._scale = s;
     this.scenePass.setResolutionScale(s);
     this.ultra?.setScale(s);
+    this.depthFx?.setScale(s);
     for (const r of this.scaled) r.setResolutionScale(s);
     for (const m of this.smaas) m.scale = s;
     for (const b of this.blooms) b.node.setResolutionScale(b.res * s);

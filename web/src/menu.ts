@@ -6,7 +6,7 @@ import { FINISHES, MODS, MOD_KEYS, SWATCHES, applyMods, modsOf, noMods, paintOf,
 import { formatLap } from './hud';
 import { probeServer } from './net';
 
-export type Gfx = 'auto' | 'ultra' | 'high' | 'medium' | 'low';
+export type Gfx = 'auto' | 'max' | 'ultra' | 'high' | 'medium' | 'low';
 export type Screen = 'none' | 'title' | 'garage' | 'pause' | 'results' | 'busy';
 export interface ResultData { total: number; best: number; laps: number[]; laps_target: number }
 
@@ -90,7 +90,7 @@ export class Menu {
       <div class="title"><div class="logo">NIGHT<span>RUN</span></div><div class="sub">A night street racing sim in your browser</div>
       <div class="btnrow"><button class="primary huge" data-act="go" ${this.tuning ? 'disabled' : ''}>Play</button>
       <button class="huge" data-act="start" ${this.tuning ? 'disabled' : ''}>Garage</button></div>
-      <div class="gfx"><span class="dim">Graphics</span>${g('auto', 'Auto')}${g('ultra', 'Ultra')}${g('high', 'High')}${g('medium', 'Medium')}${g('low', 'Low')}</div>
+      <div class="gfx"><span class="dim">Graphics</span>${g('auto', 'Auto')}${g('max', 'Max')}${g('ultra', 'Ultra')}${g('high', 'High')}${g('medium', 'Medium')}${g('low', 'Low')}</div>
       <div class="dim note">${esc(this.gfxNote)}</div></div>`;
   }
 
