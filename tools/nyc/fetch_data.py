@@ -24,12 +24,10 @@ def post(url, data, timeout):
 
 
 def query(s, w, n, e):
+    """Kept light on purpose: the public instances time out on wide unions. Buildings get their official heights from NYC Open Data anyway."""
     b = f"({s},{w},{n},{e})"
-    return (f'[out:json][timeout:120];(way["building"]{b};way["highway"]{b};way["leisure"~"park|garden|playground|pitch"]{b};'
-            f'way["landuse"~"grass|recreation_ground|retail|commercial"]{b};way["natural"~"water|wood|grassland"]{b};way["waterway"]{b};way["railway"]{b};'
-            f'way["amenity"~"parking|fountain"]{b};way["man_made"~"pier|bridge"]{b};way["bridge"="yes"]{b};way["barrier"~"wall|fence"]{b};'
-            f'node["natural"="tree"]{b};node["highway"~"traffic_signals|crossing|stop"]{b};node["amenity"~"bench|fountain|waste_basket|bicycle_parking"]{b};'
-            f'node["emergency"="fire_hydrant"]{b};node["tourism"="artwork"]{b};node["man_made"~"street_lamp|surveillance"]{b};);out tags geom;')
+    return (f'[out:json][timeout:100];(way["highway"]{b};way["building"]{b};way["leisure"~"park|garden|playground"]{b};way["natural"="water"]{b};'
+            f'node["natural"="tree"]{b};node["highway"="traffic_signals"]{b};node["emergency"="fire_hydrant"]{b};);out tags geom;')
 
 
 def fetch_box(i, j, s, w, n, e, tries=8):
