@@ -130,7 +130,7 @@ async function main() {
   let builtKey = carKey();
   let core = new CoreCar(coreJson());
   const pw = new PhysicsWorld();
-  const city = await loadCity(scene, pw, core.info.surfaces, (f) => say(`Loading city… ${Math.round(f * 100)}%`));
+  const city = await loadCity(scene, pw, core.info.surfaces, (f) => say(`Loading city… ${Math.round(f * 100)}%`), webgpu && num('bundle', 0) === 1);
   const cityLights = new CityLighting(scene, city.lights, webgpu, num('lights', 12));
   // Reflections: capture the lit city once from street level (the car isn't in the scene yet).
   {
@@ -241,6 +241,7 @@ async function main() {
   scene.add(showKey, showKey.target, showRim);
   // --- post-processing ------------------------------------------------------------------------
   const post = new Post(renderer, scene, camera, { bloom: params.get('bloom') !== '0', aa: params.get('aa') !== '0', scale, preset: PRESET_ORDER[presetIdx] });
+  post.onPreset = (p) => city.setBundled(!PRESETS[p].ao);   // render bundles only with a plain (non-MRT) scene pass
   // Headlight shadow map: only the car bodies cast into it (the city does not cast), re-rendered
   // every Nth frame by preset (stale by one frame = ~1 m of light travel at 130 km/h, invisible:
   // map and light matrix stay paired, so shadows stay anchored to their casters).
