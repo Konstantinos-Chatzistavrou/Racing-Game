@@ -59,14 +59,15 @@ export class Hud {
     $('revtrack').setAttribute('d', arc(0, 1, 110));
   }
 
-  show() { ($('hud') as HTMLElement).hidden = false; document.getElementById('loading')?.remove(); }
+  show() { ($('hud') as HTMLElement).hidden = false; document.getElementById('loading')?.remove(); this.resetFps(); }
   hide() { ($('hud') as HTMLElement).hidden = true; }
   get visible() { return !($('hud') as HTMLElement).hidden; }
   toggle() { const h = $('hud') as HTMLElement; h.hidden = !h.hidden; }
+  resetFps() { this.frames.length = 0; }
 
   /** Every frame: the dial animates at frame rate; text updates at 10 Hz. */
   /** A frame was actually drawn (the fps readout counts these, not display refreshes: the 30 fps cap skips some). */
-  rendered(now: number) { this.frames.push(now); }
+  rendered(now: number) { if (this.visible) this.frames.push(now); }
 
   update(now: number, dt: number, out: Float64Array, info: CarInfo, assists: AssistToggles, dmg: Damage | null, lap: LapInfo | null) {
     while (this.frames.length && this.frames[0] < now - 1000) this.frames.shift();
@@ -96,7 +97,8 @@ export class Hud {
 
     if (now - this.last < 100) return;   // DOM text at 10 Hz
     this.last = now;
-    const fps = (this.fps = this.frames.length);
+    const span = this.frames.length > 1 ? this.frames[this.frames.length - 1] - this.frames[0] : 0;
+    const fps = (this.fps = span >= 850 ? this.frames.length : span > 10 ? Math.round(((this.frames.length - 1) * 1000) / span) : 30);
     const worst = this.frames.reduce((m, t, i, a) => (i ? Math.max(m, t - a[i - 1]) : m), 0);
     this.text('perf', `${fps} fps   worst ${worst.toFixed(1)} ms\n${this.extra}`);
     this.text('speed', Math.round(kmh).toString());

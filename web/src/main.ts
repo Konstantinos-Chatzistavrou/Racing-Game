@@ -244,10 +244,10 @@ async function main() {
   input.onCamera = () => { if (driving()) rig.toggle(); };
   input.onHud = () => { if (driving()) hud.toggle(); };
 
-  // Showroom lights for the title/garage views: a key spot and a cool rim light that follow the
-  // camera. Intensity changes only (never visibility: that would recompile every material).
-  const showKey = new THREE.SpotLight(0xfff1e0, 0, 40, 0.8, 0.8, 2);
-  const showRim = new THREE.PointLight(0x6f8cff, 0, 16, 2);
+  // Showroom lights for the title/garage views: a soft, short-range key spot that reaches the car
+  // (~7 m) without spilling onto the building facade above it. Intensity changes only (never visibility).
+  const showKey = new THREE.SpotLight(0xfff1e0, 0, 11, 0.38, 0.9, 2);
+  const showRim = new THREE.PointLight(0x6f8cff, 0, 10, 2);
   scene.add(showKey, showKey.target, showRim);
   // --- post-processing ------------------------------------------------------------------------
   const post = new Post(renderer, scene, camera, { bloom: params.get('bloom') !== '0', aa: params.get('aa') !== '0', scale, preset: PRESET_ORDER[presetIdx] });
@@ -275,11 +275,11 @@ async function main() {
     post.warmup();
   };
   city.props.warmup(true);   // every prop LOD compiled + drawn now, not when it first comes into range
+  visual.update(pos, quat, car.out);
   await warm();
   if (ai.cars.length) {
     // draw the AI cars once in the headlight beam (their pipelines + shadow pass), then send them off
     const yaw = Math.atan2(Math.cos(s0.heading), -Math.sin(s0.heading));
-    visual.update(pos, quat, car.out);
     ai.stage(pos.clone().setY(pos.y - core.info.cgHeight - 0.05), yaw);
     ai.update(1, camera);
     await warm();
@@ -329,7 +329,7 @@ async function main() {
   // the 40 fps bar rather than 30): below it -> cheaper preset first (no hitch), then -0.1 scale
   // (min 0.5); above 55 fps with 90 % of frames < 22 ms -> +0.1 (only if nothing was lowered).
   // The settled scale and preset are stored per window size, so the next visit is one window.
-  const WINDOW = 1000, FPS_LOW = Math.max(33, capFps * 1.1), FPS_HIGH = Math.max(55, capFps * 1.8), STEP = 0.1, MIN_SCALE = 0.5, TUNE_TIMEOUT = 30000;
+  const WINDOW = 1000, FPS_LOW = Math.max(36, capFps * 1.2), FPS_HIGH = Math.max(55, capFps * 1.8), STEP = 0.1, MIN_SCALE = 0.5, TUNE_TIMEOUT = 30000;
   let winStart = 0, tuning = false, calSteps = 0, upSteps = 0, wentDown = false, tuneStart = 0;
   const startScale = () => Math.min(maxScale, Math.max(0.5, Math.round(Math.sqrt(0.9e6 / (innerWidth * innerHeight * Math.min(devicePixelRatio, 1) ** 2)) * 10) / 10));
   const setPreset = (i: number) => {
@@ -359,13 +359,14 @@ async function main() {
     stored = sc;
     applyScale(sc >= MIN_SCALE && sc <= maxScale ? sc : startScale());
     if (pr && PRESET_ORDER.includes(pr as PresetName)) { presetIdx = PRESET_ORDER.indexOf(pr as PresetName); post.preset = pr as PresetName; }
+    else if (innerWidth * innerHeight > 1.2e6 && presetIdx < 2) { setPreset(2); }
     setExtra();
   }
   const startTuning = (full: boolean) => {
     tuning = true; wentDown = false; tuneStart = performance.now();
     calSteps = full || Number.isNaN(stored) ? 3 : 1;
-    upSteps = full ? 3 : 0;
-    if (full) { setPreset(0); applyScale(startScale()); }   // starts at the best preset (ultra); the tuner steps down if the laptop can't hold it
+    upSteps = full ? 2 : 0;
+    if (full) { setPreset(2); applyScale(startScale()); }   // starts at 'high'; the tuner steps down if the device can't hold 42+ fps in the showroom
     frameTimes.length = 0;
     winStart = performance.now() + 2500;   // the cover has just appeared: let the frame pacing settle
     menu.setTuning(true);
@@ -525,7 +526,7 @@ async function main() {
       net.warmup(true);              // remote car shaders compiled now, not as a hitch when someone joins
       await warm();
       net.warmup(false);
-    } else await sleep(60);
+    } else await sleep(220);         // let any fullscreen resize settle before compiling & rendering the race view
     hud.lapTotal = sel.mode === 'race' ? sel.laps : 0;
     hud.show();
     if (wantsTouch()) enableTouch();
@@ -535,12 +536,29 @@ async function main() {
 
   /** Respawn and start: 3-2-1 in a race, straight into the car otherwise. */
   async function beginRace() {
-    menu.show('none');
     resetCar();
+    showKey.intensity = showRim.intensity = 0;
+    visual.dim = 1;
+    visual.applyHeadlights();
+    readBody(physPos, physQuat);
+    prevPos.copy(physPos);
+    prevQuat.copy(physQuat);
+    pos.copy(physPos);
+    quat.copy(physQuat);
+    visual.update(pos, quat, car.out);
     rig.snap();
+    rig.update(1, pos, quat, new THREE.Vector3(), car.out);
+    cityLights.update(1, camera);
+    city.update(camera, true);
+    await renderer.compileAsync(scene, camera);
+    for (const sh of headShadows) sh.needsUpdate = true;
+    post.render();
+    if (webgpu) await (renderer.backend as unknown as { device: GPUDevice }).device.queue.onSubmittedWorkDone();
+    menu.show('none');
+    hud.resetFps();
     input.poll();                    // drop key edges pressed in the menus
     audio.muted = false;
-    prev = performance.now(); acc = 0;
+    prev = performance.now(); acc = 0; lastRenderAt = 0;
     if (sel.mode !== 'race') { setState('race'); setExtra(); return; }
     setState('countdown');
     for (const t of ['3', '2', '1']) { menu.countdown(t); await sleep(900); if (state !== 'countdown') { menu.countdown(''); return; } }
@@ -611,11 +629,10 @@ async function main() {
     tmpR.subVectors(tmpT, tmpP).cross(tmpD.set(0, 1, 0)).setY(0).normalize();   // camera right
     camera.lookAt(tmpD.copy(tmpT).addScaledVector(tmpR, -orbit.shift));
     if (camera.fov !== 42) { camera.fov = 42; camera.updateProjectionMatrix(); }
-    showKey.position.copy(camera.position).add(tmpD.set(0, 3.5, 0));
+    showKey.position.copy(camera.position).add(tmpD.set(0, 1.1, 0));
     showKey.target.position.copy(tmpT);
-    showKey.intensity = 650;
-    showRim.position.copy(tmpT).addScaledVector(tmpP.sub(tmpT).normalize(), -5).add(tmpD.set(0, 1.4, 0));
-    showRim.intensity = 260;
+    showKey.intensity = 65;
+    showRim.intensity = 0;
   };
 
   if (import.meta.env.DEV) {
