@@ -22,6 +22,7 @@ void Vehicle::reset_motion(double v, int gear) {
     for (int w = 0; w < 4; ++w) {
         drivetrain_.wheel_omega[w] = v / cfg_.tire(w).radius;
         kappa_[w] = tan_alpha_[w] = 0;
+        tire_condition_[w] = TireCondition{};
     }
     const auto& g = cfg_.drivetrain.gear_ratios;
     if (gear >= 0 && gear < (int)g.size() && g[gear] != 0.0) {
@@ -119,17 +120,23 @@ VehicleOutput Vehicle::update(const ChassisState& s, const std::array<WheelConta
     }
 
     // ------------------------------------------------------------------ tyre kinematics
-    struct Kin { Vec3 fwd, lat, point; double vx = 0, vy = 0, load = 0, mu = 1; };
+    struct Kin {
+        Vec3 fwd, lat, normal{0, 0, 1}, point;
+        double vx = 0, vy = 0, load = 0, mu = 1, gamma = 0, re = 0.33, sigma_x = 0.12, sigma_y = 0.30;
+    };
     std::array<Kin, 4> kin;
     for (int w = 0; w < 4; ++w) {
         out.wheels[w].steer_angle = steer_angle(w);
         if (!touching[w]) continue;
         const WheelContact& c = contacts[w];
+        const AxleParams& ax = cfg_.axle(w);
+        const TireParams& tp = cfg_.tire(w);
         Kin& k = kin[w];
         double d = out.wheels[w].steer_angle;
         Vec3 heading = s.orientation.rotate({std::cos(d), std::sin(d), 0});
         k.fwd = normalized(heading - c.normal * dot(heading, c.normal));   // in the contact plane
         k.lat = cross(c.normal, k.fwd);                                    // left
+        k.normal = c.normal;
         k.point = c.point;
         Vec3 v_c = s.velocity + cross(s.angular_velocity, c.point - s.position);
         k.vx = dot(v_c, k.fwd);
@@ -138,10 +145,21 @@ VehicleOutput Vehicle::update(const ChassisState& s, const std::array<WheelConta
         // Geometric (roll-centre) load transfer: the part of lateral load transfer that goes
         // through the suspension links instead of the springs:  dFz = Fy_axle * h_rc / track.
         // A leftward force (left turn) loads the right (outer) wheel. Uses last step's Fy.
-        const AxleParams& ax = cfg_.axle(w);
         double geo = prev_axle_fy_[w < 2 ? 0 : 1] * ax.roll_centre_height / ax.track;
         k.load = std::max(0.0, k.load + (w % 2 == 0 ? -geo : geo));
         k.mu = cfg_.grip_for_surface(c.surface) * tire_condition_[w].grip_factor() * damage_.grip[w];
+        // Dynamic inclination / camber angle gamma in the tyre frame (+ = top tilted toward +left):
+        //   1. Chassis roll relative to the road normal (dot(up, k.lat))
+        //   2. Static camber + suspension bump camber gain (negative = top tilted inward)
+        //   3. Steering caster angle + kingpin inclination (caster leans outer steered wheel into turn)
+        double roll_gamma = std::asin(clamp(dot(up, k.lat), -0.5, 0.5));
+        double susp_camber = ax.static_camber_deg * kPi / 180.0 +
+                             ax.camber_gain_rad_per_m * (comp[w] - cfg_.wheels[w].static_compression);
+        double caster = ax.caster_deg * kPi / 180.0, kpi = ax.kpi_deg * kPi / 180.0;
+        double side = (w % 2 == 0) ? -1.0 : 1.0;   // FL/RL = -1 (left), FR/RR = +1 (right)
+        k.gamma = clamp(roll_gamma - side * susp_camber + caster * std::sin(d) - side * kpi * (1.0 - std::cos(d)), -0.35, 0.35);
+        k.re = effective_rolling_radius(tp, k.load);
+        relaxation_lengths(tp, k.load, k.gamma, k.sigma_x, k.sigma_y);
     }
 
     // ------------------------------------------------------------------ chassis telemetry
@@ -204,7 +222,7 @@ VehicleOutput Vehicle::update(const ChassisState& s, const std::array<WheelConta
     // for any step size).
     const int n_sub = std::max(1, (int)std::ceil(dt / max_substep - 1e-9));
     const double h = dt / n_sub;
-    std::array<double, 4> fx_sum{}, fy_sum{};
+    std::array<double, 4> fx_sum{}, fy_sum{}, mz_sum{};
     DrivetrainInput din{input_.throttle, input_.clutch, input_.brake, input_.handbrake, input_.gear,
                         damage_.engine_power};
     din.brake_power_scale = damage_.brakes;
@@ -234,17 +252,22 @@ VehicleOutput Vehicle::update(const ChassisState& s, const std::array<WheelConta
             if (!touching[w]) {
                 kappa_[w] *= 0.9;
                 tan_alpha_[w] *= 0.9;
+                tire_condition_[w].update(0.0, 0.0, length(s.velocity), h);
                 continue;
             }
             const Kin& k = kin[w];
-            double v_sx = drivetrain_.wheel_omega[w] * tp.radius - k.vx;
-            kappa_[w] = (kappa_[w] + h * v_sx / tp.relax_x) / (1.0 + h * std::abs(k.vx) / tp.relax_x);
-            tan_alpha_[w] = (tan_alpha_[w] + h * (-k.vy) / tp.relax_y) / (1.0 + h * std::abs(k.vx) / tp.relax_y);
-            TireForces f = magic_formula(tp, kappa_[w], tan_alpha_[w], k.load, k.mu);
+            double v_sx = drivetrain_.wheel_omega[w] * k.re - k.vx;
+            kappa_[w] = (kappa_[w] + h * v_sx / k.sigma_x) / (1.0 + h * std::abs(k.vx) / k.sigma_x);
+            tan_alpha_[w] = (tan_alpha_[w] + h * (-k.vy) / k.sigma_y) / (1.0 + h * std::abs(k.vx) / k.sigma_y);
+            TireForces f = magic_formula(tp, kappa_[w], tan_alpha_[w], k.load, k.mu, k.gamma);
             fx_sum[w] += f.fx;
             fy_sum[w] += f.fy;
-            tyre_t[w] = -f.fx * tp.radius;                        // road pushes back on the wheel
-            roll_t[w] = tp.rolling_resistance * k.load * tp.radius;
+            mz_sum[w] += f.mz;
+            double slip_power = std::abs(f.fx * v_sx) + std::abs(f.fy * k.vy);
+            tire_condition_[w].update(slip_power, k.load, std::hypot(k.vx, k.vy), h);
+            tyre_t[w] = -f.fx * k.re;                                // road pushes back on the wheel
+            double c_rr = tp.rolling_resistance + tp.rolling_resistance_v2 * (k.vx / 30.0) * (k.vx / 30.0);
+            roll_t[w] = c_rr * k.load * k.re;
         }
         // ---- ASSIST: ABS. Per wheel, adjust brake pressure to hold the slip ratio at the target
         // (near the tyre's force peak). Integral control on slip error:
@@ -293,14 +316,14 @@ VehicleOutput Vehicle::update(const ChassisState& s, const std::array<WheelConta
         wo.condition = tire_condition_[w];
         if (!touching[w]) continue;
         const Kin& k = kin[w];
-        double fx = fx_sum[w] / n_sub, fy = fy_sum[w] / n_sub;
+        double fx = fx_sum[w] / n_sub, fy = fy_sum[w] / n_sub, mz = mz_sum[w] / n_sub;
         // Low-speed damping (below ~2 m/s): the relaxation-length model acts like an undamped
         // spring at standstill; real tyres have internal damping. Blends out with speed.
         double speed = std::hypot(k.vx, k.vy);
         double blend = clamp(1.0 - speed / 2.0, 0.0, 1.0);
         if (blend > 0) {
             double c = 2.0 * k.load;   // N per (m/s)
-            fx += blend * c * (drivetrain_.wheel_omega[w] * tp.radius - k.vx);
+            fx += blend * c * (drivetrain_.wheel_omega[w] * k.re - k.vx);
             fy += blend * c * (-k.vy);
             double fmax = std::max(tp.mu_x, tp.mu_y) * k.mu * k.load;   // never exceed friction
             double fm = std::hypot(fx, fy);
@@ -309,21 +332,25 @@ VehicleOutput Vehicle::update(const ChassisState& s, const std::array<WheelConta
         wo.contact = true;
         wo.load = k.load;
         wo.compression = comp[w];
+        wo.camber = k.gamma;
         wo.fx = fx;
         wo.fy = fy;
+        wo.mz = mz;
         wo.contact_point = k.point;
         wo.force_world = k.fwd * fx + k.lat * fy;
         wo.grip_limit = std::max(tp.mu_x, tp.mu_y) * k.mu * k.load;
         // Suspension force acts along the body's up axis; longitudinal tyre force at the contact
         // patch; lateral tyre force at the roll-centre height (models suspension geometry: a
-        // higher roll centre means less body roll for the same cornering force).
+        // higher roll centre means less body roll for the same cornering force); residual
+        // self-aligning torque Mz (after kingpin caster trail & steering compliance) acts about
+        // the contact normal.
         Vec3 f_susp = up * susp_force[w];
         Vec3 f_long = k.fwd * fx;
         Vec3 f_lat = k.lat * fy;
         Vec3 p_lat = k.point + up * cfg_.axle(w).roll_centre_height;
         force += f_susp + f_long + f_lat;
         axle_fy[w < 2 ? 0 : 1] += fy;
-        torque += cross(k.point - s.position, f_susp + f_long) + cross(p_lat - s.position, f_lat);
+        torque += cross(k.point - s.position, f_susp + f_long) + cross(p_lat - s.position, f_lat) + k.normal * (0.15 * mz);
     }
 
     prev_axle_fy_ = axle_fy;

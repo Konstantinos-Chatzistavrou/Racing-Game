@@ -128,7 +128,7 @@ export class Menu {
     const opts = sel.mode === 'race' ? `<div class="opts"><span class="dim">Laps</span>${laps}</div>`
       : sel.mode === 'online' ? `<div class="opts"><span class="dim">Server</span><input id="server" type="text" value="${esc(sel.server)}" spellcheck="false" autocomplete="off" />
         <button class="chip" data-act="probe">Check</button><span id="servernote" class="dim">${esc(this.serverNote)}</span></div>`
-      : '<div class="opts"><span class="dim">Drive the night city at your own pace. Traffic on the road, laps counted forever.</span></div>';
+      : '<div class="opts"><span class="dim">Drive the night city at your own pace. Laps counted forever.</span></div>';
     const go = { free: 'Free run', race: `Race · ${sel.laps} lap${sel.laps > 1 ? 's' : ''}`, online: 'Join server' }[sel.mode];
     return `<div class="garage">
       <div class="g-top"><button data-act="back">← Menu</button><div class="g-title">Garage</div></div>

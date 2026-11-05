@@ -33,6 +33,10 @@ AxleParams parse_axle(const json& j, const std::string& ctx) {
     a.max_steer_deg = num_or(j, "max_steer_deg", 0);
     a.steer_compliance = num_or(j, "steer_compliance_deg_per_kn", 0) * kPi / 180.0 / 1000.0;
     a.ackermann = num_or(j, "ackermann", 0);
+    a.static_camber_deg = num_or(j, "static_camber_deg", a.max_steer_deg > 0 ? -1.5 : -1.6);
+    a.camber_gain_rad_per_m = num_or(j, "camber_gain_deg_per_m", -45.0) * kPi / 180.0;
+    a.caster_deg = num_or(j, "caster_deg", a.max_steer_deg > 0 ? 6.8 : 0.0);
+    a.kpi_deg = num_or(j, "kpi_deg", a.max_steer_deg > 0 ? 7.0 : 0.0);
     a.handbrake_torque = num_or(j, "handbrake_torque_nm", 0);
     return a;
 }
@@ -42,25 +46,67 @@ TireParams parse_tire(const json& j, const std::string& ctx) {
     t.radius = num(j, "radius_m", ctx);
     t.inertia = num(j, "inertia_kgm2", ctx);
     t.fz0 = num(j, "fz0_n", ctx);
+    t.vertical_stiffness = num_or(j, "vertical_stiffness_n_per_m", 220000);
     const json& lo = j.at("longitudinal");
     t.cx = num(lo, "C", ctx + ".longitudinal");
     t.mu_x = num(lo, "mu", ctx + ".longitudinal");
     t.pdx2 = num(lo, "load_sensitivity", ctx + ".longitudinal");
+    t.pdx3 = num_or(lo, "camber_sensitivity", t.pdx3);
     t.ex = num(lo, "E", ctx + ".longitudinal");
+    t.pex2 = num_or(lo, "pEx2", t.pex2);
+    t.pex3 = num_or(lo, "pEx3", t.pex3);
+    t.pex4 = num_or(lo, "pEx4", t.pex4);
     t.kx = num(lo, "slip_stiffness_per_load", ctx + ".longitudinal");
+    t.pkx2 = num_or(lo, "pKx2", t.pkx2);
+    t.pkx3 = num_or(lo, "pKx3", t.pkx3);
+    t.phx1 = num_or(lo, "pHx1", t.phx1);
+    t.phx2 = num_or(lo, "pHx2", t.phx2);
+    t.pvx1 = num_or(lo, "pVx1", t.pvx1);
+    t.pvx2 = num_or(lo, "pVx2", t.pvx2);
     const json& la = j.at("lateral");
     t.cy = num(la, "C", ctx + ".lateral");
     t.mu_y = num(la, "mu", ctx + ".lateral");
     t.pdy2 = num(la, "load_sensitivity", ctx + ".lateral");
+    t.pdy3 = num_or(la, "camber_sensitivity", t.pdy3);
     t.ey = num(la, "E", ctx + ".lateral");
+    t.pey2 = num_or(la, "pEy2", t.pey2);
+    t.pey3 = num_or(la, "pEy3", t.pey3);
+    t.pey4 = num_or(la, "pEy4", t.pey4);
     t.pky1 = num(la, "cornering_stiffness_per_fz0", ctx + ".lateral");
     t.pky2 = num(la, "cornering_stiffness_peak_load", ctx + ".lateral");
+    t.pky3 = num_or(la, "camber_stiffness_factor", t.pky3);
+    t.phy1 = num_or(la, "pHy1", t.phy1);
+    t.phy2 = num_or(la, "pHy2", t.phy2);
+    t.phy3 = num_or(la, "pHy3", t.phy3);
+    t.pvy1 = num_or(la, "pVy1", t.pvy1);
+    t.pvy2 = num_or(la, "pVy2", t.pvy2);
+    t.pvy3 = num_or(la, "pVy3", t.pvy3);
+    t.pvy4 = num_or(la, "pVy4", t.pvy4);
     const json& c = j.at("combined");
     t.rbx1 = num(c, "rBx1", ctx); t.rbx2 = num(c, "rBx2", ctx); t.rcx1 = num(c, "rCx1", ctx);
+    t.rbx3 = num_or(c, "rBx3", t.rbx3); t.rex1 = num_or(c, "rEx1", t.rex1); t.rex2 = num_or(c, "rEx2", t.rex2); t.rhx1 = num_or(c, "rHx1", t.rhx1);
     t.rby1 = num(c, "rBy1", ctx); t.rby2 = num(c, "rBy2", ctx); t.rcy1 = num(c, "rCy1", ctx);
+    t.rby3 = num_or(c, "rBy3", t.rby3); t.rby4 = num_or(c, "rBy4", t.rby4); t.rey1 = num_or(c, "rEy1", t.rey1); t.rey2 = num_or(c, "rEy2", t.rey2);
+    t.rhy1 = num_or(c, "rHy1", t.rhy1); t.rhy2 = num_or(c, "rHy2", t.rhy2);
+    t.rvy1 = num_or(c, "rVy1", t.rvy1); t.rvy2 = num_or(c, "rVy2", t.rvy2); t.rvy3 = num_or(c, "rVy3", t.rvy3);
+    t.rvy4 = num_or(c, "rVy4", t.rvy4); t.rvy5 = num_or(c, "rVy5", t.rvy5); t.rvy6 = num_or(c, "rVy6", t.rvy6);
+    if (j.contains("aligning")) {
+        const json& al = j.at("aligning");
+        t.qbz1 = num_or(al, "qBz1", t.qbz1); t.qbz2 = num_or(al, "qBz2", t.qbz2); t.qbz3 = num_or(al, "qBz3", t.qbz3);
+        t.qbz4 = num_or(al, "qBz4", t.qbz4); t.qbz5 = num_or(al, "qBz5", t.qbz5);
+        t.qcz1 = num_or(al, "qCz1", t.qcz1);
+        t.qdz1 = num_or(al, "qDz1", t.qdz1); t.qdz2 = num_or(al, "qDz2", t.qdz2); t.qdz3 = num_or(al, "qDz3", t.qdz3); t.qdz4 = num_or(al, "qDz4", t.qdz4);
+        t.qez1 = num_or(al, "qEz1", t.qez1); t.qez2 = num_or(al, "qEz2", t.qez2); t.qez3 = num_or(al, "qEz3", t.qez3);
+        t.qez4 = num_or(al, "qEz4", t.qez4); t.qez5 = num_or(al, "qEz5", t.qez5);
+        t.qhz1 = num_or(al, "qHz1", t.qhz1); t.qhz2 = num_or(al, "qHz2", t.qhz2); t.qhz3 = num_or(al, "qHz3", t.qhz3); t.qhz4 = num_or(al, "qHz4", t.qhz4);
+        t.qbz9 = num_or(al, "qBz9", t.qbz9); t.qbz10 = num_or(al, "qBz10", t.qbz10);
+        t.qdz6 = num_or(al, "qDz6", t.qdz6); t.qdz7 = num_or(al, "qDz7", t.qdz7); t.qdz8 = num_or(al, "qDz8", t.qdz8); t.qdz9 = num_or(al, "qDz9", t.qdz9);
+        t.ssz1 = num_or(al, "sSz1", t.ssz1); t.ssz2 = num_or(al, "sSz2", t.ssz2); t.ssz3 = num_or(al, "sSz3", t.ssz3); t.ssz4 = num_or(al, "sSz4", t.ssz4);
+    }
     t.relax_x = num(j, "relaxation_length_long_m", ctx);
     t.relax_y = num(j, "relaxation_length_lat_m", ctx);
     t.rolling_resistance = num(j, "rolling_resistance", ctx);
+    t.rolling_resistance_v2 = num_or(j, "rolling_resistance_v2", 0.001);
     return t;
 }
 
