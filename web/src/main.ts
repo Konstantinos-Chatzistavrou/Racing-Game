@@ -171,8 +171,9 @@ async function main() {
   // Rapier only indexes new colliders for queries during a step: step once so the spawn probe
   // below can see the city (without this the first spawn misses the road and drops 3 m).
   pw.world.step();
-  say('Loading traffic…');
-  const ai = await AiTraffic.create(scene, pw, defaultCfg, route.samples, Math.max(0, Math.min(3, num('ai', 3))), params.get('blackcar') === '1');
+  const aiCount = Math.max(0, Math.min(3, num('ai', 0)));
+  if (aiCount > 0) say('Loading traffic…');
+  const ai = await AiTraffic.create(scene, pw, defaultCfg, route.samples, aiCount, params.get('blackcar') === '1');
 
   // Start line = first route sample (core coords: Z-up) -> three (x, z, -y).
   const s0 = route.samples[0];

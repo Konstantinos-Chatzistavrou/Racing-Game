@@ -7,31 +7,61 @@
 
 namespace rs {
 
-// Pacejka "Magic Formula" coefficients (MF 5.2 subset). Notation follows Pacejka,
-// "Tire and Vehicle Dynamics" (3rd ed.), chapter 4. See docs/physics.md for the equations.
+// Pacejka "Magic Formula" coefficients (MF 5.2 / 6.1). Notation follows Pacejka,
+// "Tire and Vehicle Dynamics" (3rd ed.), chapter 4 & 7. See docs/physics.md for the equations.
 struct TireParams {
-    double radius = 0.33;             // m, loaded radius used for rolling (simplification)
+    double radius = 0.33;             // m, nominal unloaded/reference radius R0
     double inertia = 1.0;             // kg m^2, wheel + tyre + brake disc about the axle
-    double fz0 = 4000;                // N, nominal load the coefficients refer to
-    // longitudinal (pure slip)
-    double cx = 1.65;                 // shape factor C
-    double mu_x = 1.25;               // peak friction coefficient at Fz0
-    double pdx2 = -0.08;              // load sensitivity of mu: mu = mu0 (1 + pdx2 dfz)
-    double ex = 0.1;                  // curvature factor E
-    double kx = 25.0;                 // slip stiffness per unit load: Kx = kx * Fz  [1/-]
-    // lateral (pure slip)
-    double cy = 1.3;
-    double mu_y = 1.2;
-    double pdy2 = -0.1;
-    double ey = -0.4;
+    double fz0 = 4000;                // N, nominal load Fz0 the coefficients refer to
+    double vertical_stiffness = 220000; // N/m, radial carcass stiffness C_Fz (effective rolling radius)
+    // longitudinal (pure slip, MF 5.2)
+    double cx = 1.65;                 // shape factor pCx1
+    double mu_x = 1.25;               // peak friction coefficient pDx1 at Fz0
+    double pdx2 = -0.08;              // load sensitivity of mu: pDx2 (mu drops with load)
+    double pdx3 = 0.0;                // camber sensitivity of longitudinal friction: pDx3
+    double ex = 0.1;                  // curvature factor pEx1 at Fz0
+    double pex2 = -0.12;              // variation of curvature Ex with dfz
+    double pex3 = -0.05;              // variation of curvature Ex with dfz^2
+    double pex4 = 0.0;                // driving/braking asymmetry of Ex
+    double kx = 25.0;                 // slip stiffness per unit load pKx1: Kx0 = pKx1 * Fz  [1/-]
+    double pkx2 = -0.06;              // variation of slip stiffness with dfz
+    double pkx3 = 0.08;               // exponential load sensitivity of slip stiffness
+    double phx1 = 0.0, phx2 = 0.0;    // horizontal shift SHx
+    double pvx1 = 0.0, pvx2 = 0.0;    // vertical shift SVx / Fz
+    // lateral (pure slip + camber, MF 5.2)
+    double cy = 1.3;                  // shape factor pCy1
+    double mu_y = 1.2;                // peak lateral friction pDy1 at Fz0, gamma = 0
+    double pdy2 = -0.1;               // load sensitivity of lateral mu: pDy2
+    double pdy3 = 0.8;                // camber sensitivity of peak lateral friction: pDy3 (1 - pDy3 gamma^2)
+    double ey = -0.4;                 // curvature factor pEy1 at Fz0
+    double pey2 = -0.04;              // variation of curvature Ey with dfz
+    double pey3 = 0.0;                // zero-camber asymmetry of Ey
+    double pey4 = -0.5;               // variation of curvature Ey with camber gamma
     double pky1 = 20.0;               // cornering stiffness peak / Fz0  [1/rad]
     double pky2 = 2.0;                // load (in Fz0 units) at which cornering stiffness peaks
-    // combined slip weighting (MF 5.2: rBx1, rBx2, rCx1, rBy1, rBy2, rCy1)
-    double rbx1 = 12.0, rbx2 = 10.0, rcx1 = 1.0;
-    double rby1 = 10.0, rby2 = 10.0, rcy1 = 1.0;
-    // transient behaviour: relaxation lengths (m). Slip builds up over this rolled distance.
+    double pky3 = 0.12;               // variation of cornering stiffness with |gamma|
+    double phy1 = 0.0, phy2 = 0.0;    // load-dependent lateral horizontal shift
+    double phy3 = 0.08;               // camber contribution to horizontal shift SHy
+    double pvy1 = 0.0, pvy2 = 0.0;    // load-dependent lateral vertical shift
+    double pvy3 = 0.25;               // camber thrust vertical shift at Fz0
+    double pvy4 = -0.08;              // variation of camber thrust vertical shift with dfz
+    // combined slip weighting (MF 5.2: Gxa, Gyk, SVyk)
+    double rbx1 = 12.0, rbx2 = 10.0, rbx3 = 0.0, rcx1 = 1.0, rex1 = -0.05, rex2 = -0.02, rhx1 = 0.0;
+    double rby1 = 10.0, rby2 = 10.0, rby3 = 0.0, rby4 = 0.0, rcy1 = 1.0, rey1 = -0.05, rey2 = -0.02, rhy1 = 0.0, rhy2 = 0.0;
+    double rvy1 = 0.0, rvy2 = 0.0, rvy3 = -0.15, rvy4 = 14.0, rvy5 = 1.9, rvy6 = 10.0;
+    // self-aligning moment Mz (pneumatic trail t + residual torque Mzr + Fx arm s, MF 5.2)
+    double qbz1 = 10.5, qbz2 = -1.4, qbz3 = -0.4, qbz4 = 0.0, qbz5 = 0.25;
+    double qcz1 = 1.18;
+    double qdz1 = 0.11, qdz2 = -0.02, qdz3 = 0.0, qdz4 = -1.0;
+    double qez1 = -1.6, qez2 = -0.35, qez3 = 0.0, qez4 = 0.15, qez5 = -0.7;
+    double qhz1 = 0.0, qhz2 = 0.0, qhz3 = 0.005, qhz4 = -0.005;
+    double qbz9 = 12.0, qbz10 = 0.75;
+    double qdz6 = 0.0, qdz7 = 0.0, qdz8 = 0.14, qdz9 = 0.04;
+    double ssz1 = 0.0, ssz2 = 0.02, ssz3 = 0.5, ssz4 = -0.15;
+    // transient behaviour: nominal relaxation lengths at Fz0 (m). Scaled dynamically by K(Fz)/C_F.
     double relax_x = 0.12, relax_y = 0.30;
-    double rolling_resistance = 0.012;   // F_rr = c_rr * Fz
+    double rolling_resistance = 0.012;   // F_rr = (c_rr0 + c_rr2 * (v/30)^2) * Fz
+    double rolling_resistance_v2 = 0.001; // speed-dependent rolling hysteresis
 };
 
 struct WheelGeom {
@@ -54,6 +84,10 @@ struct AxleParams {
     double max_steer_deg = 0;         // >0 = steered axle
     double steer_compliance = 0;      // rad per N of axle lateral force (bushing/rack flex)
     double ackermann = 0.0;           // 0 = parallel steer, 1 = full Ackermann
+    double static_camber_deg = -1.5;  // deg, negative = top of wheel tilted inward
+    double camber_gain_rad_per_m = -0.785; // rad/m of suspension compression (~-45 deg/m double-wishbone camber recovery)
+    double caster_deg = 6.8;          // deg, steering axis caster angle (induces negative camber on outer steered wheel)
+    double kpi_deg = 7.0;             // deg, kingpin inclination angle
     double handbrake_torque = 0;      // N m per wheel
     bool driven = false;
 };

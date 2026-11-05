@@ -56,14 +56,16 @@ struct WheelOutput {
     double compression = 0;          // m, spring compression (0 = full droop)
     double slip_ratio = 0;           // kappa (relaxed)
     double slip_angle = 0;           // rad (relaxed)
+    double camber = 0;               // rad, inclination angle gamma in tyre frame (+ = top tilted left)
     double fx = 0, fy = 0;           // N, tyre-frame forces (averaged over sub-steps)
+    double mz = 0;                   // N m, self-aligning moment about contact normal
     double angular_velocity = 0;     // rad/s about the axle (+ = rolling forward)
     double steer_angle = 0;          // rad
     Vec3 centre_world;               // wheel centre position (for visuals)
     Vec3 contact_point;              // world, where the tyre touches the ground
     Vec3 force_world;                // world, tyre force in the ground plane (Fx + Fy), N
     double grip_limit = 0;           // N, approx. max friction force (peak mu * surface * load)
-    TireCondition condition;         // hook: temperature/wear (not simulated yet)
+    TireCondition condition;         // tyre temperature & wear state
 };
 
 struct VehicleOutput {

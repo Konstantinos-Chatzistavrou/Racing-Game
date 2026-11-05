@@ -49,11 +49,22 @@
   "$defs": {
     "axle": {
       "type": "object",
-      "properties": { "steer_compliance_deg_per_kn": { "type": "number", "minimum": 0 } },
+      "properties": {
+        "steer_compliance_deg_per_kn": { "type": "number", "minimum": 0 },
+        "static_camber_deg": { "type": "number" },
+        "camber_gain_deg_per_m": { "type": "number" },
+        "caster_deg": { "type": "number" },
+        "kpi_deg": { "type": "number" }
+      },
       "required": ["track_m", "spring_rate_n_per_m", "spring_rest_length_m", "max_compression_m", "damper_bump_ns_per_m", "damper_rebound_ns_per_m", "anti_roll_rate_n_per_m", "roll_centre_height_m"]
     },
     "tire": {
       "type": "object",
+      "properties": {
+        "vertical_stiffness_n_per_m": { "type": "number", "exclusiveMinimum": 0 },
+        "rolling_resistance_v2": { "type": "number", "minimum": 0 },
+        "aligning": { "type": "object", "additionalProperties": { "type": "number" } }
+      },
       "required": ["radius_m", "inertia_kgm2", "fz0_n", "longitudinal", "lateral", "combined", "relaxation_length_long_m", "relaxation_length_lat_m", "rolling_resistance"]
     },
     "diff": {

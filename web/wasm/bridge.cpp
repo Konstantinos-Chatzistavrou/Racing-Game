@@ -130,6 +130,7 @@ EMSCRIPTEN_KEEPALIVE void rs_rays(int id) {
 //     [113] abs active  [114] tc active  [115] esc active
 //     buf[120 + 12 i]: wheel i centre xyz (three world), steer rad, spin rad, contact, load N,
 //                      slip ratio, slip angle rad, compression m, angular velocity rad/s, surface
+//     buf[168 + 4 i]:  wheel i self-aligning torque Mz (N m), camber rad, tread temperature C, wear 0..1
 EMSCRIPTEN_KEEPALIVE void rs_step(int id, double dt) {
     Car& c = *g_cars[id];
     double* b = c.buf.data();
@@ -195,6 +196,11 @@ EMSCRIPTEN_KEEPALIVE void rs_step(int id, double dt) {
         o[9] = w.compression;
         o[10] = w.angular_velocity;
         o[11] = contacts[i].surface;
+        double* ext = b + 168 + 4 * i;
+        ext[0] = w.mz;
+        ext[1] = w.camber;
+        ext[2] = w.condition.temperature_c;
+        ext[3] = w.condition.wear;
     }
 }
 

@@ -1,65 +1,239 @@
 #include "rs/tire.hpp"
 #include "rs/math.hpp"
+#include <algorithm>
 #include <cmath>
 
 namespace rs {
 namespace {
 
-// The Magic Formula itself:  y(x) = D sin(C atan(B x - E (B x - atan(B x))))
+// The Magic Formula itself (Pacejka MF 5.2 / 6.1):
+//   y(x) = D sin(C atan(B x - E (B x - atan(B x))))
 //   D = peak value, C = shape (how the curve falls after the peak), B = stiffness factor,
-//   E = curvature near the peak. The slope at the origin is B*C*D (the "slip stiffness").
+//   E = curvature near the peak (constrained <= 1 so the atan argument is strictly monotonic).
+//   The slope at the origin is B*C*D (the slip/cornering stiffness K).
 double mf(double x, double B, double C, double D, double E) {
     double bx = B * x;
-    return D * std::sin(C * std::atan(bx - E * (bx - std::atan(bx))));
+    double e = std::min(E, 1.0);
+    return D * std::sin(C * std::atan(bx - e * (bx - std::atan(bx))));
+}
+
+// Cosine Magic Formula used by Pacejka MF 5.2 for weighting functions Gxa, Gyk and pneumatic trail t:
+//   G(x) = cos(C atan(B x - E (B x - atan(B x))))
+double mf_cos(double x, double B, double C, double E) {
+    double bx = B * x;
+    double e = std::min(E, 1.0);
+    return std::cos(C * std::atan(bx - e * (bx - std::atan(bx))));
 }
 
 // Normalised load change dfz = (Fz - Fz0) / Fz0, used for load sensitivity.
-double dfz_of(const TireParams& p, double fz) { return (fz - p.fz0) / p.fz0; }
+double dfz_of(const TireParams& p, double fz) { return (fz - p.fz0) / std::max(p.fz0, 1.0); }
+
+// Longitudinal slip stiffness K_xk (MF 5.2 eq. 4.E13):
+//   K_xk = Fz (pKx1 + pKx2 dfz) exp(pKx3 dfz)
+double kx_of(const TireParams& p, double fz, double dfz) {
+    double factor = std::max(0.2, 1.0 + (p.pkx2 / std::max(p.kx, 1e-6)) * dfz);
+    return p.kx * fz * factor * std::exp(clamp(p.pkx3 * dfz, -1.0, 1.0));
+}
+
+// Lateral cornering stiffness K_ya (MF 5.2 eq. 4.E25):
+//   K_ya = pKy1 Fz0 sin(2 atan(Fz / (pKy2 Fz0))) (1 - pKy3 |gamma|)
+// Rises with load, then saturates: doubling load does NOT double cornering stiffness.
+double ky_of(const TireParams& p, double fz, double gamma) {
+    double camber_loss = std::max(0.2, 1.0 - p.pky3 * std::abs(gamma));
+    return p.pky1 * p.fz0 * std::sin(2.0 * std::atan(fz / (p.pky2 * p.fz0))) * camber_loss;
+}
 
 }  // namespace
 
-double mf_pure_fx(const TireParams& p, double kappa, double fz, double mu_scale) {
+void TireCondition::update(double slip_power_w, double load_n, double speed_mps, double dt) {
+    if (dt <= 0) return;
+    // Tread thermal balance:
+    //   - Frictional dissipation P_slip = |Fx * v_sx| + |Fy * v_sy| heats the surface & bulk tread
+    //   - Rolling hysteresis adds mild internal warmth proportional to load * speed
+    //   - Convective airflow + road conduction cool the tread toward equilibrium (~78 C under normal running)
+    constexpr double kThermalCapJPerC = 18000.0;   // effective thermal heat capacity of tread layer (J/C)
+    constexpr double kEquilibriumC = 78.0;         // rolling equilibrium temperature (C)
+    double cooling_rate = 0.03 + 0.0022 * std::abs(speed_mps);  // 1/s, rises with airflow speed
+    double hysteresis_w = 0.03 * load_n * std::abs(speed_mps);
+    double dtemp = ((slip_power_w + hysteresis_w) / kThermalCapJPerC) - cooling_rate * (temperature_c - kEquilibriumC);
+    temperature_c = clamp(temperature_c + dtemp * dt, 20.0, 160.0);
+    // Wear accumulates slowly from severe sliding work above normal cornering threshold.
+    if (slip_power_w > 18000.0) {
+        wear = clamp(wear + (slip_power_w - 18000.0) * 1.2e-9 * dt, 0.0, 1.0);
+    }
+}
+
+double TireCondition::grip_factor() const {
+    // Optimal operating window [60 C, 110 C] gives peak grip 1.0.
+    // Cold tyres (< 60 C) or overheated/greasy tyres (> 110 C) lose grip parabolically.
+    double temp_grip = 1.0;
+    if (temperature_c < 60.0) {
+        double d = (60.0 - temperature_c) / 40.0;
+        temp_grip = std::max(0.88, 1.0 - 0.10 * d * d);
+    } else if (temperature_c > 110.0) {
+        double d = (temperature_c - 110.0) / 50.0;
+        temp_grip = std::max(0.85, 1.0 - 0.12 * d * d);
+    }
+    double wear_grip = 1.0 - 0.15 * wear * wear;
+    return temp_grip * wear_grip;
+}
+
+double effective_rolling_radius(const TireParams& p, double fz) {
+    if (fz <= 0 || p.vertical_stiffness <= 0) return p.radius;
+    // Pacejka Ch. 4: under vertical load change (Fz - Fz0), radial deflection changes by d_rho = (Fz - Fz0)/C_Fz,
+    // and the effective rolling radius R_e shifts by ~1/3 of the radial deflection due to belt inextensibility.
+    double d_rho = (fz - p.fz0) / p.vertical_stiffness;
+    return clamp(p.radius - (1.0 / 3.0) * d_rho, p.radius * 0.85, p.radius * 1.05);
+}
+
+void relaxation_lengths(const TireParams& p, double fz, double gamma, double& sigma_x, double& sigma_y) {
+    if (fz <= 0) {
+        sigma_x = p.relax_x;
+        sigma_y = p.relax_y;
+        return;
+    }
+    // Pacejka Ch. 7 stretched-string / carcass compliance theorem:
+    //   sigma_x(Fz) = K_xk(Fz) / C_Fx,   sigma_y(Fz, gamma) = K_ya(Fz, gamma) / C_Fy
+    // where C_Fx = K_xk(Fz0) / sigma_x0 and C_Fy = K_ya(Fz0, 0) / sigma_y0 are the carcass stiffnesses.
+    double dfz = dfz_of(p, fz);
+    double kx0 = std::max(kx_of(p, p.fz0, 0.0), 1.0);
+    double ky0 = std::max(ky_of(p, p.fz0, 0.0), 1.0);
+    double kx = kx_of(p, fz, dfz);
+    double ky = ky_of(p, fz, gamma);
+    sigma_x = clamp(p.relax_x * (kx / kx0), 0.03, p.relax_x * 2.5);
+    sigma_y = clamp(p.relax_y * (ky / ky0), 0.05, p.relax_y * 2.5);
+}
+
+double mf_pure_fx(const TireParams& p, double kappa, double fz, double mu_scale, double gamma) {
     if (fz <= 0) return 0;
     double dfz = dfz_of(p, fz);
-    // Load sensitivity: the friction coefficient DROPS as load rises (mu = mu0 (1 + pdx2 dfz),
-    // pdx2 < 0). This is why load transfer reduces total grip and is the root of under/oversteer
-    // tuning through roll stiffness distribution.
-    double mu = p.mu_x * (1.0 + p.pdx2 * dfz) * mu_scale;
+    // Load sensitivity & camber sensitivity (MF 5.2 eq. 4.E11):
+    //   mu_x = (pDx1 + pDx2 dfz) (1 - pDx3 gamma^2) * mu_scale
+    // Note: in our config, p.pdx2 is normalised by p.mu_x so mu = p.mu_x * (1 + p.pdx2 * dfz).
+    double mu = p.mu_x * std::max(0.2, 1.0 + p.pdx2 * dfz) * std::max(0.2, 1.0 - p.pdx3 * gamma * gamma) * mu_scale;
     double D = mu * fz;
-    double K = p.kx * fz;                     // longitudinal slip stiffness, N per unit slip
+    double K = kx_of(p, fz, dfz);
     double B = K / (p.cx * D + 1e-9);
-    return mf(kappa, B, p.cx, D, p.ex);
+    double shx = p.phx1 + p.phx2 * dfz;
+    double svx = fz * (p.pvx1 + p.pvx2 * dfz) * mu_scale;
+    double kx = kappa + shx;
+    // Load-dependent curvature E_x (MF 5.2 eq. 4.E12):
+    double ex = (p.ex + p.pex2 * dfz + p.pex3 * dfz * dfz) * (1.0 - p.pex4 * sign(kx));
+    return mf(kx, B, p.cx, D, ex) + svx;
 }
 
-double mf_pure_fy(const TireParams& p, double alpha, double fz, double mu_scale) {
+double mf_pure_fy(const TireParams& p, double alpha, double fz, double mu_scale, double gamma) {
     if (fz <= 0) return 0;
     double dfz = dfz_of(p, fz);
-    double mu = p.mu_y * (1.0 + p.pdy2 * dfz) * mu_scale;
+    // Lateral friction coefficient with load and camber sensitivity (MF 5.2 eq. 4.E23):
+    //   mu_y = p.mu_y * (1 + p.pdy2 * dfz) * (1 - p.pdy3 * gamma^2) * mu_scale
+    double mu = p.mu_y * std::max(0.2, 1.0 + p.pdy2 * dfz) * std::max(0.2, 1.0 - p.pdy3 * gamma * gamma) * mu_scale;
     double D = mu * fz;
-    // Cornering stiffness (MF 5.2):  K_ya = pKy1 Fz0 sin(2 atan(Fz / (pKy2 Fz0)))
-    // Rises with load, then saturates: doubling load does NOT double cornering stiffness.
-    double K = p.pky1 * p.fz0 * std::sin(2.0 * std::atan(fz / (p.pky2 * p.fz0)));
+    double K = ky_of(p, fz, gamma);
     double B = K / (p.cy * D + 1e-9);
-    return mf(alpha, B, p.cy, D, p.ey);
+    // Camber shifts (camber thrust, MF 5.2 eqs. 4.E27-4.E28):
+    double shy = (p.phy1 + p.phy2 * dfz) + p.phy3 * gamma;
+    double svy = fz * ((p.pvy1 + p.pvy2 * dfz) + (p.pvy3 + p.pvy4 * dfz) * gamma) * mu_scale;
+    double ay = alpha + shy;
+    // Load- and camber-dependent curvature E_y (MF 5.2 eq. 4.E24):
+    double ey = (p.ey + p.pey2 * dfz) * (1.0 - (p.pey3 + p.pey4 * gamma) * sign(ay));
+    return mf(ay, B, p.cy, D, ey) + svy;
 }
 
-TireForces magic_formula(const TireParams& p, double kappa, double tan_alpha, double fz, double mu_scale) {
+double mf_aligning_torque(const TireParams& p, double kappa, double alpha, double fz, double mu_scale, double gamma,
+                          double fx, double fy_no_svyk, double* out_trail) {
+    if (fz <= 0) {
+        if (out_trail) *out_trail = 0;
+        return 0;
+    }
+    double dfz = dfz_of(p, fz);
+    double mu_s = std::max(mu_scale, 0.1);
+    double kx = kx_of(p, fz, dfz);
+    double ky = std::max(ky_of(p, fz, gamma), 1.0);
+    double k_ratio = kx / ky;
+
+    // 1. Pneumatic trail t(alpha_t,eq) (MF 5.2 eqs. 4.E33-4.E42, 4.E73):
+    double sht = p.qhz1 + p.qhz2 * dfz + (p.qhz3 + p.qhz4 * dfz) * gamma;
+    double alpha_t = alpha + sht;
+    double tan_at = std::tan(clamp(alpha_t, -1.4, 1.4));
+    double alpha_teq = std::atan(std::hypot(tan_at, k_ratio * kappa)) * (alpha_t >= 0 ? 1.0 : -1.0);
+    double Bt = std::max(0.5, (p.qbz1 + p.qbz2 * dfz + p.qbz3 * dfz * dfz) * (1.0 + p.qbz4 * gamma + p.qbz5 * std::abs(gamma))) / mu_s;
+    double Ct = p.qcz1;
+    double Dt = fz * (p.radius / std::max(p.fz0, 1.0)) * (p.qdz1 + p.qdz2 * dfz) * (1.0 + p.qdz3 * gamma + p.qdz4 * gamma * gamma);
+    double Et = (p.qez1 + p.qez2 * dfz + p.qez3 * dfz * dfz) *
+                (1.0 + (p.qez4 + p.qez5 * gamma) * (2.0 / kPi) * std::atan(Bt * Ct * alpha_teq));
+    double trail = Dt * mf_cos(alpha_teq, Bt, Ct, Et) * std::cos(alpha);
+    if (out_trail) *out_trail = trail;
+
+    // 2. Residual torque M_zr(alpha_r,eq) (MF 5.2 eqs. 4.E43-4.E47, 4.E74):
+    double shy = (p.phy1 + p.phy2 * dfz) + p.phy3 * gamma;
+    double svy = fz * ((p.pvy1 + p.pvy2 * dfz) + (p.pvy3 + p.pvy4 * dfz) * gamma) * mu_scale;
+    double shf = shy + svy / ky;
+    double alpha_r = alpha + shf;
+    double tan_ar = std::tan(clamp(alpha_r, -1.4, 1.4));
+    double alpha_req = std::atan(std::hypot(tan_ar, k_ratio * kappa)) * (alpha_r >= 0 ? 1.0 : -1.0);
+    double mu_y = p.mu_y * std::max(0.2, 1.0 + p.pdy2 * dfz) * std::max(0.2, 1.0 - p.pdy3 * gamma * gamma) * mu_scale;
+    double By = ky / (p.cy * mu_y * fz + 1e-9);
+    double Br = p.qbz9 / mu_s + p.qbz10 * By * p.cy;
+    double Dr = fz * p.radius * ((p.qdz6 + p.qdz7 * dfz) + (p.qdz8 + p.qdz9 * dfz) * gamma) * mu_scale * std::cos(alpha);
+    double mzr = Dr * std::cos(std::atan(Br * alpha_req));
+
+    // 3. Moment arm s of longitudinal force Fx due to camber & lateral carcass deflection (MF 5.2 eq. 4.E76):
+    double s = p.radius * (p.ssz1 + p.ssz2 * (fy_no_svyk / std::max(p.fz0, 1.0)) + (p.ssz3 + p.ssz4 * dfz) * gamma);
+
+    return -trail * fy_no_svyk + mzr + s * fx;
+}
+
+TireForces magic_formula(const TireParams& p, double kappa, double tan_alpha, double fz, double mu_scale, double gamma) {
     TireForces out;
     if (fz <= 0) return out;
+    double dfz = dfz_of(p, fz);
     double alpha = std::atan(tan_alpha);
-    double fx0 = mf_pure_fx(p, kappa, fz, mu_scale);
-    double fy0 = mf_pure_fy(p, alpha, fz, mu_scale);
-    // Combined slip (MF 5.2 weighting functions, shift terms omitted):
-    //   Gxa = cos(Cxa atan(Bxa alpha)),   Bxa = rBx1 cos(atan(rBx2 kappa))
-    //   Gyk = cos(Cyk atan(Byk kappa)),   Byk = rBy1 cos(atan(rBy2 alpha))
-    // Braking/accelerating while cornering reduces lateral force and vice versa: the tyre has
-    // one friction budget. G = 1 for pure slip, falling toward 0 as the other slip grows.
-    double bxa = p.rbx1 * std::cos(std::atan(p.rbx2 * kappa));
-    double gxa = std::cos(p.rcx1 * std::atan(bxa * alpha));
-    double byk = p.rby1 * std::cos(std::atan(p.rby2 * alpha));
-    double gyk = std::cos(p.rcy1 * std::atan(byk * kappa));
-    out.fx = fx0 * std::max(gxa, 0.0);
-    out.fy = fy0 * std::max(gyk, 0.0);
+    double fx0 = mf_pure_fx(p, kappa, fz, mu_scale, gamma);
+    double fy0 = mf_pure_fy(p, alpha, fz, mu_scale, gamma);
+
+    // Combined slip (Pacejka MF 5.2 weighting functions Gxa, Gyk + kappa-induced side force SVyk):
+    //   Gxa = cos(Cxa atan(Bxa alpha_S - Exa (Bxa alpha_S - atan(Bxa alpha_S)))) / cos(...)
+    //   Bxa = (rBx1 + rBx3 gamma^2) cos(atan(rBx2 kappa))
+    double bxa = (p.rbx1 + p.rbx3 * gamma * gamma) * std::cos(std::atan(p.rbx2 * kappa));
+    double exa = p.rex1 + p.rex2 * dfz;
+    double alpha_s = alpha + p.rhx1;
+    double gxa0 = std::max(mf_cos(p.rhx1, bxa, p.rcx1, exa), 1e-4);
+    double gxa = clamp(mf_cos(alpha_s, bxa, p.rcx1, exa) / gxa0, 0.0, 1.0);
+
+    //   Gyk = cos(Cyk atan(Byk kappa_S - Eyk (Byk kappa_S - atan(Byk kappa_S)))) / cos(...)
+    //   Byk = (rBy1 + rBy4 gamma^2) cos(atan(rBy2 (alpha - rBy3)))
+    double byk = (p.rby1 + p.rby4 * gamma * gamma) * std::cos(std::atan(p.rby2 * (alpha - p.rby3)));
+    double eyk = p.rey1 + p.rey2 * dfz;
+    double shyk = p.rhy1 + p.rhy2 * dfz;
+    double kappa_s = kappa + shyk;
+    double gyk0 = std::max(mf_cos(shyk, byk, p.rcy1, eyk), 1e-4);
+    double gyk = clamp(mf_cos(kappa_s, byk, p.rcy1, eyk) / gyk0, 0.0, 1.0);
+
+    // Braking/driving-induced lateral force SVyk (MF 5.2 eqs. 4.E65-4.E66):
+    double mu_y = p.mu_y * std::max(0.2, 1.0 + p.pdy2 * dfz) * std::max(0.2, 1.0 - p.pdy3 * gamma * gamma) * mu_scale;
+    double dvyk = mu_y * fz * (p.rvy1 + p.rvy2 * dfz + p.rvy3 * gamma) * std::cos(std::atan(p.rvy4 * alpha));
+    double svyk = dvyk * std::sin(p.rvy5 * std::atan(p.rvy6 * kappa));
+
+    double fx = fx0 * gxa;
+    double fy_no_svyk = fy0 * gyk;
+    double fy = fy_no_svyk + svyk;
+
+    // Friction-ellipse envelope protection: ensures combined force vector never exceeds the
+    // anisotropic pure-slip peak envelope (Dx, Dy) under extreme simultaneous slip + camber.
+    double mu_x = p.mu_x * std::max(0.2, 1.0 + p.pdx2 * dfz) * std::max(0.2, 1.0 - p.pdx3 * gamma * gamma) * mu_scale;
+    double dx_max = std::max({mu_x * fz, std::abs(fx0), 1e-6});
+    double dy_max = std::max({mu_y * fz, std::abs(fy0), 1e-6});
+    double ellipse = std::hypot(fx / dx_max, fy / dy_max);
+    if (ellipse > 1.0) {
+        fx /= ellipse;
+        fy /= ellipse;
+        fy_no_svyk /= ellipse;
+    }
+
+    out.fx = fx;
+    out.fy = fy;
+    out.mz = mf_aligning_torque(p, kappa, alpha, fz, mu_scale, gamma, fx, fy_no_svyk, &out.pneumatic_trail);
     return out;
 }
 
