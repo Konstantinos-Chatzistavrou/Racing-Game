@@ -28,6 +28,10 @@ export class DepthFx {
     this.normals = rtt(vec4(n, wet), null, null, { type: THREE.HalfFloatType }) as unknown as THREE.RTTNode;
     this.node = ssr(beauty, depth, this.normals as unknown as THREE.Node<'vec3'>,
       { metalnessNode: (this.normals as unknown as { a: THREE.Node<'float'> }).a, roughnessNode: float(0.16), camera, binaryRefine: opt.binaryRefine });
+    this.node.screenEdgeFadeBlack = true;
+    const raw = this.node as unknown as { _blurredTextureNode: unknown; _textureNode: unknown; _blurRenderTarget: THREE.RenderTarget };
+    raw._blurredTextureNode = raw._textureNode;
+    raw._blurRenderTarget.texture.mipmaps.length = 0;
     this.node.resolutionScale = opt.resolution;
     this.node.quality.value = opt.quality;
     this.node.maxDistance.value = opt.maxDistance;

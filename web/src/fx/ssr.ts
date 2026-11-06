@@ -33,7 +33,7 @@ export interface SsrOptions {
   /** reflections fade out this far (0..1 of the screen) from the screen border */
   edgeFade: number;
 }
-export const SSR_DEFAULTS: SsrOptions = { resolution: 0.5, quality: 0.25, maxDistance: 50, thickness: 0.6, roughLo: 0.12, roughHi: 0.5, intensity: 1, maxLuminance: 4, binaryRefine: true, edgeFade: 0.2 };
+export const SSR_DEFAULTS: SsrOptions = { resolution: 0.5, quality: 0.14, maxDistance: 45, thickness: 0.6, roughLo: 0.12, roughHi: 0.5, intensity: 1, maxLuminance: 4, binaryRefine: true, edgeFade: 0.2 };
 
 /** Options with the ?ssr=quality:0.5,maxDistance:40,... tuning aid applied. */
 export function ssrOptions(o: Partial<SsrOptions> = {}): SsrOptions {
@@ -62,6 +62,8 @@ export function ssrNode(scenePass: THREE.PassNode, camera: THREE.Camera, opt: Ss
   const mrTex = scenePass.getTextureNode('mr');
   const node = ssr(scenePass.getTextureNode('output'), scenePass.getTextureNode('depth'), scenePass.getTextureNode('normal') as unknown as THREE.Node<'vec3'>,
     { metalnessNode: mrTex.r, roughnessNode: mrTex.g, camera, binaryRefine: opt.binaryRefine });
+  node.blurQuality = 1;
+  node.screenEdgeFadeBlack = true;
   node.resolutionScale = opt.resolution;
   node.quality.value = opt.quality;
   node.maxDistance.value = opt.maxDistance;
