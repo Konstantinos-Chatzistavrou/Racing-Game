@@ -14,11 +14,21 @@ import { gltfLoader } from '../loaders';
 import { createPlaceholderFacade, createPlaceholderGround, createPlaceholderRoof } from './placeholders';
 import { createGroundMaterials } from './groundMaterials';
 import { createFacadeMaterial, createRoofMaterial } from './facade';
-import { NycProps } from './props';
+import { NycProps, type BuildingColliderBox } from './props';
 import { applyNycAtmosphere, type NycAtmosphere } from './atmosphere';
+import { generateProceduralNycTile, type ProceduralNycTileData } from './infiniteNyc';
 
 // ---- content discovery (see index.ts for the expected exports) -------------------------------------------------------------------------
-export interface NycPropsLike { setTile(key: string, data: unknown): void; removeTile(key: string): void; update(dt: number): void; primeLights?(): void; dispose(): void }
+export interface NycPropsLike {
+  setTile(key: string, data: unknown): void;
+  setTileBuildings?(key: string, boxes: BuildingColliderBox[] | undefined, z?: number): void;
+  removeTile(key: string): void;
+  update(dt: number, carPos?: THREE.Vector3, carVel?: THREE.Vector3, onImpact?: (impulse: number) => void): void;
+  breakNearestPole?(carPos: THREE.Vector3, carVel?: THREE.Vector3): boolean;
+  breakNearestShop?(carPos: THREE.Vector3, carVel?: THREE.Vector3): boolean;
+  primeLights?(): void;
+  dispose(): void;
+}
 export interface NycMaterials { ground: Record<string, THREE.Material>; facade: THREE.Material; roof: THREE.Material; source: string }
 
 /** Shared material singletons (one per name). */
@@ -65,6 +75,8 @@ interface Tile {
   propsSet: boolean;
   forced: number;                  // meshes revealed but not drawn yet (tile must stay un-culled so their upload happens)
   gen: { near: number; far: number; col: number };   // bumped on every unload of that kind: stale async results are dropped
+  procedural?: boolean;
+  procData?: ProceduralNycTileData | null;
 }
 
 export interface NycSpawn { x: number; y: number; z: number; heading: number }   // game frame (z up); heading = angle from east, CCW (rad)
@@ -212,6 +224,33 @@ export class NycStreamer {
     return Math.hypot(dx, dz);
   }
 
+  private ensureProceduralRing(px: number, pz: number, radius: number) {
+    const gx = px;
+    const gy = -pz;
+    const ix0 = Math.floor((gx - radius) / TILE);
+    const ix1 = Math.floor((gx + radius) / TILE);
+    const iy0 = Math.floor((gy - radius) / TILE);
+    const iy1 = Math.floor((gy + radius) / TILE);
+    for (let ix = ix0; ix <= ix1; ix++) {
+      for (let iy = iy0; iy <= iy1; iy++) {
+        const key = `${ix}_${iy}`;
+        if (this.tiles.has(key)) continue;
+        const bb = [ix * TILE, iy * TILE, (ix + 1) * TILE, (iy + 1) * TILE, 260];
+        const group = new THREE.Group();
+        group.name = 'nyc_proc_' + key;
+        group.matrixAutoUpdate = false;
+        this.tiles.set(key, {
+          key, ix, iy, d: Infinity, near: 0, far: 0, col: 0, nearGroup: null, farGroup: null, colliders: [],
+          propsSet: false, forced: 0, gen: { near: 0, far: 0, col: 0 }, group,
+          has: { ground: true, bld: true, far: true, col: true, props: true },
+          box: new THREE.Box3(new THREE.Vector3(bb[0], -5, -bb[3]), new THREE.Vector3(bb[2], bb[4] + 10, -bb[1])),
+          cx: (bb[0] + bb[2]) / 2, cz: -(bb[1] + bb[3]) / 2,
+          procedural: true, procData: null,
+        });
+      }
+    }
+  }
+
   private select(p: THREE.Vector3, prime = false) {
     const o = this.o;
     const want: { t: Tile; kind: 'near' | 'far' | 'col'; score: number }[] = [];
@@ -219,6 +258,7 @@ export class NycStreamer {
     const now = performance.now();
     // priming (before the first frame) only loads the immediate ring; the rest streams in budgeted afterwards
     const nearR = prime ? Math.min(o.nearLoad, 300) : o.nearLoad, farR = prime ? Math.min(o.farLoad, 560) : o.farLoad;
+    this.ensureProceduralRing(p.x, p.z, farR + TILE * 0.5);
     for (const t of this.tiles.values()) {
       t.d = this.dist(t, p.x, p.z);
       // forward bias: tiles ahead of a moving car load first (up to 150 m of priority)
@@ -262,6 +302,43 @@ export class NycStreamer {
     t[kind] = 1;
     const gen = t.gen[kind], t0 = performance.now();
     const done = () => { this.pending.delete(id); this.inflight[kind]--; };
+
+    if (t.procedural) {
+      Promise.resolve().then(() => {
+        done();
+        if (t.gen[kind] !== gen) return;
+        if (!t.procData) t.procData = generateProceduralNycTile(t.ix, t.iy);
+        const pd = t.procData;
+        if (kind === 'col') {
+          this.groundOf.set(t.key, pd.col.ground);
+          t.col = 2;
+          this.queueColliders(t, gen, pd.col);
+        } else if (kind === 'far') {
+          const fg = pd.farGroup;
+          this.prepare(fg, 'far');
+          t.farGroup = new THREE.Group();
+          t.farGroup.add(fg);
+          t.far = 2;
+          this.stat.loaded++; this.stat.loadMs += performance.now() - t0;
+          this.queue.push({ tile: t, kind: 'far', gen, cost: 0.3, run: () => this.commitFar(t) });
+        } else {
+          const grp = new THREE.Group();
+          const meshes: THREE.Mesh[] = [];
+          for (const [g, part] of [[pd.groundGroup, 'ground'], [pd.bldGroup, 'bld']] as const) {
+            this.prepare(g, part);
+            g.traverse((o) => { if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh); });
+            grp.add(g);
+          }
+          t.nearGroup = grp; t.near = 2;
+          this.stat.loaded++; this.stat.loadMs += performance.now() - t0;
+          this.queue.push({ tile: t, kind: 'near', gen, cost: 0.3, run: () => { grp.visible = true; t.group.add(grp); this.attach(t); } });
+          for (const m of meshes) this.queue.push({ tile: t, kind: 'near', gen, cost: 0.8, run: () => this.reveal(t, m) });
+          this.queue.push({ tile: t, kind: 'near', gen, cost: 0.2, run: () => this.finishNear(t, pd.props) });
+        }
+      });
+      return;
+    }
+
     const L = gltfLoader();
     const glb = (part: Part) => (t.has[part] ? L.loadAsync(this.url(t, part + '.glb')) : Promise.resolve(null));
     const json = (ext: string, has: boolean) => (has ? fetch(this.url(t, ext)).then((r) => (r.ok ? r.json() : null)).catch(() => null) : Promise.resolve(null));
@@ -364,6 +441,7 @@ export class NycStreamer {
   private queueColliders(t: Tile, gen: number, c: ColJson | null) {
     const ground = c?.ground ?? 0;
     const bs = c?.buildings ?? [];
+    this.props?.setTileBuildings?.(t.key, bs, ground);
     const S = this.o.surfaces;
     const make = (d: RAPIER.ColliderDesc, surface: number) => {
       const col = this.pw.world.createCollider(d.setFriction(0.4).setRestitution(0.05));
@@ -402,6 +480,7 @@ export class NycStreamer {
     const g = t.nearGroup;
     t.nearGroup = null; t.near = 0; t.gen.near++;
     t.forced = 0;
+    if (t.procedural) t.procData = null;
     if (t.farGroup) t.farGroup.visible = true;
     if (g) this.queue.push({ tile: t, kind: 'near', gen: -1, cost: 0.3, run: () => { this.disposeObject(g); this.maybeDetach(t); } });
   }
@@ -409,12 +488,14 @@ export class NycStreamer {
   private unloadFar(t: Tile) {
     const g = t.farGroup;
     t.farGroup = null; t.far = 0; t.gen.far++;
+    if (t.procedural) t.procData = null;
     if (g) this.queue.push({ tile: t, kind: 'far', gen: -1, cost: 0.2, run: () => { this.disposeObject(g); this.maybeDetach(t); } });
   }
 
   private unloadCol(t: Tile) {
     const cols = t.colliders;
     t.colliders = []; t.col = 0; t.gen.col++;
+    this.props?.setTileBuildings?.(t.key, undefined);
     this.queue.push({ tile: t, kind: 'col', gen: -1, cost: 0.4, run: () => {
       const surf = (this.pw as unknown as { surfaceOf: Map<number, number> }).surfaceOf;
       for (const c of cols) { surf.delete(c.handle); this.pw.world.removeCollider(c, false); }
@@ -451,7 +532,7 @@ export class NycStreamer {
     }
   }
 
-  update(carPos: THREE.Vector3, dt: number) {
+  update(carPos: THREE.Vector3, dt: number, carVel?: THREE.Vector3, onImpact?: (impulse: number) => void) {
     if (!this.index || !this.spawn || this.disposed) return;
     const t0 = performance.now();
     // heading / speed of the car from its motion (horizontal)
@@ -469,12 +550,20 @@ export class NycStreamer {
     let used = 0;
     if (this.pause > 0) this.pause--; else used = this.drain(this.o.budgetMs);
     this.updateVisibility();
-    this.props?.update(dt);
+    this.props?.update(dt, carPos, carVel, onImpact);
     const ms = performance.now() - t0;
     this.stat.streamMs += (ms - this.stat.streamMs) * 0.05;
     this.stat.commitMs += (used - this.stat.commitMs) * 0.05;
     if (ms > this.stat.streamMax) this.stat.streamMax = ms;
     if (this.overlay && (this.overlayT -= dt) < 0) { this.overlayT = 0.25; this.overlay.textContent = this.report(); }
+  }
+
+  breakNearestPole(carPos: THREE.Vector3, carVel?: THREE.Vector3): boolean {
+    return this.props?.breakNearestPole?.(carPos, carVel) ?? false;
+  }
+
+  breakNearestShop(carPos: THREE.Vector3, carVel?: THREE.Vector3): boolean {
+    return this.props?.breakNearestShop?.(carPos, carVel) ?? false;
   }
 
   stats(): NycStats {
@@ -524,6 +613,16 @@ export class NycStreamer {
     mk(this.templates.bld ?? this.templates.far, this.mats.facade);
     mk(this.templates.bld ?? this.templates.far, this.mats.roof);
     if (this.templates.far && this.templates.far !== this.templates.bld) { mk(this.templates.far, this.mats.facade); mk(this.templates.far, this.mats.roof); }
+    // Also warm the procedural Float32Array vertex layout for facade and roof so infinite NYC tiles compile 0 pipelines at runtime
+    const procTpl = new THREE.BufferGeometry();
+    procTpl.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9), 3));
+    procTpl.setAttribute('normal', new THREE.BufferAttribute(new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0]), 3));
+    procTpl.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(6), 2));
+    procTpl.setAttribute('color', new THREE.BufferAttribute(new Uint8Array(12).fill(255), 4, true));
+    mk(procTpl, this.mats.roof);
+    procTpl.setAttribute('_bld', new THREE.BufferAttribute(new Float32Array([0.5, 8, 2, 0.5, 0.5, 8, 2, 0.5, 0.5, 8, 2, 0.5]), 4));
+    mk(procTpl, this.mats.facade);
+    procTpl.dispose();
   }
 
   /** Remove the warm-up meshes (after the forced full draw in main.ts). */

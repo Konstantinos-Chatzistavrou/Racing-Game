@@ -8,7 +8,8 @@
 // screen-space derivatives (fwidth): windows, bricks and storefront fade to their average colour as a pixel covers more than a fraction of one
 // period, so far facades (and far.glb) do not shimmer and cost the same.
 import * as THREE from 'three/webgpu';
-import { attribute, clamp, dot, float, floor, fract, fwidth, max, mix, normalView, normalWorld, abs, positionView, positionWorld, pow, select, sin, smoothstep, step, uniform, uv, vec2, vec3 } from 'three/tsl';
+import { attribute, bumpMap, clamp, dot, float, floor, fract, fwidth, max, min, mix, mod, normalView, normalWorld, abs, positionView, positionWorld, pow, select, sin, smoothstep, step, texture, uniform, uv, vec2, vec3 } from 'three/tsl';
+import { getSignAtlasTexture } from './signAtlas';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type N = any;
@@ -122,28 +123,35 @@ function facadeGraph() {
   const curtain = step(0.7, h4).mul(float(1).sub(office));
   const wlx = select(h3.greaterThan(0.5), fx.sub(x0).div(wf), float(1).sub(fx.sub(x0).div(wf)));
   const curt = mix(1.0, smoothstep(0.0, 0.75, wlx).mul(0.7).add(0.3), curtain);
-  // Venetian blinds, interior parallax room partitions & ceiling troffer light strips inside lit rooms
-  const hasBlinds = step(0.62, h4).mul(office);
-  const blindDrop = smoothstep(float(1).sub(h2.mul(0.55).add(0.2)), float(1).sub(h2.mul(0.55).add(0.15)), wl);
-  const blindSlats = mix(0.45, 0.92, step(0.38, fract(fy.mul(22.0))));
+  // Venetian blinds & true 3D perspective interior room mapping (ceiling fixtures, warm back wall, framed art/shelving, side walls)
+  const hasBlinds = step(0.66, h4).mul(office);
+  const blindDrop = smoothstep(float(1).sub(h2.mul(0.5).add(0.18)), float(1).sub(h2.mul(0.5).add(0.14)), wl);
+  const blindSlats = mix(0.48, 0.94, step(0.38, fract(fy.mul(24.0))));
   const blinds = mix(1.0, mix(1.0, blindSlats, blindDrop), hasBlinds.mul(dfade));
-  // Fake interior parallax using view-space angle
+  // Perspective interior ray offset from view-space direction
   const vDir = positionView.normalize();
-  const roomX = clamp(wlx.add(vDir.x.mul(0.28)), 0, 1);
-  const roomY = clamp(wl.sub(vDir.y.mul(0.32)), 0, 1);
-  // Ceiling fluorescent troffers (offices) + back-wall vertical partitions/furniture silhouettes
-  const troffer = smoothstep(0.68, 0.92, roomY).mul(step(0.25, fract(roomX.mul(3.0).add(h1))));
-  const partition = mix(1.0, 0.42, step(0.84, fract(roomX.mul(2.0).add(h4))).mul(step(roomY, 0.72)));
-  const deskSil = smoothstep(0.12, 0.28, wl);
-  const ceilGlow = smoothstep(0.18, 0.92, roomY).mul(0.58).add(0.38).add(troffer.mul(office).mul(0.45));
-  const lamp = h3.mul(0.8).add(0.5).mul(ceilGlow).mul(partition).mul(deskSil).mul(curt).mul(blinds);
-  const litAvg = litFrac.mul(0.34);
+  const roomX = clamp(wlx.add(vDir.x.mul(0.34)), 0, 1);
+  const roomY = clamp(wl.sub(vDir.y.mul(0.38)), 0, 1);
+  const isCeil = smoothstep(0.72, 0.78, roomY);
+  const isFloor = float(1).sub(smoothstep(0.14, 0.22, roomY));
+  // Ceiling fluorescent troffer grid (offices) or warm recessed downlight (apartments)
+  const troffer = smoothstep(0.18, 0.24, fract(roomX.mul(2.5).add(h1))).mul(smoothstep(0.88, 0.78, fract(roomX.mul(2.5).add(h1)))).mul(smoothstep(0.74, 0.92, roomY));
+  const pendant = smoothstep(0.28, 0.04, abs(roomX.sub(0.5)).add(abs(roomY.sub(0.84)).mul(1.4)));
+  const ceilFix = mix(pendant.mul(0.95), troffer.mul(0.85), office);
+  // Back wall: warm ambient wash + framed artwork / bookshelf / monitor detail + side-wall corner AO
+  const sideAO = smoothstep(0.0, 0.14, roomX).mul(smoothstep(0.0, 0.14, float(1).sub(roomX)));
+  const shelfGrid = mix(0.72, 1.05, step(0.28, fract(roomY.mul(4.0).add(h2))).mul(step(0.18, fract(roomX.mul(3.0).add(h3)))));
+  const wallPlane = smoothstep(0.15, 0.85, roomY).mul(0.45).add(0.42).mul(shelfGrid).mul(sideAO);
+  const roomInterior = mix(wallPlane, float(0.82).add(ceilFix), isCeil).mul(mix(1.0, 0.45, isFloor));
+  const lamp = h3.mul(0.65).add(0.58).mul(roomInterior).mul(curt).mul(blinds);
+  const litAvg = litFrac.mul(0.32);
   const lit = mix(litAvg, litOn.mul(lamp), dfade);
   const emWin = lightCol.mul(win).mul(lit).mul(WINDOW_EM);
 
-  // ---- ground floor: storefront glass, bulkhead, signs, roll-down shutters
+  // ---- ground floor: storefront glass, bulkhead, signs (sampled from signAtlas), roll-down shutters
+  const atlas = getSignAtlasTexture();
   const gAA = cov(gf.sub(v), fw.y);                                     // 1 below gf
-  const sbw = hash11(seed.mul(3.3)).mul(2.6).add(4.2);
+  const sbw = hash11(seed.mul(3.3)).mul(2.6).add(4.4);
   const sxF = u.div(sbw).add(fract(seed.mul(5.9)));
   const sid = floor(sxF), sf = fract(sxF), swx = fw.x.div(sbw);
   const pier = select(kind.greaterThan(2.5), float(0.10), hash11(seed.mul(5.1)).mul(0.06).add(0.14));
@@ -152,39 +160,42 @@ function facadeGraph() {
   const shopGlass = sgx.mul(sgy);
   const hs = hash12(vec2(sid, sd2));
   const hs2 = hash11(sid.mul(1.7).add(sd2));
-  const open = step(hs, 0.44);
-  const shut = step(0.44, hs).mul(step(hs, 0.72)).mul(float(1).sub(k3));
-  const lobby = step(0.72, hs);
-  const shopCol = select(hs2.lessThan(0.35), v3(1.0, 0.72, 0.42), select(hs2.lessThan(0.68), v3(0.98, 0.88, 0.72), select(hs2.lessThan(0.88), v3(0.78, 0.88, 1.0), v3(1.0, 0.58, 0.32))));
-  const signY = cov(v.sub(gf.sub(1.15)), fw.y).mul(cov(gf.sub(0.42).sub(v), fw.y));
-  const signX = cov(sf.sub(0.20), swx).mul(cov(float(0.80).sub(sf), swx));
-  const signOn = step(0.58, hs2).mul(float(1).sub(k3)).mul(open);
+  const open = step(hs, 0.78);
+  const shut = step(0.78, hs).mul(step(hs, 0.88)).mul(float(1).sub(k3));
+  const lobby = step(0.88, hs);
+  const shopCol = select(hs2.lessThan(0.35), v3(1.0, 0.76, 0.48), select(hs2.lessThan(0.68), v3(0.98, 0.89, 0.75), select(hs2.lessThan(0.88), v3(0.82, 0.91, 1.0), v3(1.0, 0.66, 0.40))));
+  const signY = cov(v.sub(gf.sub(1.18)), fw.y).mul(cov(gf.sub(0.36).sub(v), fw.y));
+  const signX = cov(sf.sub(0.16), swx).mul(cov(float(0.84).sub(sf), swx));
+  const signOn = step(0.32, hs2).mul(float(1).sub(k3)).mul(open);
   const sign = signX.mul(signY).mul(signOn);
-  const hc = floor(hs.mul(5.0));
-  const signCol = select(hc.lessThan(0.5), v3(1.0, 0.88, 0.72), select(hc.lessThan(1.5), v3(0.95, 0.68, 0.22), select(hc.lessThan(2.5), v3(0.75, 0.9, 1.0),
-    select(hc.lessThan(3.5), v3(0.95, 0.28, 0.18), v3(0.92, 0.95, 0.98)))));
-  // Crisp procedural glyph strokes inside centered fascia band
-  const gx = floor(u.mul(6.5)), gy = floor(v.mul(9.0));
-  const gCell = hash12(vec2(gx.add(sid.mul(19.0)), gy.add(sd2)));
-  const gStroke = step(0.48, gCell).mul(step(0.22, fract(u.mul(6.5)))).mul(step(0.25, fract(v.mul(9.0))));
-  const letters = mix(0.28, gStroke, float(1).sub(smoothstep(0.08, 0.32, fw.x.mul(6.5))));
+  // Sample crisp storefront sign cell from the bottom 25% of the 2048x2048 signAtlas
+  const sIdx = clamp(floor(mod(sid.add(sd2), 8.0)), 0, 7);
+  const sCol = mod(sIdx, 2.0), sRow = floor(sIdx.div(2.0));
+  const su = clamp(sf.sub(0.16).div(0.68), 0.02, 0.98);
+  const sv = clamp(v.sub(gf.sub(1.18)).div(0.82), 0.05, 0.95);
+  const signAtlasUV = vec2(sCol.mul(0.5).add(su.mul(0.5)), float(0.25).sub(sRow.add(float(1.0).sub(sv)).mul(0.0625)));
+  const signTexCol = texture(atlas, signAtlasUV).rgb;
   const ribs = step(0.5, fract(v.mul(8.0))).mul(0.22).add(0.78);
   const cornice = cov(v.sub(gf.sub(0.28)), fw.y).mul(cov(gf.sub(v), fw.y));
   const pierCol = mix(wallLit.mul(0.76), stoneCol.mul(0.85), cornice);
   const gCol = mix(pierCol, v3(0.012, 0.015, 0.02), shopGlass);
   const gCol2 = mix(gCol, v3(0.07, 0.075, 0.085).mul(ribs), shopGlass.mul(shut));
   const gAlb = mix(gCol2, v3(0.015, 0.018, 0.022), sign);
-  // Storefront interior: horizontal display shelves, back-wall depth, wide bronze mullions & transom bar
-  const shelf = mix(0.48, 1.0, step(0.22, fract(v.mul(1.35).add(hs))));
-  const bayArch = smoothstep(0.0, 0.18, sf.sub(pier)).mul(smoothstep(0.0, 0.18, float(1).sub(pier).sub(sf)));
-  const sgrad = smoothstep(0.68, 1.45, v).mul(smoothstep(0.5, 3.2, v).mul(0.65).add(0.35)).mul(shelf).mul(bayArch);
-  const transom = float(1).sub(cov(abs(v.sub(2.55)).sub(0.045), fw.y)).mul(0.9);
-  const mullion = float(1).sub(cov(abs(sf.sub(0.5)).mul(sbw).sub(0.035), fw.x)).mul(0.88);
+  // Storefront interior: recessed ceiling spotlight cones, backlit display shelves, retail pedestals & dark anodized mullions
+  const shopU = clamp(sf.sub(pier).div(max(float(1).sub(pier.mul(2.0)), 0.2)), 0, 1).add(vDir.x.mul(0.24));
+  const shopV = clamp(v.sub(0.68).div(max(gf.sub(2.03), 1.2)), 0, 1);
+  const spotCone = smoothstep(0.32, 0.03, abs(fract(shopU.mul(3.0)).sub(0.5)).mul(float(1.35).sub(shopV.mul(0.65)))).mul(smoothstep(0.2, 0.95, shopV));
+  const shelf = mix(0.62, 1.08, step(0.22, fract(shopV.mul(4.0).add(hs))).mul(step(0.14, fract(shopU.mul(4.0).add(hs2)))));
+  const displayPedestal = float(1).sub(step(0.52, shopV).mul(step(abs(fract(shopU.mul(3.0).add(0.15)).sub(0.5)), 0.16)).mul(0.42));
+  const bayArch = smoothstep(0.0, 0.12, sf.sub(pier)).mul(smoothstep(0.0, 0.12, float(1).sub(pier).sub(sf)));
+  const sgrad = smoothstep(0.65, 1.15, v).mul(shelf.mul(0.72).add(spotCone.mul(0.65))).mul(displayPedestal).mul(bayArch);
+  const transom = float(1).sub(cov(abs(v.sub(2.58)).sub(0.04), fw.y)).mul(0.92);
+  const mullion = float(1).sub(cov(abs(sf.sub(0.5)).mul(sbw).sub(0.03), fw.x)).mul(0.90);
   const frame = float(1).sub(max(transom, mullion));
-  const lobbyGlow = smoothstep(1.9, 3.0, v).mul(bayArch).mul(lobby).mul(0.26);
-  const gEm = shopCol.mul(shopGlass).mul(open.mul(sgrad).add(lobbyGlow)).mul(frame).mul(SHOP_EM).add(signCol.mul(sign).mul(letters).mul(SIGN_EM));
+  const lobbyGlow = smoothstep(0.8, 3.0, v).mul(bayArch).mul(lobby).mul(spotCone.mul(0.5).add(0.48));
+  const gEm = shopCol.mul(shopGlass).mul(open.mul(sgrad).add(lobbyGlow)).mul(frame).mul(SHOP_EM).add(signTexCol.mul(sign).mul(SIGN_EM));
 
-  // ---- compose
+  // ---- compose + physical normal map relief (brick/stone courses, recessed window bays, sills/lintels, per-pane glass warp)
   const glassKind = mix(v3(0.012, 0.016, 0.024), tint.mul(0.9), k3);
   const stoneMix = clamp(trim, 0, 1);
   const upperWall = mix(wallCol, stoneCol, stoneMix);
@@ -193,10 +204,11 @@ function facadeGraph() {
   const aoG = mix(0.6, 1.0, smoothstep(0.0, 5.0, v));
   const emUpper = emWin.mul(float(1).sub(rail.mul(0.8)).sub(munt.mul(0.8)));
   const winMask = mix(win, clamp(shopGlass.add(sign), 0, 1), gAA);
-  // glass reflection of the lit city (fake, view dependent) on every window, strong on glass towers
-  const fres = pow(float(1).sub(clamp(dot(normalView, positionView.negate().normalize()), 0, 1)), 3.0);
-  const skyC = mix(v3(0.05, 0.07, 0.11), v3(0.24, 0.14, 0.07), float(1).sub(smoothstep(0.0, 140.0, v)));
-  const refl = skyC.mul(fres).mul(mix(0.35, 1.1, k3)).mul(win.add(shopGlass.mul(float(1).sub(shut)).mul(gAA)));
+  // Subtle per-window glass warp so city & streetlight reflections bend slightly across curtain-wall panes
+  const paneWarp = sin(fx.mul(3.14159)).mul(sin(wl.mul(3.14159))).mul(h2.sub(0.5)).mul(0.18);
+  const fres = pow(float(1).sub(clamp(dot(normalView, positionView.negate().normalize()).add(paneWarp.mul(0.12)), 0, 1)), 2.8);
+  const skyC = mix(v3(0.04, 0.06, 0.10), v3(0.22, 0.13, 0.07), float(1).sub(smoothstep(0.0, 140.0, v)));
+  const refl = skyC.mul(fres).mul(mix(0.42, 1.25, k3)).mul(win.add(shopGlass.mul(float(1).sub(shut)).mul(gAA)));
   // city glow on the walls themselves (light pollution / street light spill, strongest near the street), keeps brick vs stone readable at night
   const glow = upperWall.mul(float(1).sub(smoothstep(0.0, 28.0, v)).mul(0.14).add(0.055)).mul(float(1).sub(winMask)).mul(float(1).sub(k3.mul(0.5)));
   // architectural crown floodlighting on landmarks (Empire State, Chrysler, 30 Rock, One WTC) and high setback tiers
@@ -207,9 +219,14 @@ function facadeGraph() {
   const crownGlow = crownCol.mul(crownBand).mul(float(1).sub(win.mul(0.5))).mul(0.38);
   const emissive = mix(emUpper, gEm, gAA).mul(night).add(glow.mul(night)).add(crownGlow.mul(night)).add(refl.mul(night.mul(0.75).add(0.3)));
   const color = albedo.mul(ao.mul(aoG));
-  const rough = mix(mix(0.9, 0.72, float(1).sub(isBrick)), mix(0.14, 0.05, k3), winMask);
-  const metal = mix(float(0.0), mix(0.15, 0.32, k3), winMask);
-  return { color, emissive, rough, metal };
+  const rough = mix(mix(0.88, 0.68, float(1).sub(isBrick)), mix(0.11, 0.04, k3), winMask);
+  const metal = mix(float(0.0), mix(0.18, 0.38, k3), winMask);
+  // Height field for normal-mapped architectural relief: recessed glass (-0.45), protruding sills/lintels/cornices (+0.35), mortar joints (-0.25), shutter ribs
+  const hUpper = stoneMix.mul(0.35).sub(joint.mul(0.24)).sub(win.mul(0.45)).add(rail.add(munt).mul(0.22)).add(paneWarp.mul(win));
+  const hGround = cornice.mul(0.38).sub(shopGlass.mul(0.42)).add(shut.mul(ribs).mul(0.25)).add(sign.mul(0.18));
+  const heightField = mix(hUpper, hGround, gAA);
+  const normal = bumpMap(heightField, dfade.mul(0.48));
+  return { color, emissive, rough, metal, normal };
 }
 
 export function createFacadeMaterial(): THREE.Material {
@@ -220,6 +237,7 @@ export function createFacadeMaterial(): THREE.Material {
   m.emissiveNode = g.emissive;
   m.roughnessNode = g.rough;
   m.metalnessNode = g.metal;
+  m.normalNode = g.normal;
   return m;
 }
 

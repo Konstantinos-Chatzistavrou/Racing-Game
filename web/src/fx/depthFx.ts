@@ -39,19 +39,23 @@ export class DepthFx {
     // Inside an RTT pass the built-in camera nodes are the quad's own camera: bind the GAME camera's matrices (the Matrix4
     // objects are updated in place by three, so the uniforms follow the camera).
     const projInv = uniform(camera.projectionMatrixInverse), viewM = uniform(camera.matrixWorldInverse), worldM = uniform(camera.matrixWorld);
-    const n = getNormalFromDepth(uv(), depth as unknown as THREE.Node, projInv);   // view space
+    const nRaw = getNormalFromDepth(uv(), depth as unknown as THREE.Node, projInv);   // view space
     const vPos = getViewPosition(uv(), depth as unknown as THREE.Node, projInv);
     const wPos = worldM.mul(vec4(vPos, 1.0)).xyz;
-    const up = viewM.mul(vec4(0, 1, 0, 0)).xyz;   // world up, in view space
-    const ndotv = dot(n, vPos.normalize().negate()).abs().clamp(0, 1);
-    const fresnel = float(1).sub(ndotv).pow(2.4);
-    // Reconstruct world-space rainwater puddle mask (matches groundMaterials.ts road puddles) so dry/damp pavement stays textured while puddles mirror-reflect
+    const up = viewM.mul(vec4(0, 1, 0, 0)).xyz.normalize();   // world up, in view space
+    const isUp = smoothstep(float(0.85), float(0.97), dot(nRaw, up).abs());
+    // Reconstruct world-space rainwater puddle mask (matches groundMaterials.ts road puddles)
     const wp = vec2(wPos.x, wPos.z.negate());
     const pLo = mx_noise_float(wp.mul(0.068).add(vec2(3.1, 9.4))).mul(0.5).add(0.5);
     const pMid = mx_noise_float(wp.mul(0.19).add(vec2(5.3, 1.7))).mul(0.5).add(0.5);
     const pud = smoothstep(0.52, 0.70, pLo.mul(0.72).add(pMid.mul(0.28)));
+    // Blend depth-derived normal with analytic world-up on horizontal road surfaces to eliminate depth-buffer quantization staircases
+    const rippleX = mx_noise_float(wp.mul(3.2)).mul(0.008).mul(float(1).sub(pud.mul(0.7)));
+    const n = mix(nRaw, up.add(vec3(rippleX, float(0), rippleX)).normalize(), isUp.mul(0.96)).normalize();
+    const ndotv = dot(n, vPos.normalize().negate()).abs().clamp(0, 1);
+    const fresnel = float(1).sub(ndotv).pow(2.4);
     const wetWeight = mix(mix(float(0.04), float(0.26), fresnel), mix(float(0.52), float(0.92), fresnel), pud);
-    const wet = smoothstep(float(0.88), float(0.985), dot(n, up).abs()).mul(wetWeight);
+    const wet = isUp.mul(wetWeight);
     this.normals = rtt(vec4(n, wet), null, null, { type: THREE.HalfFloatType }) as unknown as THREE.RTTNode;
     this.node = ssr(beauty, depth, this.normals as unknown as THREE.Node<'vec3'>,
       { metalnessNode: (this.normals as unknown as { a: THREE.Node<'float'> }).a, roughnessNode: float(0.18), camera, binaryRefine: opt.binaryRefine });

@@ -665,7 +665,8 @@ async function main() {
 
   // Showroom camera: slow turntable around the parked car, drag to turn, wheel to zoom.
   const orbit = { az: 2.3, el: 0.17, dist: 7, drag: false, x: 0, y: 0, shift: 0 };
-  (g.__game as { orbit?: typeof orbit }).orbit = orbit;
+  (g.__game as { orbit?: typeof orbit; nyc?: typeof nyc }).orbit = orbit;
+  (g.__game as { orbit?: typeof orbit; nyc?: typeof nyc }).nyc = nyc;
   const dom = renderer.domElement;
   dom.addEventListener('pointerdown', (e) => { if (driving()) return; orbit.drag = true; orbit.x = e.clientX; orbit.y = e.clientY; dom.setPointerCapture(e.pointerId); });
   dom.addEventListener('pointermove', (e) => {
@@ -791,7 +792,15 @@ async function main() {
       if (live) rig.update(frame, pos, quat, carAcc, car.out);
     }
     cityLights.update(frame, camera);   // WebGL 2 pool only (5 Hz); a no-op with clustered lighting
-    nyc?.update(pos, frame);
+    nyc?.update(pos, frame, driving() ? visual.velocity : undefined, (impulse) => {
+      const lv = car.body.linvel();
+      const s = Math.hypot(lv.x, lv.z);
+      if (s > 1) {
+        const drag = Math.min(0.28, (impulse / 1800) / Math.max(4, s));
+        car.body.setLinvel({ x: lv.x * (1 - drag), y: lv.y, z: lv.z * (1 - drag) }, true);
+      }
+      audio.impact(Math.max(12, impulse * 0.08), impulse > 150);
+    });
     city.update(camera);
     // Frame cap (default 30 fps: the quality target; ?cap=0 uncapped, ?cap=45 etc.). Simulation, camera and HUD run every
     // display refresh; only the draw is skipped, so the picture holds still between rendered frames. The cap is off while
