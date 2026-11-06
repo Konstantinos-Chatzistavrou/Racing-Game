@@ -48,10 +48,11 @@ export class Dents {
     const on = uniform(0, 'int').onObjectUpdate(({ object }: Obj) => (isM4(object?.userData.dentToModel) ? 1 : 0));
     const count = this.countU;
     this.positionNode = Fn(() => {
+      const active = count.mul(on);
       const p = toModel.mul(vec4(positionLocal, 1)).xyz.toVar();
       const n = toModel.mul(vec4(normalLocal, 0)).xyz.normalize().toVar();
       const disp = vec3(0).toVar(), tilt = vec3(0).toVar();
-      Loop({ start: 0, end: count.mul(on), type: 'int', condition: '<' }, ({ i }: { i: THREE.Node }) => {
+      Loop({ start: 0, end: active, type: 'int', condition: '<' }, ({ i }: { i: THREE.Node }) => {
         const a = ptU.element(i) as unknown as THREE.Node<'vec4'>, b = dirU.element(i) as unknown as THREE.Node<'vec4'>;
         const d = p.sub(a.xyz);
         const R2 = b.w.mul(b.w);

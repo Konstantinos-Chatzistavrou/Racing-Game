@@ -8,8 +8,8 @@ html, body { margin: 0; height: 100%; overscroll-behavior: none; touch-action: n
 #perf { position: absolute; top: 12px; left: 16px; font: 12px/1.4 ui-monospace, monospace; color: var(--dim);
   white-space: pre; text-shadow: 0 1px 2px #000; }
 /* speedometer: SVG dial, digits and gear inside it */
-#dash { position: absolute; right: 28px; bottom: 22px; width: 240px; text-align: center; text-shadow: 0 2px 8px #000a; }
-#gauge { width: 240px; height: 240px; display: block; filter: drop-shadow(0 2px 6px #000c); }
+#dash { position: absolute; right: 28px; bottom: 22px; width: 240px; text-align: center; text-shadow: 0 2px 8px #000a; contain: layout style paint; }
+#gauge { width: 240px; height: 240px; display: block; }
 #gauge .tick { stroke: #ffffff70; stroke-width: 1.5; }
 #gauge .tick.major { stroke: #ffffffd0; stroke-width: 2.5; }
 #gauge .lbl { fill: #ffffffb0; font: 600 11px "Inter", system-ui, sans-serif; text-anchor: middle; dominant-baseline: middle; }
@@ -24,8 +24,8 @@ html, body { margin: 0; height: 100%; overscroll-behavior: none; touch-action: n
 #assists { margin-top: -18px; font-size: 11px; letter-spacing: .1em; color: var(--dim); }
 /* lap timer + lap toast */
 #laps { position: absolute; top: 14px; right: 18px; min-width: 170px; padding: 10px 14px; border-radius: 10px;
-  background: #0b0f1799; backdrop-filter: blur(6px); border: 1px solid #ffffff1a; font-variant-numeric: tabular-nums;
-  transition: opacity .4s; }
+  background: #0b0f17cc; border: 1px solid #ffffff1a; font-variant-numeric: tabular-nums;
+  transition: opacity .4s; contain: layout style paint; }
 #laps .row { display: flex; justify-content: space-between; gap: 18px; font-size: 13px; line-height: 1.6; }
 #laps .row.big { font-size: 24px; font-weight: 700; justify-content: flex-end; }
 #laps .k { color: var(--dim); letter-spacing: .14em; font-size: 11px; }
@@ -67,7 +67,7 @@ body.touch #perf { font-size: 9px; top: calc(34px + env(safe-area-inset-top)); l
 #touch { position: fixed; inset: 0; pointer-events: none; touch-action: none; user-select: none; -webkit-user-select: none;
   -webkit-touch-callout: none; z-index: 5; }
 #touch button { font: 600 13px/1.1 "Inter", system-ui, sans-serif; color: var(--fg); letter-spacing: .06em;
-  border: 1px solid #ffffff38; background: #0b0f17a8; backdrop-filter: blur(4px); border-radius: 14px; pointer-events: auto;
+  border: 1px solid #ffffff38; background: #0b0f17cc; border-radius: 14px; pointer-events: auto;
   touch-action: none; -webkit-tap-highlight-color: transparent; }
 #touch button.down { background: #ffffff40; border-color: #ffffffa0; }
 #touch .steer { position: absolute; left: 0; bottom: 0; width: 46vw; height: 62vh; pointer-events: auto; touch-action: none; }

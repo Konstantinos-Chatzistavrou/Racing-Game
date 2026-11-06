@@ -53,29 +53,30 @@ async function main() {
   // before the sharpening upscale (post.ts). It used to be the canvas pixel ratio, which the browser
   // then stretched bilinearly (soft) and whose change reconfigured the whole canvas.
   const baseRatio = Math.min(devicePixelRatio, 1);
-  // Graphics: 'auto' tunes resolution + preset ONCE behind a cover in the title menu (never while a
-  // car is on screen); high/medium/low are fixed. ?scale / ?quality (test tools) pin on top of that.
-  const GFX_KEY = 'nr.gfx';
+  // Graphics: 'auto' tunes resolution + preset behind a cover in the title menu and steps down preset/scale
+  // if high-speed driving drops FPS; high/medium/low are fixed. ?scale / ?quality (test tools) pin on top of that.
+  const isTouch = wantsTouch();
+  const GFX_KEY = 'nr.gfx.v3';
   const GFX_SCALE = { max: 1, ultra: 1, high: 1, medium: 0.85, low: 0.7 } as const;
   let gfx: Gfx = 'auto';
   try { const g = localStorage.getItem(GFX_KEY); if (g === 'max' || g === 'ultra' || g === 'high' || g === 'medium' || g === 'low') gfx = g; } catch { /* storage blocked */ }
   let adaptive = gfx === 'auto' && !params.has('scale');
   const maxScale = 1;
-  // Start near ~0.9 megapixels rendered (1.07 MP measured too heavy on the laptop iGPU at 60 Hz).
-  // The scale settled on last time on this device (a calibration costs a resize hitch per step).
-  let SCALE_KEY = `nr.scale.${innerWidth}x${innerHeight}`;
+  const targetPixels = isTouch ? 0.72e6 : 0.9e6;
+  const guessScale = () => Math.min(maxScale, Math.max(0.5, Math.round(Math.sqrt(targetPixels / (innerWidth * innerHeight * Math.min(devicePixelRatio, 1) ** 2)) * 10) / 10));
+  let SCALE_KEY = `nr.scale.v3.${innerWidth}x${innerHeight}`;
   let stored = NaN;
   try { stored = Number(localStorage.getItem(SCALE_KEY) ?? NaN); } catch { /* storage blocked */ }
-  let scale = params.has('scale') ? num('scale', 1) : gfx !== 'auto' ? GFX_SCALE[gfx] : stored >= 0.5 && stored <= maxScale ? stored
-    : Math.min(maxScale, Math.max(0.5, Math.round(Math.sqrt(0.9e6 / (innerWidth * innerHeight * Math.min(devicePixelRatio, 1) ** 2)) * 10) / 10));
+  let scale = params.has('scale') ? num('scale', 1) : gfx !== 'auto' ? GFX_SCALE[gfx] : stored >= 0.5 && stored <= maxScale ? stored : guessScale();
   renderer.setPixelRatio(baseRatio);
   renderer.setSize(innerWidth, innerHeight);
   // Quality preset (post.ts PRESETS), lowered by the adaptive system BEFORE the scale; stored like it.
-  let PRESET_KEY = `nr.preset.${innerWidth}x${innerHeight}`;
+  const defaultPreset: PresetName = isTouch ? 'medium' : 'high';
+  let PRESET_KEY = `nr.preset.v3.${innerWidth}x${innerHeight}`;
   let presetPinned = PRESET_ORDER.includes(params.get('quality') as PresetName) || gfx !== 'auto';
   let storedPreset: string | null = null;
   try { storedPreset = localStorage.getItem(PRESET_KEY); } catch { /* storage blocked */ }
-  let presetIdx = Math.max(0, PRESET_ORDER.indexOf((PRESET_ORDER.includes(params.get('quality') as PresetName) ? params.get('quality') : gfx !== 'auto' ? gfx : storedPreset ?? 'max') as PresetName));
+  let presetIdx = Math.max(0, PRESET_ORDER.indexOf((PRESET_ORDER.includes(params.get('quality') as PresetName) ? params.get('quality') : gfx !== 'auto' ? gfx : storedPreset ?? defaultPreset) as PresetName));
   renderer.toneMapping = THREE.AgXToneMapping;
   renderer.toneMappingExposure = 1.1;
   renderer.shadowMap.enabled = params.get('shadows') !== '0';
@@ -101,7 +102,7 @@ async function main() {
   moon.position.set(-60, 120, 40);
   scene.add(moon);
 
-  const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 900);
+  const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 260);
   addEventListener('resize', () => {
     renderer.setSize(innerWidth, innerHeight);
     camera.aspect = innerWidth / innerHeight;
@@ -132,7 +133,7 @@ async function main() {
   let builtKey = carKey();
   let core = new CoreCar(coreJson());
   const pw = new PhysicsWorld();
-  const city = await loadCity(scene, pw, core.info.surfaces, (f) => say(`Loading city… ${Math.round(f * 100)}%`), webgpu && num('bundle', 0) === 1);
+  const city = await loadCity(scene, pw, core.info.surfaces, (f) => say(`Loading city… ${Math.round(f * 100)}%`), webgpu && num('bundle', 1) === 1);
   const cityLights = new CityLighting(scene, city.lights, webgpu, num('lights', 12));
   // Reflections: capture the lit city once from street level (the car isn't in the scene yet).
   {
@@ -145,9 +146,9 @@ async function main() {
     scene.environmentIntensity = 0.5;
   }
   say('Loading car…');
-  // Frame cap: ?cap=N, else the highest rate <= target (30 desktop, 45 touch) that divides the display refresh evenly (bench.ts autoCap).
+  // Frame cap: uncapped (native display refresh) by default; ?cap=N pins a specific frame rate.
   const hz = await refreshP;
-  const capFps = params.has('cap') ? num('cap', 30) : autoCap(hz, wantsTouch() ? 45 : 30);
+  const capFps = params.has('cap') ? num('cap', 0) : 0;
   const capInterval = capFps > 0 ? 1000 / capFps : 0;
   // The player's body: each catalog car may bring its own model + visual config (garage swaps it).
   const visualPathOf = (id: string) => catalog.find((c) => c.id === id)?.visual ?? DEFAULT_VISUAL;
@@ -250,8 +251,10 @@ async function main() {
   const showRim = new THREE.PointLight(0x6f8cff, 0, 10, 2);
   scene.add(showKey, showKey.target, showRim);
   // --- post-processing ------------------------------------------------------------------------
+  const DRAW_SCALE: Record<PresetName, number> = { max: 1, ultra: 1, high: 0.9, medium: 0.78, low: 0.62 };
   const post = new Post(renderer, scene, camera, { bloom: params.get('bloom') !== '0', aa: params.get('aa') !== '0', scale, preset: PRESET_ORDER[presetIdx] });
-  post.onPreset = (p) => city.setBundled(!PRESETS[p].ao);   // render bundles only with a plain (non-MRT) scene pass
+  post.onPreset = (p) => { city.setBundled(!PRESETS[p].ao); city.props.drawScale = DRAW_SCALE[p]; };
+  post.onPreset(post.preset);
   // Headlight shadow map: only the car bodies cast into it (the city does not cast), re-rendered
   // every Nth frame by preset (stale by one frame = ~1 m of light travel at 130 km/h, invisible:
   // map and light matrix stay paired, so shadows stay anchored to their casters).
@@ -275,6 +278,7 @@ async function main() {
     post.warmup();
   };
   city.props.warmup(true);   // every prop LOD compiled + drawn now, not when it first comes into range
+  damage.warmup(true);
   visual.update(pos, quat, car.out);
   await warm();
   if (ai.cars.length) {
@@ -309,6 +313,7 @@ async function main() {
   }
   await post.warmupFrames();   // props still forced visible: each preset's scene pass compiles them too
   city.props.warmup(false);
+  damage.warmup(false);
   city.update(camera, true);
   // The warm-up queued a dozen full renders on the GPU: wait until it has worked through them, or
   // the first race frames block behind that backlog (a 130-220 ms frame 0.2-0.6 s after loading).
@@ -329,9 +334,10 @@ async function main() {
   // the 40 fps bar rather than 30): below it -> cheaper preset first (no hitch), then -0.1 scale
   // (min 0.5); above 55 fps with 90 % of frames < 22 ms -> +0.1 (only if nothing was lowered).
   // The settled scale and preset are stored per window size, so the next visit is one window.
-  const WINDOW = 1000, FPS_LOW = Math.max(36, capFps * 1.2), FPS_HIGH = Math.max(55, capFps * 1.8), STEP = 0.1, MIN_SCALE = 0.5, TUNE_TIMEOUT = 30000;
+  const WINDOW = 1000, FPS_LOW = isTouch ? 52 : 45, FPS_HIGH = Math.max(58, capFps * 1.8), STEP = 0.1, MIN_SCALE = 0.5, TUNE_TIMEOUT = 12000;
   let winStart = 0, tuning = false, calSteps = 0, upSteps = 0, wentDown = false, tuneStart = 0;
-  const startScale = () => Math.min(maxScale, Math.max(0.5, Math.round(Math.sqrt(0.9e6 / (innerWidth * innerHeight * Math.min(devicePixelRatio, 1) ** 2)) * 10) / 10));
+  let driveWinTime = 0, driveFrames = 0;
+  const startScale = () => guessScale();
   const setPreset = (i: number) => {
     presetIdx = i;
     post.preset = PRESET_ORDER[i];
@@ -352,23 +358,23 @@ async function main() {
     const k = `${innerWidth}x${innerHeight}`;
     if (k === lastSize) return;
     lastSize = k;
-    SCALE_KEY = `nr.scale.${k}`; PRESET_KEY = `nr.preset.${k}`;
+    SCALE_KEY = `nr.scale.v3.${k}`; PRESET_KEY = `nr.preset.v3.${k}`;
     if (!adaptive) return;
     let sc = NaN, pr: string | null = null;
     try { sc = Number(localStorage.getItem(SCALE_KEY) ?? NaN); pr = localStorage.getItem(PRESET_KEY); } catch { /* storage blocked */ }
     stored = sc;
     applyScale(sc >= MIN_SCALE && sc <= maxScale ? sc : startScale());
     if (pr && PRESET_ORDER.includes(pr as PresetName)) { presetIdx = PRESET_ORDER.indexOf(pr as PresetName); post.preset = pr as PresetName; }
-    else if (innerWidth * innerHeight > 1.2e6 && presetIdx < 2) { setPreset(2); }
+    else { setPreset(PRESET_ORDER.indexOf(defaultPreset)); }
     setExtra();
   }
   const startTuning = (full: boolean) => {
     tuning = true; wentDown = false; tuneStart = performance.now();
     calSteps = full || Number.isNaN(stored) ? 3 : 1;
-    upSteps = full ? 2 : 0;
-    if (full) { setPreset(2); applyScale(startScale()); }   // starts at 'high'; the tuner steps down if the device can't hold 42+ fps in the showroom
+    upSteps = full ? 1 : 0;
+    if (full || Number.isNaN(stored)) { setPreset(PRESET_ORDER.indexOf(defaultPreset)); applyScale(startScale()); }
     frameTimes.length = 0;
-    winStart = performance.now() + 2500;   // the cover has just appeared: let the frame pacing settle
+    winStart = performance.now() + 1200;   // the cover has just appeared: let the frame pacing settle
     menu.setTuning(true);
     setExtra();
   };
@@ -428,10 +434,12 @@ async function main() {
     bench.ts = (renderer as unknown as { hasFeature(f: string): boolean }).hasFeature('timestamp-query');
     (renderer.backend as unknown as { trackTimestamp: boolean }).trackTimestamp = bench.ts;
     bench.active = true;
+    const benchCap = capFps || autoCap(hz, isTouch ? 60 : 60);
+    const benchCapInterval = 1000 / benchCap;
     const collect = async (ms: number, uncap: boolean) => {
       bench.uncap = uncap; bench.stamps = []; bench.cb = []; bench.gpu = [];
       await sleep(ms);
-      return stats(bench.stamps.slice(), bench.cb.slice(), bench.gpu.slice(), uncap ? 0 : capInterval);
+      return stats(bench.stamps.slice(), bench.cb.slice(), bench.gpu.slice(), uncap ? 0 : benchCapInterval);
     };
     const phases: PhaseResult[] = [];
     for (const [i, name] of PRESET_ORDER.entries()) {
@@ -440,11 +448,11 @@ async function main() {
       bench.uncap = true; await sleep(2000);
       benchProgress(`${name} (${i + 1}/${PRESET_ORDER.length}): uncapped (what the device can do)`);
       const open = await collect(5000, true);
-      benchProgress(`${name} (${i + 1}/${PRESET_ORDER.length}): locked at ${capFps} fps`);
+      benchProgress(`${name} (${i + 1}/${PRESET_ORDER.length}): locked at ${benchCap} fps`);
       const capped = await collect(8000, false);
       phases.push({ preset: name, open, capped });
     }
-    const recommended = recommend(phases, capFps);
+    const recommended = recommend(phases, benchCap);
     let soakRes: BenchReport['soak'];
     if (soak) {
       setPreset(PRESET_ORDER.indexOf(recommended as PresetName)); setExtra();
@@ -732,10 +740,24 @@ async function main() {
     // 60/120/144 Hz display averages exactly the cap instead of rounding down.
     if (capInterval === 0 || tuning || bench.uncap || now - lastRenderAt >= capInterval - 2) {
       lastRenderAt = capInterval && !bench.uncap && now - lastRenderAt < capInterval * 1.5 ? lastRenderAt + capInterval : now;
-      if (++frameNo % (params.has('se') ? num('se', 2) : PRESETS[post.preset].shadowEvery) === 0) for (const sh of headShadows) sh.needsUpdate = true;
+      const hasCasters = ai.cars.length > 0 || net !== null || damage.debrisCount > 0;
+      if (hasCasters && ++frameNo % (params.has('se') ? num('se', 2) : PRESETS[post.preset].shadowEvery) === 0) for (const sh of headShadows) sh.needsUpdate = true;
       post.render();
       probe?.update(pos, visual.root);
       hud.rendered(now);
+      if (adaptive && state === 'race' && !bench.active && car.out[OUT.speed] > 5 && frame < 0.095) {
+        driveWinTime += frame;
+        if (++driveFrames >= 60) {
+          const dfps = driveFrames / driveWinTime;
+          driveWinTime = 0; driveFrames = 0;
+          const medIdx = PRESET_ORDER.indexOf('medium');
+          if (dfps < 40 && !presetPinned && presetIdx < medIdx) {
+            setPreset(presetIdx + 1); setExtra();
+          } else if (dfps < 28 && !presetPinned && presetIdx < PRESET_ORDER.length - 1) {
+            setPreset(presetIdx + 1); setExtra();
+          }
+        }
+      } else if (state !== 'race') { driveWinTime = 0; driveFrames = 0; }
       if (bench.active) {
         bench.stamps.push(now);
         if (bench.ts && !bench.pending) {

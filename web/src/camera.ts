@@ -22,13 +22,13 @@ import type RAPIER from '@dimforge/rapier3d-compat';
 import { OUT } from './physics/core';
 
 const UP = new THREE.Vector3(0, 1, 0);
-const OMEGA = 5.0;          // rad/s: spring natural frequency (lower = lazier camera)
-const ZETA = 0.85;          // damping ratio
-const MAX_LAG = 1.4;        // m: cap on how far the camera can stray from its rest offset
+const OMEGA = 7.2;          // rad/s: spring natural frequency (tighter response so steering never feels rubbery)
+const ZETA = 0.88;          // damping ratio
+const MAX_LAG = 1.1;        // m: cap on how far the camera can stray from its rest offset
 const DIST = 6.2, HEIGHT = 2.0, LOOK_AHEAD = 2.5, LOOK_HEIGHT = 0.9;
-const SPRING_STRENGTH = 12; // 1/s: relative-offset smoothing (63 % in 83 ms: barely adds to the tuned spring's lag)
-const PUNCH_DEG = 5, PUNCH_IN = 3, PUNCH_OUT = 2;   // FOV punch: max, attack/release rates (95 % in ~1 s / 1.5 s)
-const FOV_EXTRA_MAX = 16;   // deg: cap on speed FOV + punch together
+const SPRING_STRENGTH = 20; // 1/s: relative-offset smoothing
+const PUNCH_DEG = 4, PUNCH_IN = 3, PUNCH_OUT = 2;   // FOV punch: max, attack/release rates
+const FOV_EXTRA_MAX = 11;   // deg: cap on speed FOV + punch together (keeps high-speed frustum expansion reasonable)
 const SHAKE_DEG = 0.15, SHAKE_BAND = 0.03;          // redline shake: max amplitude, rpm window below redline
 const D2R = Math.PI / 180;
 
@@ -48,6 +48,13 @@ export class CameraRig {
   private rv = new THREE.Vector3();
   private fov = 60;
   private o = new THREE.Vector3();                // smoothed relative offset (after wall pull-in)
+  private fwd = new THREE.Vector3();
+  private flat = new THREE.Vector3();
+  private rTarget = new THREE.Vector3();
+  private tmp = new THREE.Vector3();
+  private want = new THREE.Vector3();
+  private head = new THREE.Vector3();
+  private bumperQ = new THREE.Quaternion().setFromAxisAngle(UP, Math.PI);
   private punch = 0;                              // deg
   private shake = 0;                              // 0..1 redline shake envelope
   private t = 0;
@@ -65,7 +72,7 @@ export class CameraRig {
     const cam = this.camera;
     const speed = out[OUT.speed];
     this.t += dt;
-    const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(carQuat);
+    const fwd = this.fwd.set(0, 0, 1).applyQuaternion(carQuat);
 
     // FOV punch: throttle, weighted by forward acceleration so it fades at top speed / on the limiter
     const aFwd = carAcc.dot(fwd);
@@ -76,8 +83,8 @@ export class CameraRig {
     this.shake += (onRedline - this.shake) * (1 - Math.exp(-dt * 7));
 
     if (this.mode === 'bumper') {
-      cam.position.copy(carPos).add(new THREE.Vector3(0, 0.62, 0.25).applyQuaternion(carQuat));
-      cam.quaternion.copy(carQuat).multiply(new THREE.Quaternion().setFromAxisAngle(UP, Math.PI));
+      cam.position.copy(carPos).add(this.tmp.set(0, 0.62, 0.25).applyQuaternion(carQuat));
+      cam.quaternion.copy(carQuat).multiply(this.bumperQ);
       this.applyShake(0.45);                   // subtler: the bumper view already moves with the body
       this.setFov(72, this.speedFov(speed) * 0.6, this.punch * 0.6, FOV_EXTRA_MAX * 0.6, dt);
       this.first = true;
@@ -85,13 +92,13 @@ export class CameraRig {
     }
 
     // heading (lagged): a car on its nose/tail has no ground heading; keep the last
-    const flat = new THREE.Vector3(fwd.x, 0, fwd.z);
+    const flat = this.flat.set(fwd.x, 0, fwd.z);
     if (flat.lengthSq() > 0.04) {
       flat.normalize();
       if (this.first) this.heading.copy(flat);
-      else this.heading.lerp(flat, 1 - Math.exp(-dt * 6)).normalize();
+      else this.heading.lerp(flat, 1 - Math.exp(-dt * 10)).normalize();
     }
-    const rTarget = this.heading.clone().multiplyScalar(-DIST).addScaledVector(UP, HEIGHT);
+    const rTarget = this.rTarget.copy(this.heading).multiplyScalar(-DIST).addScaledVector(UP, HEIGHT);
 
     if (this.first) {
       this.r.copy(rTarget);
@@ -101,22 +108,23 @@ export class CameraRig {
       const k = OMEGA * OMEGA, c = 2 * ZETA * OMEGA;
       const n = Math.max(1, Math.ceil(dt * 120)), h = dt / n;
       for (let i = 0; i < n; i++) {
-        const f = rTarget.clone().sub(this.r).multiplyScalar(k).addScaledVector(this.rv, -c).sub(carAcc);
+        const f = this.tmp.copy(rTarget).sub(this.r).multiplyScalar(k).addScaledVector(this.rv, -c).sub(carAcc);
         this.rv.addScaledVector(f, h);
         this.r.addScaledVector(this.rv, h);
       }
-      const err = this.r.clone().sub(rTarget);
+      const err = this.tmp.copy(this.r).sub(rTarget);
       if (err.length() > MAX_LAG) this.r.copy(rTarget).add(err.setLength(MAX_LAG));
     }
-    const want = carPos.clone().add(this.r);
+    const want = this.want.copy(carPos).add(this.r);
 
     // keep the camera out of walls: pull it in along the car->camera line
-    const head = carPos.clone().addScaledVector(UP, 1.0);
+    const head = this.head.copy(carPos).addScaledVector(UP, 1.0);
     const hit = this.pw.raycast(head, want, this.car);
     let wall = Infinity;                         // max allowed distance from `head`
     if (hit) {
-      const f = Math.max(0.15, Math.min(1, (hit.toi - 0.4) / head.distanceTo(want)));   // measure BEFORE moving want
-      wall = f * head.distanceTo(want);
+      const dist = head.distanceTo(want);
+      const f = Math.max(0.15, Math.min(1, (hit.toi - 0.4) / dist));   // measure BEFORE moving want
+      wall = f * dist;
       want.lerpVectors(head, want, f);
     }
 
@@ -127,7 +135,7 @@ export class CameraRig {
     if (this.o.length() > wall) this.o.setLength(wall);
 
     cam.position.copy(head).add(this.o);
-    cam.lookAt(carPos.clone().addScaledVector(this.heading, LOOK_AHEAD).addScaledVector(UP, LOOK_HEIGHT));
+    cam.lookAt(this.tmp.copy(carPos).addScaledVector(this.heading, LOOK_AHEAD).addScaledVector(UP, LOOK_HEIGHT));
     this.applyShake(1);
     this.setFov(60, this.speedFov(speed), this.punch, FOV_EXTRA_MAX, dt);
     this.first = false;
@@ -144,15 +152,15 @@ export class CameraRig {
     this.camera.rotateZ(n(3) * a * 0.6);
   }
 
-  /** +0..14 degrees from 60 km/h up (sense of speed). */
-  private speedFov(speed: number) { return Math.min(14, Math.max(0, Math.abs(speed) * 3.6 - 60) * 0.075); }
+  /** +0..10 degrees from 60 km/h up (sense of speed). */
+  private speedFov(speed: number) { return Math.min(10, Math.max(0, Math.abs(speed) * 3.6 - 60) * 0.06); }
 
   /** base + speed FOV is eased here; `punch` arrives already eased (own attack/release). Speed
    *  FOV + punch together never exceed `cap` degrees above the mode's base. */
   private setFov(base: number, speedExtra: number, punch: number, cap: number, dt: number) {
     this.fov += (base + speedExtra - this.fov) * (1 - Math.exp(-dt * 3));
     const fov = Math.min(this.fov + punch, base + cap);
-    if (Math.abs(this.camera.fov - fov) > 0.01) {
+    if (Math.abs(this.camera.fov - fov) > 0.05) {
       this.camera.fov = fov;
       this.camera.updateProjectionMatrix();
     }

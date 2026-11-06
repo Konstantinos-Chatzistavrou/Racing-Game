@@ -35,7 +35,7 @@ export class UltraFx {
     this.ao = gtao(depth, normal, camera);   // built even when switched off (?ao=0): it only runs if its texture is sampled
     this.ao.resolutionScale = aoRes;
     this.ao.useTemporalFiltering = true;
-    this.ao.samples.value = 12;
+    this.ao.samples.value = 8;
     this.ao.radius.value = 0.6;
     this.ao.thickness.value = 1.5;
     this.ao.scale.value = 1.2;

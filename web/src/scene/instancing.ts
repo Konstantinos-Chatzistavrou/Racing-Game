@@ -47,6 +47,8 @@ export class CityInstances {
   private dir = new THREE.Vector3();
   /** instances drawn in the last update (all LODs) */
   drawn = 0;
+  /** multiplier on prop draw distances (lowered on medium/low presets to cut distant fogged instances) */
+  drawScale = 1;
 
   constructor(library: THREE.Object3D, json: PropsJson) {
     this.root.name = 'city_props';
@@ -67,9 +69,10 @@ export class CityInstances {
         pos[i * 3] = p.x; pos[i * 3 + 1] = p.y; pos[i * 3 + 2] = p.z;
       }
       const lods: LodSet[] = [];
-      for (let k = 0; k < 3; k++) {
-        const node = nodes.get(`${name}__lod${k}`);
-        if (!node) break;
+      // Single instanced draw call per asset (using LOD1 where available, else LOD0): avoids splitting
+      // small prop counts across 3 simultaneous LOD draw calls and 3 buffer uploads per asset every frame.
+      const singleNode = nodes.get(`${name}__lod1`) ?? nodes.get(`${name}__lod0`);
+      for (const node of singleNode ? [singleNode] : []) {
         const prims: THREE.Mesh[] = [];
         node.traverse((o) => { if ((o as THREE.Mesh).isMesh) prims.push(o as THREE.Mesh); });
         // all primitives of one glTF mesh share the node transform (= the dequantization matrix)
@@ -86,7 +89,7 @@ export class CityInstances {
           im.frustumCulled = false;   // culled here, per instance
           im.castShadow = false;
           im.receiveShadow = true;
-          im.name = `${name}__lod${k}`;
+          im.name = node.name;
           for (const mat of (Array.isArray(im.material) ? im.material : [im.material]) as THREE.MeshStandardMaterial[]) {
             // blended props (aircon grille, glass) -> alpha test: no sorting, depth-correct, cheaper
             if (mat.transparent) { mat.transparent = false; mat.alphaTest = 0.5; mat.depthWrite = true; }
@@ -125,20 +128,21 @@ export class CityInstances {
   update(camera: THREE.Camera, force = false) {
     const cp = camera.position;
     camera.getWorldDirection(this.dir);
-    if (!force && cp.distanceToSquared(this.lastPos) < 0.25 && this.dir.dot(this.lastDir) > 0.9995) return;
+    if (!force && cp.distanceToSquared(this.lastPos) < 3.2 && this.dir.dot(this.lastDir) > 0.9985) return;
     this.lastPos.copy(cp);
     this.lastDir.copy(this.dir);
     camera.updateMatrixWorld();
     this.projView.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     this.frustum.setFromProjectionMatrix(this.projView, camera.coordinateSystem);
     for (const a of this.assets) for (const l of a.lods) l.n = 0;
-    const cx = cp.x, cy = cp.y, cz = cp.z, sph = this.sphere;
+    const cx = cp.x, cy = cp.y, cz = cp.z, sph = this.sphere, ds = this.drawScale, ds2 = ds * ds;
     for (const c of this.cells) {
       const dc = c.box.distanceToPoint(cp);
-      if (dc > c.reach || !this.frustum.intersectsBox(c.box)) continue;
+      if (dc > c.reach * ds || !this.frustum.intersectsBox(c.box)) continue;
       for (const { asset: a, idx } of c.items) {
-        if (dc > a.draw) continue;
-        const draw2 = a.draw * a.draw, d1 = a.d1 * a.d1, d2 = a.d2 * a.d2, last = a.lods.length - 1;
+        const adraw = a.draw * ds;
+        if (dc > adraw) continue;
+        const draw2 = adraw * adraw, d1 = a.d1 * a.d1 * ds2, d2 = a.d2 * a.d2 * ds2, last = a.lods.length - 1;
         for (let j = 0; j < idx.length; j++) {
           const i = idx[j], x = a.pos[i * 3], y = a.pos[i * 3 + 1], z = a.pos[i * 3 + 2];
           const dd = (x - cx) * (x - cx) + (y - cy) * (y - cy) + (z - cz) * (z - cz);
@@ -147,7 +151,8 @@ export class CityInstances {
           sph.radius = a.radius;
           if (!this.frustum.intersectsSphere(sph)) continue;
           const l = a.lods[Math.min(last, dd < d1 ? 0 : dd < d2 ? 1 : 2)];
-          (l.attr.array as Float32Array).set(l.mats.subarray(i * 16, i * 16 + 16), l.n * 16);
+          const dst = l.attr.array as Float32Array, src = l.mats, si = i * 16, di = l.n * 16;
+          for (let k = 0; k < 16; k++) dst[di + k] = src[si + k];
           l.n++;
         }
       }

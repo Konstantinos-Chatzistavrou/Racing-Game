@@ -118,6 +118,7 @@ export class CarVisual {
   dim = 1;
   private qa = new THREE.Quaternion();
   private qb = new THREE.Quaternion();
+  private tmpCentre = new THREE.Vector3();
   private physInv = new THREE.Matrix4();
   readonly cg: THREE.Vector3;
   headlights: THREE.SpotLight[] = [];
@@ -142,7 +143,7 @@ export class CarVisual {
     }
     this.paint = setupCarMaterials(model, cfg, null);
     // The player's own car never needs to be in its headlight shadow map (the spots sit at its nose and shine away
-    // from it; screenshot-identical): skipping its 124k triangles + dent shader saves the biggest part of every
+    // from it; screenshot-identical): skipping its triangles + dent shader saves the biggest part of every
     // shadow-update frame. Other cars (AI, remote) still cast.
     model.traverse((o) => { if ((o as THREE.Mesh).isMesh) o.castShadow = false; });
     // Headlights: two shadow-casting spots (the only dynamic shadows in the scene). A garage car swap passes the
@@ -236,7 +237,7 @@ export class CarVisual {
     let spinFrame = 0;
     for (let i = 0; i < 4; i++) {
       const w = this.wheels[i], o = OUT.wheel(i);
-      const centre = new THREE.Vector3(out[o], out[o + 1], out[o + 2]).applyMatrix4(inv).add(this.cg);
+      const centre = this.tmpCentre.set(out[o], out[o + 1], out[o + 2]).applyMatrix4(inv).add(this.cg);
       centre.x += Math.sign(centre.x) * off;                 // model track is a little wider than physics
       this.qa.setFromAxisAngle(Y, out[o + 3]);               // steer about the car's up axis
       this.qb.setFromAxisAngle(X, out[o + 4]);               // spin about the axle

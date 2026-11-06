@@ -12,15 +12,17 @@ function toFloat(a: THREE.BufferAttribute | THREE.InterleavedBufferAttribute): T
   return new THREE.BufferAttribute(out, a.itemSize);
 }
 
+const NO_DENT_PREFIX = ['wheel_', 'caliper_', 'interior', 'seat', 'dashboard', 'steering', 'wheel_well', 'underbody', 'hood_inner'];
+
 /**
  * Merge the meshes under `model` that are not inside any of `keep` (nodes that move, e.g. the wheels)
- * and have a single material, grouped by (material, castShadow, receiveShadow, renderOrder, visible).
+ * and have a single material, grouped by (material, castShadow, receiveShadow, renderOrder, visible, noDent).
  * The merged meshes are added to `model`; the originals are removed. Returns the draw calls saved.
  */
 export function mergeStaticMeshes(model: THREE.Object3D, keep: THREE.Object3D[]): number {
   model.updateMatrixWorld(true);
   const inv = new THREE.Matrix4().copy(model.matrixWorld).invert();
-  const groups = new Map<string, { mat: THREE.Material; src: THREE.Mesh; parts: THREE.Mesh[] }>();
+  const groups = new Map<string, { mat: THREE.Material; src: THREE.Mesh; parts: THREE.Mesh[]; noDent: boolean }>();
   const ids = new Map<THREE.Material, number>();
   const isKept = (o: THREE.Object3D) => { for (let p: THREE.Object3D | null = o; p && p !== model; p = p.parent) if (keep.includes(p)) return true; return false; };
   model.traverse((o) => {
@@ -29,14 +31,16 @@ export function mergeStaticMeshes(model: THREE.Object3D, keep: THREE.Object3D[])
     if (Array.isArray(m.material) || !m.geometry.attributes.position) return;
     const mat = materialsOf(m)[0];
     if (!ids.has(mat)) ids.set(mat, ids.size);
-    const key = `${ids.get(mat)}|${+m.castShadow}${+m.receiveShadow}${+m.visible}|${m.renderOrder}`;
+    const noDent = NO_DENT_PREFIX.some((p) => m.name.startsWith(p));
+    const attrs = Object.keys(m.geometry.attributes).sort().join(',');
+    const key = `${ids.get(mat)}|${+m.castShadow}${+m.receiveShadow}${+m.visible}${+noDent}|${m.renderOrder}|${attrs}`;
     let g = groups.get(key);
-    if (!g) groups.set(key, (g = { mat, src: m, parts: [] }));
+    if (!g) groups.set(key, (g = { mat, src: m, parts: [], noDent }));
     g.parts.push(m);
   });
   let saved = 0;
   const rel = new THREE.Matrix4();
-  for (const { mat, src, parts } of groups.values()) {
+  for (const { mat, src, parts, noDent } of groups.values()) {
     if (parts.length < 2) continue;
     // attributes present on every part
     const names = Object.keys(parts[0].geometry.attributes).filter((n) => parts.every((p) => p.geometry.attributes[n]));
@@ -73,7 +77,7 @@ export function mergeStaticMeshes(model: THREE.Object3D, keep: THREE.Object3D[])
     }
     merged.computeBoundingSphere();
     const mesh = new THREE.Mesh(merged, mat);
-    mesh.name = `merged_${mat.name}`;
+    mesh.name = noDent ? `underbody_merged_${mat.name}` : `merged_${mat.name}`;
     mesh.castShadow = src.castShadow; mesh.receiveShadow = src.receiveShadow; mesh.visible = src.visible; mesh.renderOrder = src.renderOrder;
     model.add(mesh);
     for (const p of parts) p.removeFromParent();
