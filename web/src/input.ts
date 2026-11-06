@@ -19,10 +19,11 @@ export class Input {
   onCamera = () => {};
   onHud = () => {};
   onLights = () => {};
+  onGarage = () => {};
 
   constructor() {
     addEventListener('keydown', (e) => {
-      if (e.repeat) return;
+      if (e.repeat || (e.target as HTMLElement)?.tagName === 'INPUT') return;
       this.keys.add(e.code);
       this.source = 'keys';
       this.onAnyInput();
@@ -33,6 +34,7 @@ export class Input {
         case 'KeyC': this.onCamera(); break;
         case 'KeyH': this.onHud(); break;
         case 'KeyL': this.onLights(); break;
+        case 'KeyG': this.onGarage(); break;
         case 'Digit1': this.assists.abs = !this.assists.abs; break;
         case 'Digit2': this.assists.tc = !this.assists.tc; break;
         case 'Digit3': this.assists.esc = !this.assists.esc; break;

@@ -29,7 +29,12 @@ import { autoCap, benchClose, benchProgress, benchResults, measureRefresh, recom
 const params = new URLSearchParams(location.search);
 const num = (k: string, d: number) => (params.has(k) ? Number(params.get(k)) : d);
 const loading = document.getElementById('loading')!;
-const say = (s: string) => (loading.textContent = s);
+const loadFill = document.getElementById('load-fill');
+const loadMsg = document.getElementById('load-msg');
+const say = (s: string, pct?: number) => {
+  if (loadMsg) loadMsg.textContent = s; else loading.textContent = s;
+  if (loadFill && pct !== undefined) loadFill.style.width = `${Math.round(Math.max(5, Math.min(100, pct)))}%`;
+};
 
 async function main() {
   const refreshP = measureRefresh();   // runs while the renderer and assets load
@@ -115,25 +120,43 @@ async function main() {
     else void document.documentElement.requestFullscreen?.({ navigationUI: 'hide' }).catch(() => {});
   });
 
-  // --- physics + content ----------------------------------------------------------------------
-  say('Loading physics…');
-  await Promise.all([loadCore(), loadRapier()]);
+  // --- physics + content (parallel prefetch for fast startup) ---------------------------------
+  say('Loading physics & track…', 12);
   const DEFAULT_VISUAL = 'cars/vela_gt.visual.json';
-  const fetchVisualCfg = (path: string) => fetch(`/data/${path}`).then((r) => r.json() as Promise<CarVisualConfig>);
-  const [catalog, defaultCfg, route] = await Promise.all([
-    fetch('/data/cars/catalog.json').then((r) => r.json() as Promise<{ cars: CatalogCar[] }>).then((j) => j.cars),
-    fetchVisualCfg(DEFAULT_VISUAL),   // the shared body: traffic, remote players, and every catalog car without its own
-    fetch('/data/tracks/city_route.json').then((r) => r.json()),
-  ]);
+  const visualCfgCache = new Map<string, Promise<CarVisualConfig>>();
+  const fetchVisualCfg = (path: string) => {
+    let p = visualCfgCache.get(path);
+    if (!p) { p = fetch(`/data/${path}`).then((r) => r.json() as Promise<CarVisualConfig>); visualCfgCache.set(path, p); }
+    return p;
+  };
   const physics: Record<string, unknown> = {};
-  await Promise.all(catalog.map((c) => fetch(`/data/${c.physics}`).then((r) => r.json()).then((j) => { physics[c.id] = j; })));
+  const catalogP = fetch('/data/cars/catalog.json').then((r) => r.json() as Promise<{ cars: CatalogCar[] }>).then(async (j) => {
+    await Promise.all(j.cars.map((c) => fetch(`/data/${c.physics}`).then((r) => r.json()).then((d) => { physics[c.id] = d; })));
+    return j.cars;
+  });
+  const [catalog, defaultCfg, route] = await Promise.all([
+    catalogP,
+    fetchVisualCfg(DEFAULT_VISUAL),
+    fetch('/data/tracks/city_route.json').then((r) => r.json()),
+    loadCore(),
+    loadRapier(),
+  ]);
   const sel = loadSelection(catalog, params);
+  const visualPathOf = (id: string) => catalog.find((c) => c.id === id)?.visual ?? DEFAULT_VISUAL;
+  const shapeOf = (cfg: CarVisualConfig): CarShape => {
+    const cb = cfg.collision_box;
+    return { boxSize: cb.size_m, boxCentre: cb.centre_in_model_m, endLift: cb.end_lift_m, endLiftStart: cb.end_lift_start_m };
+  };
+  let visualPath = visualPathOf(sel.car);
+  // Start downloading the player's car GLTF in parallel with the city GLB!
+  const carLoadP = (visualPath === DEFAULT_VISUAL ? Promise.resolve(defaultCfg) : fetchVisualCfg(visualPath))
+    .then(async (cfg) => ({ cfg, vis: await CarVisual.load(cfg) }));
   const coreJson = () => JSON.stringify(applyMods(physics[sel.car], modsOf(sel)));
   const carKey = () => `${sel.car}|${JSON.stringify(modsOf(sel))}`;
   let builtKey = carKey();
   let core = new CoreCar(coreJson());
   const pw = new PhysicsWorld();
-  const city = await loadCity(scene, pw, core.info.surfaces, (f) => say(`Loading city… ${Math.round(f * 100)}%`), webgpu && num('bundle', 1) === 1);
+  const city = await loadCity(scene, pw, core.info.surfaces, (f) => say(`Loading city… ${Math.round(f * 100)}%`, 20 + f * 55), webgpu && num('bundle', 1) === 1);
   const cityLights = new CityLighting(scene, city.lights, webgpu, num('lights', 12));
   // Reflections: capture the lit city once from street level (the car isn't in the scene yet).
   {
@@ -145,20 +168,14 @@ async function main() {
     // diffuse part lit every wall like an overcast sky and undid the darkness.
     scene.environmentIntensity = 0.5;
   }
-  say('Loading car…');
+  say('Loading car…', 80);
   // Frame cap: uncapped (native display refresh) by default; ?cap=N pins a specific frame rate.
   const hz = await refreshP;
   const capFps = params.has('cap') ? num('cap', 0) : 0;
   const capInterval = capFps > 0 ? 1000 / capFps : 0;
-  // The player's body: each catalog car may bring its own model + visual config (garage swaps it).
-  const visualPathOf = (id: string) => catalog.find((c) => c.id === id)?.visual ?? DEFAULT_VISUAL;
-  const shapeOf = (cfg: CarVisualConfig): CarShape => {
-    const cb = cfg.collision_box;
-    return { boxSize: cb.size_m, boxCentre: cb.centre_in_model_m, endLift: cb.end_lift_m, endLiftStart: cb.end_lift_start_m };
-  };
-  let visualPath = visualPathOf(sel.car);
-  let visualCfg = visualPath === DEFAULT_VISUAL ? defaultCfg : await fetchVisualCfg(visualPath);
-  let visual = await CarVisual.load(visualCfg);
+  const loadedCar = await carLoadP;
+  let visualCfg = loadedCar.cfg;
+  let visual = loadedCar.vis;
   scene.add(visual.root);
   visual.setPaint(paintOf(sel, catalog), sel.finish);
   // Live car reflection probe (src/fx/carProbe.ts): ?probe=N renders one 128 px cube face every Nth drawn frame; 0 = static city capture only.
@@ -209,8 +226,15 @@ async function main() {
   type State = 'boot' | 'title' | 'garage' | 'busy' | 'countdown' | 'race' | 'paused' | 'results';
   let state: State = 'boot';
   let pausedFrom: State = 'race';
+  let settledShowroom = 0;
   const driving = () => state === 'race' || state === 'countdown' || state === 'paused' || state === 'results';
-  const setState = (st: State) => { state = st; document.body.classList.toggle('menu', !driving()); syncHeadlights(); };
+  const setState = (st: State) => {
+    state = st;
+    if (!driving()) settledShowroom = 0;
+    document.body.classList.toggle('menu', !driving());
+    syncHeadlights();
+    if (city) city.props.drawScale = driving() ? DRAW_SCALE[post.preset] : Math.min(0.45, DRAW_SCALE[post.preset]);
+  };
   // In the showroom (title/garage/busy) the beams only bloom into a white veil over the car: nearly off there, full once driving.
   const syncHeadlights = () => { visual.dim = driving() ? 1 : 0.06; visual.applyHeadlights(); };
   // brake 0.5, not 1: a full brake while stopped engages the pedal reverse
@@ -218,7 +242,7 @@ async function main() {
   let lapTimes: number[] = [], raceFinishedAt = -1;
   /** Fresh car on the start line, repaired, traffic back at its grid slots, lap counter at zero. */
   const resetCar = () => {
-    spawn(); core.repair(); damage.repair(); input.hold = true;
+    spawn(); core.repair(); damage.repair(); input.hold = true; settledShowroom = 0;
     race = new CoreRace(routeJson, sel.mode === 'race' ? sel.laps : 0);
     raceCar = race.addCar(car.body.translation());
     raceT0 = ticks * DT;
@@ -238,12 +262,14 @@ async function main() {
       camera: () => rig.toggle(),
       toggleGearbox: () => (input.assists.autoGearbox = !input.assists.autoGearbox),
       unlockAudio: () => audio.unlock(),
+      garage: () => { if (driving()) toGarage(); },
     });
   };
   const onTouch = () => { if (driving()) { enableTouch(); removeEventListener('touchstart', onTouch); } };
   addEventListener('touchstart', onTouch, { passive: true });
   input.onCamera = () => { if (driving()) rig.toggle(); };
   input.onHud = () => { if (driving()) hud.toggle(); };
+  input.onGarage = () => { if (driving()) toGarage(); };
 
   // Showroom lights for the title/garage views: a soft, short-range key spot that reaches the car
   // (~7 m) without spilling onto the building facade above it. Intensity changes only (never visibility).
@@ -253,7 +279,7 @@ async function main() {
   // --- post-processing ------------------------------------------------------------------------
   const DRAW_SCALE: Record<PresetName, number> = { max: 1, ultra: 0.9, high: 0.9, medium: 0.78, low: 0.62 };
   const post = new Post(renderer, scene, camera, { bloom: params.get('bloom') !== '0', aa: params.get('aa') !== '0', scale, preset: PRESET_ORDER[presetIdx] });
-  post.onPreset = (p) => { city.setBundled(!PRESETS[p].ao); city.props.drawScale = DRAW_SCALE[p]; };
+  post.onPreset = (p) => { city.setBundled(!PRESETS[p].ao); city.props.drawScale = driving() ? DRAW_SCALE[p] : Math.min(0.45, DRAW_SCALE[p]); };
   post.onPreset(post.preset);
   // Headlight shadow map: only the car bodies cast into it (the city does not cast), re-rendered
   // every Nth frame by preset (stale by one frame = ~1 m of light travel at 130 km/h, invisible:
@@ -264,59 +290,47 @@ async function main() {
   rig.update(1, pos.copy(car.body.translation() as THREE.Vector3), quat.copy(car.body.rotation() as THREE.Quaternion), new THREE.Vector3(), car.out);
   cityLights.update(1, camera);
   city.update(camera, true);
-  say('Compiling shaders…');
-  // Warm-up behind the loading screen: every pipeline the race can need is built now, not as a
-  // freeze mid-race. compileAsync covers the scene's materials; the post chains, shadow pass and
-  // render-target pipelines only exist once rendered, so every preset is RENDERED in each state:
-  // remote car clone, AI cars in the beam, headlights off, broken lights (their dark material
-  // clones), engine fire light on. Light states are intensity changes (never visibility), so they
-  // share pipelines; the dark light clones are new materials with the same program.
+  say('Compiling shaders…', 90);
+  // Fast unified warm-up behind the loading screen: compile all scene materials once with unculled
+  // meshes + props + particle sprites so GPU buffers, bind groups, and pipelines are created in one pass.
   const warm = async () => {
     await renderer.compileAsync(scene, camera);
     probe?.captureAll(pos, visual.root);
     for (const sh of headShadows) sh.needsUpdate = true;
     post.warmup();
   };
-  city.props.warmup(true);   // every prop LOD compiled + drawn now, not when it first comes into range
+  city.props.warmup(true);
   damage.warmup(true);
   visual.update(pos, quat, car.out);
-  await warm();
   if (ai.cars.length) {
-    // draw the AI cars once in the headlight beam (their pipelines + shadow pass), then send them off
     const yaw = Math.atan2(Math.cos(s0.heading), -Math.sin(s0.heading));
     ai.stage(pos.clone().setY(pos.y - core.info.cgHeight - 0.05), yaw);
     ai.update(1, camera);
+  }
+  {
+    const culled: THREE.Object3D[] = [];
+    scene.traverse((o) => { if (o.frustumCulled && (o as THREE.Mesh).isMesh) { o.frustumCulled = false; culled.push(o); } });
     await warm();
+    // one real frame per likely preset with culling off: GPU buffers/bind groups for every city tile + prop
+    // are created now (rendering presets back to back inside one frame skips per-frame node updates)
+    await post.warmupFrames();
+    for (const o of culled) o.frustumCulled = true;
   }
   {
     const dmgInt = damage as unknown as { killLights(n: string[]): void; fireLight: THREE.PointLight };
     visual.lightsOn = false; visual.applyHeadlights();
     dmgInt.killLights([...visualCfg.front_lights, ...visualCfg.rear_lights]);
     dmgInt.fireLight.intensity = 30;
-    await warm();
+    await renderer.compileAsync(scene, camera);
+    post.render();
     dmgInt.fireLight.intensity = 0;
     damage.repair();
     visual.lightsOn = true; visual.applyHeadlights();
-    post.warmup();
   }
   ai.reset();
-  {
-    // compileAsync builds pipelines, but an object's GPU buffers, bind groups and textures are only
-    // created the first time it is actually DRAWN. City blocks coming into view therefore stalled
-    // the first second of driving (one 200-280 ms frame ~0.8 s after the start, every run, no new
-    // pipeline). Draw everything once with frustum culling off, behind the loading screen.
-    const culled: THREE.Object3D[] = [];
-    scene.traverse((o) => { if (o.frustumCulled && (o as THREE.Mesh).isMesh) { o.frustumCulled = false; culled.push(o); } });
-    post.render();
-    probe?.captureAll(pos, visual.root);   // the probe's faces look behind and beside the car: their objects need their GPU resources too
-    for (const o of culled) o.frustumCulled = true;
-  }
-  await post.warmupFrames();   // props still forced visible: each preset's scene pass compiles them too
   city.props.warmup(false);
   damage.warmup(false);
   city.update(camera, true);
-  // The warm-up queued a dozen full renders on the GPU: wait until it has worked through them, or
-  // the first race frames block behind that backlog (a 130-220 ms frame 0.2-0.6 s after loading).
   if (webgpu) await (renderer.backend as unknown as { device: GPUDevice }).device.queue.onSubmittedWorkDone();
   const pipelinesAtStart =(renderer as unknown as { _pipelines: { caches: Map<string, unknown> } })._pipelines.caches.size;
   const setExtra = () => (hud.extra = `${backend} · ${Math.floor(renderer.domElement.width * scale)}×${Math.floor(renderer.domElement.height * scale)}`
@@ -334,7 +348,7 @@ async function main() {
   // the 40 fps bar rather than 30): below it -> cheaper preset first (no hitch), then -0.1 scale
   // (min 0.5); above 55 fps with 90 % of frames < 22 ms -> +0.1 (only if nothing was lowered).
   // The settled scale and preset are stored per window size, so the next visit is one window.
-  const WINDOW = 1000, FPS_LOW = isTouch ? 48 : 36, FPS_HIGH = Math.max(58, capFps * 1.8), STEP = 0.1, MIN_SCALE = 0.5, TUNE_TIMEOUT = 12000;
+  const WINDOW = 650, FPS_LOW = isTouch ? 48 : 36, FPS_HIGH = Math.max(58, capFps * 1.8), STEP = 0.1, MIN_SCALE = 0.5, TUNE_TIMEOUT = 6000;
   let winStart = 0, tuning = false, calSteps = 0, upSteps = 0, wentDown = false, tuneStart = 0;
   let driveWinTime = 0, driveFrames = 0;
   const startScale = () => guessScale();
@@ -369,12 +383,16 @@ async function main() {
     setExtra();
   }
   const startTuning = (full: boolean) => {
+    if (!full && !Number.isNaN(stored) && storedPreset && PRESET_ORDER.includes(storedPreset as PresetName)) {
+      finishTuning();
+      return;
+    }
     tuning = true; wentDown = false; tuneStart = performance.now();
-    calSteps = full || Number.isNaN(stored) ? 3 : 1;
+    calSteps = full || Number.isNaN(stored) ? 2 : 1;
     upSteps = full ? 1 : 0;
     if (full || Number.isNaN(stored)) { setPreset(PRESET_ORDER.indexOf(defaultPreset)); applyScale(startScale()); }
     frameTimes.length = 0;
-    winStart = performance.now() + 1200;   // the cover has just appeared: let the frame pacing settle
+    winStart = performance.now() + 450;   // let the cover frame pacing settle briefly
     menu.setTuning(true);
     setExtra();
   };
@@ -478,6 +496,15 @@ async function main() {
   };
 
   // --- front end: title -> garage -> session -------------------------------------------------
+  let garagePreloaded = false;
+  const preloadGarageCars = () => {
+    if (garagePreloaded) return;
+    garagePreloaded = true;
+    for (const c of catalog) {
+      const p = visualPathOf(c.id);
+      if (p !== visualPath) void fetchVisualCfg(p);
+    }
+  };
   const menu: Menu = new Menu(sel, catalog, physics, {
     preview: () => { void showCar().then(() => visual.setPaint(paintOf(sel, catalog), sel.finish)); },
     go: () => void startSession(),
@@ -486,12 +513,21 @@ async function main() {
     restart: () => { menu.show('none'); if (sel.mode === 'race') void beginRace(); else { resetCar(); setState('race'); audio.muted = false; prev = performance.now(); } },
     garage: () => toGarage(),
     bench: (soak) => void runBench(soak),
-    screen: (sc) => { if (sc === 'title' || sc === 'garage') setState(sc); },
+    screen: (sc) => { if (sc === 'title' || sc === 'garage') setState(sc); if (sc === 'garage') preloadGarageCars(); },
+    cam: (az, el, dist) => { orbit.az = az; orbit.el = el; orbit.dist = dist; orbit.drag = false; },
   });
   menu.gfx = gfx;
+  document.getElementById('hud-garage')?.addEventListener('click', () => { if (driving()) toGarage(); });
+  document.getElementById('hud-pause')?.addEventListener('click', () => {
+    if (state === 'race') { pausedFrom = state; setState('paused'); audio.muted = true; menu.show('pause'); }
+    else if (state === 'paused') resume();
+  });
+  document.getElementById('hud-reset')?.addEventListener('click', () => input.onReset());
+  document.getElementById('hud-cam')?.addEventListener('click', () => { if (driving()) rig.toggle(); });
 
   /** The garage car's own model (if its catalog entry has one): swapped in, damage visuals rebuilt. Serialised. */
   let visualQueue: Promise<void> = Promise.resolve();
+  let carSwapped = false;
   const showCar = () => (visualQueue = visualQueue.then(async () => {
     const path = visualPathOf(sel.car);
     if (path === visualPath) return;
@@ -501,6 +537,7 @@ async function main() {
     scene.remove(visual.root);
     damage.dispose();
     visualPath = path; visualCfg = cfg; visual = next; shape = shapeOf(cfg);
+    carSwapped = true;
     visual.renderDt = capInterval ? capInterval / 1000 : 1 / 60;
     syncHeadlights();
     scene.add(visual.root);
@@ -509,6 +546,7 @@ async function main() {
     wireDamage();
     headShadows = visual.headlights.filter((s) => s.castShadow).map((s) => s.shadow);
     for (const sh of headShadows) sh.autoUpdate = false;
+    visual.update(pos, quat, car.out, prevPos, prevQuat);
     Object.assign(g.__game, { visual, damage });
   }).catch((e) => console.error('car swap failed', e)));
 
@@ -534,7 +572,7 @@ async function main() {
       net.warmup(true);              // remote car shaders compiled now, not as a hitch when someone joins
       await warm();
       net.warmup(false);
-    } else await sleep(220);         // let any fullscreen resize settle before compiling & rendering the race view
+    } else await sleep(60);          // brief settle for any fullscreen transition
     hud.lapTotal = sel.mode === 'race' ? sel.laps : 0;
     hud.show();
     if (wantsTouch()) enableTouch();
@@ -558,10 +596,12 @@ async function main() {
     rig.update(1, pos, quat, new THREE.Vector3(), car.out);
     cityLights.update(1, camera);
     city.update(camera, true);
-    await renderer.compileAsync(scene, camera);
+    if (carSwapped) {
+      carSwapped = false;
+      await renderer.compileAsync(scene, camera);
+    }
     for (const sh of headShadows) sh.needsUpdate = true;
     post.render();
-    if (webgpu) await (renderer.backend as unknown as { device: GPUDevice }).device.queue.onSubmittedWorkDone();
     menu.show('none');
     hud.resetFps();
     input.poll();                    // drop key edges pressed in the menus
@@ -688,15 +728,16 @@ async function main() {
     const cb0 = bench.active ? now : 0;
     const frame = Math.min(0.1, (now - prev) / 1000);
     prev = now;
-    const live = state !== 'paused';
+    const inShowroom = state === 'title' || state === 'garage' || state === 'busy';
+    const live = state !== 'paused' && (!inShowroom || settledShowroom < 24 || bench.active);
     if (bench.active) benchStep(frame);
-    if (live) acc += frame;
+    if (live) acc += frame; else acc = 0;
     let steps = 0;
     while (acc >= DT && steps < 24) {
       prevPos.copy(physPos);
       prevQuat.copy(physQuat);
       car.tick(state === 'race' ? input.poll() : IDLE, input.assists);
-      if (state === 'title' || state === 'garage' || state === 'busy') { car.body.setLinvel({ x: 0, y: Math.min(0, car.body.linvel().y), z: 0 }, true); car.body.setAngvel({ x: 0, y: 0, z: 0 }, true); }   // parked for the showroom
+      if (inShowroom) { car.body.setLinvel({ x: 0, y: Math.min(0, car.body.linvel().y), z: 0 }, true); car.body.setAngvel({ x: 0, y: 0, z: 0 }, true); settledShowroom++; }   // parked for the showroom
       ai.tick(DT, car.body.translation());
       const t0 = performance.now();
       pw.world.step();
@@ -720,11 +761,13 @@ async function main() {
     const alpha = Math.min(1, acc / DT);
     pos.lerpVectors(prevPos, physPos, alpha);
     quat.slerpQuaternions(prevQuat, physQuat, alpha);
-    const lv = car.body.linvel();
-    visual.velocity.set(lv.x, lv.y, lv.z);
-    visual.update(pos, quat, car.out, prevPos, prevQuat);   // car.out was computed from the pose BEFORE the last step
-    ai.update(alpha, camera);
-    damage.update(live ? frame : 0, () => core.damage());
+    if (!inShowroom || settledShowroom <= 24) {
+      const lv = car.body.linvel();
+      visual.velocity.set(lv.x, lv.y, lv.z);
+      visual.update(pos, quat, car.out, prevPos, prevQuat);   // car.out was computed from the pose BEFORE the last step
+      ai.update(alpha, camera);
+      damage.update(live ? frame : 0, () => core.damage());
+    }
     if (driving()) audio.update(car.out, car.out[OUT.speed]);
     net?.update(now, pos, quat);
     if (!driving() || state === 'busy') { placeShowroom(frame, pos); }

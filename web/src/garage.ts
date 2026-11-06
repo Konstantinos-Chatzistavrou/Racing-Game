@@ -60,11 +60,18 @@ export function applyMods(base: any, m: Mods): any {
 }
 
 export interface Stats { power: number; mass: number; grip: number; downforce: number; ratio: number }
-/** Numbers for the garage bars, straight from the physics JSON. */
+const statsCache = new WeakMap<object, Stats>();
+/** Numbers for the garage bars, straight from the physics JSON (cached per object). */
 export function statsOf(d: any): Stats {
+  if (d && typeof d === 'object') {
+    const cached = statsCache.get(d);
+    if (cached) return cached;
+  }
   const power = Math.max(...d.engine.torque_curve.map(([rpm, t]: [number, number]) => (t * rpm * 2 * Math.PI) / 60)) / 1000;   // kW
   const mass = d.chassis.mass_kg;
-  return { power, mass, grip: d.tire_front.lateral.mu, downforce: d.aero.downforce_area_m2, ratio: (power * 1000) / mass };
+  const st = { power, mass, grip: d.tire_front.lateral.mu, downforce: d.aero.downforce_area_m2, ratio: (power * 1000) / mass };
+  if (d && typeof d === 'object') statsCache.set(d, st);
+  return st;
 }
 
 const KEY = 'nr.garage.v1';

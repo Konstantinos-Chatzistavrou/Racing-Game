@@ -10,7 +10,7 @@ export interface TouchState {
   shiftUp: boolean; shiftDown: boolean;
 }
 
-export interface TouchActions { reset(): void; camera(): void; toggleGearbox(): boolean; unlockAudio(): void }
+export interface TouchActions { reset(): void; camera(): void; toggleGearbox(): boolean; unlockAudio(): void; garage?(): void }
 
 const STEER_RANGE_PX = 68;   // thumb travel for full lock (short enough for crisp, immediate response)
 
@@ -32,6 +32,7 @@ export class TouchControls {
         <button class="small" data-c="down">▼</button>
       </div>
       <div class="top">
+        <button class="small" data-c="garage" title="Back to Garage">← GARAGE</button>
         <button class="small" data-c="reset" title="Reset">⟲</button>
         <button class="small" data-c="camera" title="Camera">CAM</button>
         <button class="small" data-c="gearbox" title="Gearbox">AUTO</button>
@@ -61,6 +62,7 @@ export class TouchControls {
     hold('handbrake', (v) => (this.state.handbrake = v));
     on('up', () => (this.state.shiftUp = true));
     on('down', () => (this.state.shiftDown = true));
+    on('garage', () => this.actions.garage?.());
     on('reset', () => this.actions.reset());
     on('camera', () => this.actions.camera());
     const gb = on('gearbox', (_e, el) => {

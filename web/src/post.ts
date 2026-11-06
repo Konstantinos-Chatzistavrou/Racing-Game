@@ -224,19 +224,20 @@ export class Post {
   onPreset: ((p: PresetName) => void) | null = null;
   render() { this.onPreset?.(this.preset); this.pipelines.get(this.preset)!.render(); }
 
-  /** Renders every preset once (shader warm-up behind the loading screen). */
+  /** Renders active/fallback presets once (shader warm-up behind the loading screen). */
   warmup() {
     const keep = this.preset;
-    for (const name of PRESET_ORDER) { this.preset = name; this.render(); }
+    const list: PresetName[] = keep === 'max' ? PRESET_ORDER : ['ultra', 'high', 'medium', 'low'];
+    for (const name of list) { this.preset = name; this.render(); }
     this.preset = keep;
   }
 
-  /** Same, one preset per real frame: three updates per-frame nodes once per frame, so presets
-   * rendered back to back inside one frame can skip work that the first real use would then do. */
+  /** Same, one preset per real frame so per-frame nodes initialize without redundant loops. */
   async warmupFrames() {
     const keep = this.preset;
     const frame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
-    for (let i = 0; i < 2; i++) for (const name of PRESET_ORDER) { this.preset = name; this.render(); await frame(); }
+    const list: PresetName[] = keep === 'max' ? ['max', 'ultra', 'high'] : ['ultra', 'high', 'medium'];
+    for (const name of list) { this.preset = name; this.render(); await frame(); }
     this.preset = keep;
   }
 }
