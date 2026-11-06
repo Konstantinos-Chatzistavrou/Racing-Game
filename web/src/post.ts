@@ -22,7 +22,6 @@ import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import * as SMAAModule from 'three/addons/tsl/display/SMAANode.js';
 import { fxaa } from 'three/addons/tsl/display/FXAANode.js';
 import { CURVES, GRADE, filmGrain, toneGrade, type CurveName } from './fx/grade';
-import { UltraFx } from './fx/gtaoTraa';
 import { DepthFx } from './fx/depthFx';
 import { ClusteredLighting } from 'three/addons/lighting/ClusteredLighting.js';
 
@@ -45,7 +44,7 @@ export interface Preset {
 // Ordered best -> cheapest. The GPU cost differences are small but real on the iGPU (measured with
 // timestamp queries, see docs/web_port.md): SMAA = 3 passes, FXAA = 1, bloom = ~11 small passes.
 export const PRESETS: Record<PresetName, Preset> = {
-  max: { aa: 'traa', ao: true, ssr: true, bloom: 0.25, shadowEvery: 2, grade: 'full', grain: true },
+  max: { aa: 'smaa', ao: true, ssr: true, bloom: 0.25, shadowEvery: 1, grade: 'full', grain: true },
   ultra: { aa: 'smaa', ssr: true, bloom: 0.25, shadowEvery: 2, grade: 'full', grain: true },
   high: { aa: 'smaa', bloom: 0.25, shadowEvery: 3, grade: 'full', grain: true },
   medium: { aa: 'fxaa', bloom: 0.25, shadowEvery: 3, grade: 'full', grain: false },
@@ -140,7 +139,7 @@ export class Post {
   private blooms: { node: BloomNode; res: number }[] = [];
   private scaled: { setResolutionScale(s: number): unknown }[] = [];
   private smaas: ScaledSMAA[] = [];
-  private ultra: UltraFx | null = null;
+  private maxFx: DepthFx | null = null;
   private depthFx: DepthFx | null = null;
   private sharpness = uniform(0.5);
   private _scale = 1;
@@ -157,18 +156,23 @@ export class Post {
     const bloomThreshold = Number(q.get('bt') ?? BLOOM.threshold), bloomKnee = Number(q.get('bk') ?? BLOOM.knee);
     let sharedBloom: BloomNode | null = null;
     let sharedTonedFull: THREE.RTTNode | null = null;
+    const ssrOn = q.get('ssr') !== '0';
+    const aoOn = q.get('ao') !== '0';
     for (const name of PRESET_ORDER) {
       const pr = PRESETS[name];
       const p = new THREE.RenderPipeline(renderer);
-      const fx = pr.ao && opts.aa ? (this.ultra = new UltraFx(scene, camera, 0.5, !!pr.ssr && q.get('ssr') !== '0', q.get('ao') !== '0')) : null;
-      const lite = !fx && pr.ssr ? (this.depthFx ??= new DepthFx(this.scenePass, camera)) : null;   // 'ultra': depth-only reflections, shared scene pass
-      const base: THREE.Node<'vec4'> = lite ? lite.color : color;
-      let lit: THREE.Node<'vec4'> = fx ? fx.occlude() : base;
+      const fx = pr.ao && pr.ssr && ssrOn
+        ? (this.maxFx ??= new DepthFx(this.scenePass, camera, { resScale: 0.75, quality: 0.3, maxDistance: 85, intensity: 0.72, withAo: aoOn }))
+        : null;
+      const lite = !fx && pr.ssr && ssrOn
+        ? (this.depthFx ??= new DepthFx(this.scenePass, camera, { resScale: 0.5, quality: 0.16, maxDistance: 55, intensity: 0.6 }))
+        : null;
+      let lit: THREE.Node<'vec4'> = fx ? fx.color : lite ? lite.color : color;
       if (opts.bloom && pr.bloom > 0) {
         if (!fx && !lite && sharedBloom) {
           lit = lit.add(sharedBloom);
         } else {
-          const b = bloom(fx ? fx.color : base, bloomStrength, bloomRadius, bloomThreshold);
+          const b = bloom(lit, bloomStrength, bloomRadius, bloomThreshold);
           (b as unknown as { smoothWidth: { value: number } }).smoothWidth.value = bloomKnee;
           this.blooms.push({ node: b, res: pr.bloom });
           if (!fx && !lite) sharedBloom = b;
@@ -186,9 +190,7 @@ export class Post {
       }
       let src: THREE.TextureNode = toned;
       const aa = opts.aa ? pr.aa : 'none';
-      if (aa === 'traa' && fx) {
-        src = fx.resolve(toned);
-      } else if (aa === 'smaa' || aa === 'traa') {
+      if (aa === 'smaa' || aa === 'traa') {
         const s = new ScaledSMAA(toned);
         this.smaas.push(s);
         src = s.getTextureNode();
@@ -211,7 +213,7 @@ export class Post {
   setScale(s: number) {
     this._scale = s;
     this.scenePass.setResolutionScale(s);
-    this.ultra?.setScale(s);
+    this.maxFx?.setScale(s);
     this.depthFx?.setScale(s);
     for (const r of this.scaled) r.setResolutionScale(s);
     for (const m of this.smaas) m.scale = s;
@@ -220,15 +222,14 @@ export class Post {
     this.sharpness.value = s >= 0.99 ? 1.0 : 0.5;
   }
 
-  /** called with the preset before every render (main.ts: render bundles are off for the MRT scene pass of 'max') */
+  /** called with the preset before every render */
   onPreset: ((p: PresetName) => void) | null = null;
   render() { this.onPreset?.(this.preset); this.pipelines.get(this.preset)!.render(); }
 
   /** Renders active/fallback presets once (shader warm-up behind the loading screen). */
   warmup() {
     const keep = this.preset;
-    const list: PresetName[] = keep === 'max' ? PRESET_ORDER : ['ultra', 'high', 'medium', 'low'];
-    for (const name of list) { this.preset = name; this.render(); }
+    for (const name of PRESET_ORDER) { this.preset = name; this.render(); }
     this.preset = keep;
   }
 
@@ -236,8 +237,7 @@ export class Post {
   async warmupFrames() {
     const keep = this.preset;
     const frame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
-    const list: PresetName[] = keep === 'max' ? ['max', 'ultra', 'high'] : ['ultra', 'high', 'medium'];
-    for (const name of list) { this.preset = name; this.render(); await frame(); }
+    for (const name of ['max', 'ultra', 'high'] as PresetName[]) { this.preset = name; this.render(); await frame(); }
     this.preset = keep;
   }
 }
