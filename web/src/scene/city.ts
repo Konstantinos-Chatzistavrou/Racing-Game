@@ -180,8 +180,9 @@ function tuneMaterial(src: THREE.MeshStandardMaterial): THREE.Material {
     // albedo) where the noise peaks, so lamps and headlights leave long reflections in them.
     const m = toNode(src);
     const wp = positionWorld;
-    const wear = mx_noise_float(vec3(wp.x.mul(0.017), 0, wp.z.mul(0.017))).mul(0.5).add(0.5);
-    const pud = smoothstep(0.32, 0.5, mx_noise_float(vec3(wp.x.mul(0.06), 3.1, wp.z.mul(0.06))));
+    const n = mx_noise_float(vec3(wp.x.mul(0.045), 0, wp.z.mul(0.045)));
+    const wear = n.mul(0.5).add(0.5);
+    const pud = smoothstep(0.32, 0.5, n);
     const base = texture(src.map!, uv()).rgb.mul(mix(float(0.38), float(0.6), wear));
     m.colorNode = base.mul(mix(float(1), float(0.55), pud));
     m.roughnessNode = mix(texture(src.roughnessMap!, uv()).g.mul(0.62), float(0.05), pud);

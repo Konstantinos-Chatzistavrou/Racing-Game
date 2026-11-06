@@ -12,7 +12,7 @@ export interface TouchState {
 
 export interface TouchActions { reset(): void; camera(): void; toggleGearbox(): boolean; unlockAudio(): void }
 
-const STEER_RANGE_PX = 90;   // thumb travel for full lock
+const STEER_RANGE_PX = 68;   // thumb travel for full lock (short enough for crisp, immediate response)
 
 export class TouchControls {
   readonly state: TouchState = { active: false, steer: 0, throttle: 0, brake: 0, handbrake: 0, shiftUp: false, shiftDown: false };
@@ -80,7 +80,7 @@ export class TouchControls {
     // Steering pad: analog, relative to where the thumb first touched.
     const pad = this.root.querySelector<HTMLElement>('.steer')!;
     const knob = pad.querySelector<HTMLElement>('.knob')!;
-    let id = -1, x0 = 0;
+    let id = -1, x0 = 0, lastDx = 0;
     pad.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       if (id !== -1) return;
@@ -89,22 +89,26 @@ export class TouchControls {
       this.state.active = true;
       this.actions.unlockAudio();
       x0 = e.clientX;
-      const r = pad.getBoundingClientRect();
-      knob.style.left = `${e.clientX - r.left}px`;
-      knob.style.top = `${e.clientY - r.top}px`;
+      lastDx = 0;
+      knob.style.left = `${e.clientX}px`;
+      knob.style.top = `${e.clientY - (innerHeight - pad.offsetHeight)}px`;
+      knob.style.transform = 'translate3d(-50%, -50%, 0)';
       knob.classList.add('on');
     });
     pad.addEventListener('pointermove', (e) => {
       if (e.pointerId !== id) return;
       const dx = Math.max(-STEER_RANGE_PX, Math.min(STEER_RANGE_PX, e.clientX - x0));
       this.state.steer = -dx / STEER_RANGE_PX;   // core: +1 = left
-      knob.style.transform = `translate(calc(-50% + ${dx}px), -50%)`;
+      if (Math.abs(dx - lastDx) >= 1) {
+        lastDx = dx;
+        knob.style.transform = `translate3d(calc(-50% + ${dx.toFixed(0)}px), -50%, 0)`;
+      }
     });
     const release = (e: PointerEvent) => {
       if (e.pointerId !== id) return;
       id = -1;
       this.state.steer = 0;
-      knob.style.transform = 'translate(-50%, -50%)';
+      knob.style.transform = 'translate3d(-50%, -50%, 0)';
       knob.classList.remove('on');
     };
     pad.addEventListener('pointerup', release);

@@ -17,6 +17,9 @@ export async function loadRapier() { await RAPIER.init(); }
 export class PhysicsWorld {
   readonly world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
   private surfaceOf = new Map<number, number>();   // collider handle -> core surface index
+  private rayDir = new THREE.Vector3();
+  private ray: RAPIER.Ray | null = null;
+  private rayHit = { toi: 0, normal: { x: 0, y: 1, z: 0 }, collider: null as unknown as RAPIER.Collider };
 
   constructor() { this.world.timestep = DT; }
 
@@ -62,13 +65,20 @@ export class PhysicsWorld {
    * road (wheel rays used to land on debris and kick the car sideways).
    */
   raycast(from: THREE.Vector3, to: THREE.Vector3, exclude?: RAPIER.RigidBody) {
-    const d = to.clone().sub(from);
+    const d = this.rayDir.subVectors(to, from);
     const len = d.length();
     if (len < 1e-6) return null;
     d.divideScalar(len);
-    const hit = this.world.castRayAndGetNormal(new RAPIER.Ray(from, d), len, true, undefined, GROUP_CAR, undefined, exclude);
+    let ray = this.ray;
+    if (!ray) ray = this.ray = new RAPIER.Ray(from, d);
+    else { ray.origin = from; ray.dir = d; }
+    const hit = this.world.castRayAndGetNormal(ray, len, true, undefined, GROUP_CAR, undefined, exclude);
     if (!hit) return null;
-    return { toi: hit.timeOfImpact, normal: hit.normal, collider: hit.collider };
+    const out = this.rayHit;
+    out.toi = hit.timeOfImpact;
+    out.normal = hit.normal;
+    out.collider = hit.collider;
+    return out;
   }
 }
 

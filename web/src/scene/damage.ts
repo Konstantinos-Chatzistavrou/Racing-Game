@@ -45,6 +45,7 @@ export class Particles {
   private maxLife: Float32Array;
   readonly sprite: THREE.Sprite;
   private next = 0;
+  private active = 0;
   color = new THREE.Color(1, 1, 1);
 
   constructor(private max: number, private opts: { additive: boolean; gravity: number; grow: number; drag: number }) {
@@ -62,27 +63,37 @@ export class Particles {
     const soft = smoothstep(float(0.5), float(0.0), uv().sub(0.5).length());   // round, soft edge
     m.colorNode = vec4(c.xyz, c.w.mul(soft));
     this.sprite = new THREE.Sprite(m);
-    this.sprite.count = max;
+    this.sprite.count = 1;
     this.sprite.frustumCulled = false;
   }
 
   emit(p: THREE.Vector3, v: THREE.Vector3, life: number, size: number) {
     const i = this.next;
     this.next = (this.next + 1) % this.max;
+    if (this.life[i] <= 0) this.active++;
     this.pos.setXYZ(i, p.x, p.y, p.z);
-    this.vel.set([v.x, v.y, v.z], i * 3);
+    this.vel[i * 3] = v.x; this.vel[i * 3 + 1] = v.y; this.vel[i * 3 + 2] = v.z;
     this.life[i] = life;
     this.maxLife[i] = life;
     this.size.setX(i, size);
+    this.sprite.count = this.max;
+    this.sprite.visible = true;
   }
 
   update(dt: number) {
+    if (this.active === 0) {
+      if (this.sprite.visible) this.sprite.visible = false;
+      return;
+    }
     const { gravity, grow, drag } = this.opts;
     const k = Math.exp(-drag * dt);
+    let alive = 0;
     for (let i = 0; i < this.max; i++) {
       if (this.life[i] <= 0) { this.col.setW(i, 0); continue; }
       this.life[i] -= dt;
-      const t = 1 - Math.max(0, this.life[i]) / this.maxLife[i];   // 0 -> 1 over the life
+      if (this.life[i] <= 0) { this.col.setW(i, 0); continue; }
+      alive++;
+      const t = 1 - this.life[i] / this.maxLife[i];   // 0 -> 1 over the life
       const o = i * 3;
       this.vel[o] *= k; this.vel[o + 2] *= k;
       this.vel[o + 1] = this.vel[o + 1] * k + gravity * dt;
@@ -90,10 +101,12 @@ export class Particles {
       this.size.setX(i, this.size.getX(i) * (1 + grow * dt));
       this.col.setXYZW(i, this.color.r, this.color.g, this.color.b, (1 - t) * (this.opts.additive ? 1 : 0.6));
     }
+    this.active = alive;
+    if (alive === 0) this.sprite.visible = false;
     this.pos.needsUpdate = this.col.needsUpdate = this.size.needsUpdate = true;
   }
 
-  clear() { this.life.fill(0); }
+  clear() { this.life.fill(0); this.active = 0; this.sprite.visible = false; }
 }
 
 interface Debris { node: THREE.Object3D; parent: THREE.Object3D; local: THREE.Matrix4; body: RAPIER.RigidBody; age: number }
@@ -120,6 +133,7 @@ export class DamageVisuals {
   private smokeAcc = 0;
   private dmg: Damage | null = null;
   get last(): Damage | null { return this.dmg; }
+  get debrisCount(): number { return this.detached.size; }
   onImpact: (kj: number, glass: boolean) => void = () => {};
 
   constructor(private car: CarVisual, private cfg: DamageVisualConfig, private pw: PhysicsWorld, private scene: THREE.Scene) {
@@ -353,5 +367,13 @@ export class DamageVisuals {
     this.flameCore.clear();
     this.flicker = 0;
     this.fireLight.intensity = 0;
+  }
+
+  /** Force particle sprites visible (1 degenerate instance) during shader warm-up, then hide until emitted. */
+  warmup(on: boolean) {
+    for (const p of [this.smoke, this.sparks, this.flames, this.flameCore]) {
+      p.sprite.count = 1;
+      p.sprite.visible = on;
+    }
   }
 }

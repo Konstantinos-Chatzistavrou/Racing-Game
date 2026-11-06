@@ -47,9 +47,9 @@ export interface Preset {
 export const PRESETS: Record<PresetName, Preset> = {
   max: { aa: 'traa', ao: true, ssr: true, bloom: 0.25, shadowEvery: 2, grade: 'full', grain: true },
   ultra: { aa: 'smaa', ssr: true, bloom: 0.25, shadowEvery: 2, grade: 'full', grain: true },
-  high: { aa: 'smaa', bloom: 0.25, shadowEvery: 2, grade: 'full', grain: true },
-  medium: { aa: 'fxaa', bloom: 0.25, shadowEvery: 2, grade: 'full', grain: true },
-  low: { aa: 'none', bloom: 0, shadowEvery: 3, grade: 'tone', grain: false },
+  high: { aa: 'smaa', bloom: 0.25, shadowEvery: 3, grade: 'full', grain: true },
+  medium: { aa: 'fxaa', bloom: 0.25, shadowEvery: 3, grade: 'full', grain: false },
+  low: { aa: 'none', bloom: 0, shadowEvery: 4, grade: 'tone', grain: false },
 };
 /** final-image look defaults (fx/grade.ts); ?tm=agx|aces|neutral|uchimura, ?grade=0 for A/B */
 const DEFAULT_CURVE: CurveName = 'neutral';
@@ -155,6 +155,8 @@ export class Post {
     for (const k of ['contrast', 'sat', 'split', 'grain', 'lift', 'exposure'] as const) if (q.has(k)) (GRADE[k] as { value: number }).value = Number(q.get(k));
     const bloomStrength = Number(q.get('bs') ?? BLOOM.strength), bloomRadius = Number(q.get('br') ?? BLOOM.radius);
     const bloomThreshold = Number(q.get('bt') ?? BLOOM.threshold), bloomKnee = Number(q.get('bk') ?? BLOOM.knee);
+    let sharedBloom: BloomNode | null = null;
+    let sharedTonedFull: THREE.RTTNode | null = null;
     for (const name of PRESET_ORDER) {
       const pr = PRESETS[name];
       const p = new THREE.RenderPipeline(renderer);
@@ -163,14 +165,25 @@ export class Post {
       const base: THREE.Node<'vec4'> = lite ? lite.color : color;
       let lit: THREE.Node<'vec4'> = fx ? fx.occlude() : base;
       if (opts.bloom && pr.bloom > 0) {
-        const b = bloom(fx ? fx.color : base, bloomStrength, bloomRadius, bloomThreshold);
-        (b as unknown as { smoothWidth: { value: number } }).smoothWidth.value = bloomKnee;
-        this.blooms.push({ node: b, res: pr.bloom });
-        lit = lit.add(b);
+        if (!fx && !lite && sharedBloom) {
+          lit = lit.add(sharedBloom);
+        } else {
+          const b = bloom(fx ? fx.color : base, bloomStrength, bloomRadius, bloomThreshold);
+          (b as unknown as { smoothWidth: { value: number } }).smoothWidth.value = bloomKnee;
+          this.blooms.push({ node: b, res: pr.bloom });
+          if (!fx && !lite) sharedBloom = b;
+          lit = lit.add(b);
+        }
       }
       // display-referred image at the render size (AA and the sharpening limiter expect 0..1)
-      const toned = rtt8(toneGrade(lit, curve, pr.grade === 'full' && grading));
-      this.scaled.push(toned);
+      let toned: THREE.RTTNode;
+      if (!fx && !lite && opts.bloom && pr.bloom > 0 && pr.grade === 'full' && sharedTonedFull) {
+        toned = sharedTonedFull;
+      } else {
+        toned = rtt8(toneGrade(lit, curve, pr.grade === 'full' && grading));
+        this.scaled.push(toned);
+        if (!fx && !lite && opts.bloom && pr.bloom > 0 && pr.grade === 'full') sharedTonedFull = toned;
+      }
       let src: THREE.TextureNode = toned;
       const aa = opts.aa ? pr.aa : 'none';
       if (aa === 'traa' && fx) {
