@@ -12,6 +12,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { CoreCar, CoreRace, OUT, loadCore, type LapInfo, type RawInput } from './physics/core';
 import { CarBody, DT, PhysicsWorld, loadRapier, type CarShape } from './physics/world';
 import { CityLighting, loadCity } from './scene/city';
+import { NycStreamer, nycCityShim } from './scene/nyc';
 import { CarVisual, type CarVisualConfig } from './scene/car';
 import { initLoaders } from './scene/loaders';
 import { CameraRig } from './camera';
@@ -134,10 +135,11 @@ async function main() {
     await Promise.all(j.cars.map((c) => fetch(`/data/${c.physics}`).then((r) => r.json()).then((d) => { physics[c.id] = d; })));
     return j.cars;
   });
+  const useNyc = params.get('city') !== 'old';
   const [catalog, defaultCfg, route] = await Promise.all([
     catalogP,
     fetchVisualCfg(DEFAULT_VISUAL),
-    fetch('/data/tracks/city_route.json').then((r) => r.json()),
+    fetch(useNyc ? '/data/tracks/nyc_route.json' : '/data/tracks/city_route.json').then((r) => r.json()),
     loadCore(),
     loadRapier(),
   ]);
@@ -148,7 +150,7 @@ async function main() {
     return { boxSize: cb.size_m, boxCentre: cb.centre_in_model_m, endLift: cb.end_lift_m, endLiftStart: cb.end_lift_start_m };
   };
   let visualPath = visualPathOf(sel.car);
-  // Start downloading the player's car GLTF in parallel with the city GLB!
+  // Start downloading the player's car GLTF in parallel with the city tiles!
   const carLoadP = (visualPath === DEFAULT_VISUAL ? Promise.resolve(defaultCfg) : fetchVisualCfg(visualPath))
     .then(async (cfg) => ({ cfg, vis: await CarVisual.load(cfg) }));
   const coreJson = () => JSON.stringify(applyMods(physics[sel.car], modsOf(sel)));
@@ -156,17 +158,29 @@ async function main() {
   let builtKey = carKey();
   let core = new CoreCar(coreJson());
   const pw = new PhysicsWorld();
-  const city = await loadCity(scene, pw, core.info.surfaces, (f) => say(`Loading city… ${Math.round(f * 100)}%`, 20 + f * 55), webgpu && num('bundle', 1) === 1);
+  const nyc = useNyc ? new NycStreamer(scene, renderer, pw, camera, {
+    surfaces: core.info.surfaces,
+    debug: params.get('nycdebug') === '1',
+    fogDensity: num('fog', 0.0024),
+    onProgress: (f) => say(`Loading 1:1 New York City… ${Math.round(f * 100)}%`, 20 + f * 55),
+  }) : null;
+  if (nyc) {
+    await nyc.ready();
+    camera.far = 1600;
+    camera.updateProjectionMatrix();
+  }
+  const nycS0 = nyc ? nyc.spawnPoint() : null;
+  const city = nyc ? nycCityShim() : await loadCity(scene, pw, core.info.surfaces, (f) => say(`Loading city… ${Math.round(f * 100)}%`, 20 + f * 55), webgpu && num('bundle', 1) === 1);
   const cityLights = new CityLighting(scene, city.lights, webgpu, num('lights', 12));
   // Reflections: capture the lit city once from street level (the car isn't in the scene yet).
   {
-    const s0 = route.samples[0];
+    const s0 = nycS0 ?? route.samples[0];
     camera.position.set(s0.x, s0.z + 2, -s0.y);
     cityLights.update(1, camera);
     scene.environment = pmrem.fromScene(scene, 0.02, 0.5, 400, { size: 256, position: camera.position.clone() }).texture;
     // The capture is for REFLECTIONS (lamps and neon in paint and wet asphalt). At full strength its
     // diffuse part lit every wall like an overcast sky and undid the darkness.
-    scene.environmentIntensity = 0.5;
+    scene.environmentIntensity = nyc ? 0.65 : 0.5;
   }
   say('Loading car…', 80);
   // Frame cap: uncapped (native display refresh) by default; ?cap=N pins a specific frame rate.
@@ -194,7 +208,7 @@ async function main() {
   const ai = await AiTraffic.create(scene, pw, defaultCfg, route.samples, aiCount, params.get('blackcar') === '1');
 
   // Start line = first route sample (core coords: Z-up) -> three (x, z, -y).
-  const s0 = route.samples[0];
+  const s0 = nycS0 ?? route.samples[0];
   const spawn = () => {
     const p = new THREE.Vector3(s0.x, s0.z + 3, -s0.y);
     const hit = pw.raycast(p, p.clone().add(new THREE.Vector3(0, -20, 0)));
@@ -279,7 +293,7 @@ async function main() {
   // --- post-processing ------------------------------------------------------------------------
   const DRAW_SCALE: Record<PresetName, number> = { max: 1, ultra: 0.9, high: 0.9, medium: 0.78, low: 0.62 };
   const post = new Post(renderer, scene, camera, { bloom: params.get('bloom') !== '0', aa: params.get('aa') !== '0', scale, preset: PRESET_ORDER[presetIdx] });
-  post.onPreset = (p) => { city.setBundled(!PRESETS[p].ao); city.props.drawScale = driving() ? DRAW_SCALE[p] : Math.min(0.45, DRAW_SCALE[p]); };
+  post.onPreset = (p) => { city.setBundled(true); city.props.drawScale = driving() ? DRAW_SCALE[p] : Math.min(0.45, DRAW_SCALE[p]); };
   post.onPreset(post.preset);
   // Headlight shadow map: only the car bodies cast into it (the city does not cast), re-rendered
   // every Nth frame by preset (stale by one frame = ~1 m of light travel at 130 km/h, invisible:
@@ -329,6 +343,7 @@ async function main() {
   }
   ai.reset();
   city.props.warmup(false);
+  nyc?.endWarm();
   damage.warmup(false);
   city.update(camera, true);
   if (webgpu) await (renderer.backend as unknown as { device: GPUDevice }).device.queue.onSubmittedWorkDone();
@@ -422,7 +437,7 @@ async function main() {
     if (!document.hidden) { frameTimes.length = 0; if (tuning) winStart = performance.now() + 1000; prev = performance.now(); }
   });
   let frameNo = 0;
-  g.__game = { city, ai, visual, audio, rig, damage, trace, input, renderer, camera, scene, post,
+  g.__game = { city, nyc, ai, visual, audio, rig, damage, trace, input, renderer, camera, scene, post,
     get car() { return car; }, get core() { return core; }, get state() { return state; }, menu: () => menu, sel,
     bench: (soak = false) => runBench(soak),
     setPreset: (name: PresetName) => { setPreset(PRESET_ORDER.indexOf(name)); setExtra(); },
@@ -776,6 +791,7 @@ async function main() {
       if (live) rig.update(frame, pos, quat, carAcc, car.out);
     }
     cityLights.update(frame, camera);   // WebGL 2 pool only (5 Hz); a no-op with clustered lighting
+    nyc?.update(pos, frame);
     city.update(camera);
     // Frame cap (default 30 fps: the quality target; ?cap=0 uncapped, ?cap=45 etc.). Simulation, camera and HUD run every
     // display refresh; only the draw is skipped, so the picture holds still between rendered frames. The cap is off while
