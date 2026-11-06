@@ -13,9 +13,10 @@
 //    placing a jagged broken-glass cavity on the facade and exploding 45 spinning 3D glass prism shards across the sidewalk and street.
 import * as THREE from 'three/webgpu';
 import { attribute, instancedBufferAttribute, instanceIndex, hash, uv, float, vec3, vec4, mix, smoothstep, fract, mod, step, select, length, positionView,
-  cameraProjectionMatrix, cameraViewMatrix, positionGeometry, sin, cos } from 'three/tsl';
+  positionWorld, cameraProjectionMatrix, cameraViewMatrix, positionGeometry, sin, cos, bumpMap } from 'three/tsl';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { InstanceSet, NycSigns, nycTime, writeMatrix, SIGN_LIGHT } from './signage';
+import { recordWallBreach } from './facade';
 
 export interface PropsData {
   /** ground height of the tile (m); props are placed at z + this. Optional, default 0. */
@@ -51,8 +52,46 @@ class Kit {
   cyl(rb: number, rt: number, h: number, x: number, y: number, z: number, col: RGB, glow = 0, radial = 8) {
     return this.add(new THREE.CylinderGeometry(rt, rb, h, radial, 1, true).translate(x, y + h / 2, z), col, glow);
   }
+  /** Angled branch/limb cylinder from (x0, y0, z0) to (x1, y1, z1). */
+  limb(rb: number, rt: number, x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, col: RGB, glow = 0, radial = 6) {
+    const dx = x1 - x0, dy = y1 - y0, dz = z1 - z0;
+    const len = Math.hypot(dx, dy, dz);
+    if (len < 1e-3) return this;
+    const g = new THREE.CylinderGeometry(rt, rb, len, radial, 1, true);
+    const up = new THREE.Vector3(0, 1, 0);
+    const dir = new THREE.Vector3(dx / len, dy / len, dz / len);
+    const q = new THREE.Quaternion().setFromUnitVectors(up, dir);
+    const m = new THREE.Matrix4().compose(new THREE.Vector3((x0 + x1) * 0.5, (y0 + y1) * 0.5, (z0 + z1) * 0.5), q, new THREE.Vector3(1, 1, 1));
+    g.applyMatrix4(m);
+    return this.add(g, col, glow);
+  }
   ico(r: number, x: number, y: number, z: number, sx: number, sy: number, sz: number, col: RGB, glow = 0, detail = 1) {
-    return this.add(new THREE.IcosahedronGeometry(r, detail).scale(sx, sy, sz).translate(x, y, z), col, glow);
+    const g = new THREE.IcosahedronGeometry(r, detail);
+    const pos = g.attributes.position as THREE.BufferAttribute;
+    for (let i = 0; i < pos.count; i++) {
+      const vx = pos.getX(i), vy = pos.getY(i), vz = pos.getZ(i);
+      const crinkle = 0.72 + 0.42 * Math.sin(vx * 7.3 + x * 2.1 + vy * 5.7) * Math.cos(vz * 6.9 + z * 1.7 - vx * 4.1);
+      pos.setXYZ(i, vx * sx * crinkle + x, vy * sy * crinkle + y, vz * sz * crinkle + z);
+    }
+    const n = g.index ? g.toNonIndexed() : g;
+    n.deleteAttribute('uv');
+    n.computeVertexNormals();
+    const nrm = n.attributes.normal as THREE.BufferAttribute;
+    const nPos = n.attributes.position as THREE.BufferAttribute;
+    const c = new Float32Array(nPos.count * 3), w = new Float32Array(nPos.count);
+    for (let i = 0; i < nPos.count; i++) {
+      const ny = nrm.getY(i);
+      const px = nPos.getX(i), py = nPos.getY(i), pz = nPos.getZ(i);
+      const leafShade = Math.max(0.32, Math.min(1.38, 0.78 + 0.35 * ny + 0.25 * Math.sin(px * 9.1 + py * 7.3 + pz * 8.7)));
+      c[i * 3] = col[0] * leafShade;
+      c[i * 3 + 1] = col[1] * leafShade;
+      c[i * 3 + 2] = col[2] * leafShade;
+      w[i] = glow * Math.max(0.15, 0.65 - 0.35 * ny);
+    }
+    n.setAttribute('color', new THREE.BufferAttribute(c, 3));
+    n.setAttribute('glow', new THREE.BufferAttribute(w, 1));
+    this.parts.push(n);
+    return this;
   }
   sphere(r: number, x: number, y: number, z: number, col: RGB, glow = 0) {
     return this.add(new THREE.SphereGeometry(r, 8, 6).translate(x, y, z), col, glow);
@@ -79,12 +118,59 @@ function lampGeo() {
   return k.build();
 }
 
+/**
+ * Multi-branch NYC street tree (London Plane / Honey Locust):
+ * - Granite sidewalk tree-pit border + cast-iron hoop guard + dark soil bed
+ * - Buttressed lower trunk + 5 primary scaffold limbs + 10 secondary forks
+ * - 22 layered organic foliage boughs with lower-canopy streetlight subsurface translucency (`glow`)
+ */
 function treeGeo() {
   const k = new Kit();
-  k.cyl(0.19, 0.09, 4.6, 0, 0, 0, [0.045, 0.034, 0.026], 0, 6);
-  k.ico(2.9, 0, 6.6, 0, 1, 0.82, 1, [0.014, 0.034, 0.016], 0, 1);
-  k.ico(2.1, 0.6, 8.4, -0.4, 1, 0.85, 1, [0.018, 0.042, 0.02], 0, 1);
-  k.ico(1.8, -1.1, 5.9, 1.2, 1, 0.8, 1, [0.012, 0.03, 0.014], 0, 1);
+  const barkDark: RGB = [0.052, 0.040, 0.030];
+  const barkMid: RGB = [0.068, 0.054, 0.040];
+  // Sidewalk tree pit granite border + dark mulch bed + cast-iron tree guard
+  k.box(1.55, 0.08, 1.55, 0, 0.04, 0, [0.18, 0.18, 0.17], 0);
+  k.box(1.35, 0.09, 1.35, 0, 0.05, 0, [0.035, 0.026, 0.020], 0);
+  for (const s of [-0.68, 0.68]) {
+    k.box(1.38, 0.03, 0.03, 0, 0.36, s, DARK, 0);
+    k.box(0.03, 0.03, 1.38, s, 0.36, 0, DARK, 0);
+    k.cyl(0.02, 0.02, 0.36, s, 0, s, DARK, 0, 5);
+    k.cyl(0.02, 0.02, 0.36, s, 0, -s, DARK, 0, 5);
+  }
+  // Buttressed trunk (0..2.9 m)
+  k.cyl(0.26, 0.19, 1.1, 0, 0, 0, barkDark, 0, 7);
+  k.limb(0.19, 0.145, 0, 1.05, 0, 0.08, 2.85, -0.05, barkMid, 0, 7);
+
+  // 5 primary ascending scaffold limbs + 10 secondary forks + open, flat-tiered leaf sprays
+  const scaffolds: [number, number, number, number, number, number][] = [
+    [1.45, 4.8, 0.50, 2.55, 6.6, 1.05],
+    [-1.35, 4.6, 0.90, -2.40, 6.4, 1.65],
+    [0.40, 5.0, -1.45, 0.85, 6.8, -2.50],
+    [-1.05, 4.9, -1.15, -1.90, 6.7, -2.05],
+    [0.18, 5.5, 0.15, 0.30, 7.9, 0.25],
+  ];
+  for (let i = 0; i < scaffolds.length; i++) {
+    const [mx, my, mz, tx, ty, tz] = scaffolds[i];
+    k.limb(0.115, 0.075, 0.06, 2.65, -0.04, mx, my, mz, barkMid, 0, 6);
+    k.limb(0.072, 0.042, mx, my, mz, tx, ty, tz, barkMid, 0, 5);
+    // Secondary lateral fork off each main scaffold limb
+    const fx = mx * 1.18 - mz * 0.62;
+    const fy = my + 1.45;
+    const fz = mz * 1.18 + mx * 0.62;
+    k.limb(0.062, 0.032, mx, my - 0.15, mz, fx, fy, fz, barkMid, 0, 5);
+
+    // Lower foliage spray perched at outer branch (catches warm streetlight bounce from below)
+    k.ico(0.76, mx * 1.18, my + 0.42, mz * 1.18, 1.35, 0.48, 1.25, [0.022, 0.048, 0.020], 0.16, 1);
+    // Mid-canopy flat foliage sprays at outer twig ends (leaving visible gaps around trunk/limbs)
+    k.ico(0.84, tx * 1.04, ty + 0.18, tz * 1.04, 1.38, 0.50, 1.28, [0.019, 0.044, 0.018], 0.08, 1);
+    k.ico(0.74, fx * 1.04, fy + 0.22, fz * 1.04, 1.32, 0.46, 1.32, [0.016, 0.038, 0.016], 0.06, 1);
+    // Upper-crown sun/moon-facing foliage spray
+    k.ico(0.78, tx * 0.72, ty + 1.25, tz * 0.72, 1.28, 0.52, 1.22, [0.024, 0.054, 0.022], 0.02, 1);
+  }
+  // Open crown apex sprays
+  k.ico(0.92, 0.0, 7.65, 0.0, 1.42, 0.52, 1.36, [0.021, 0.048, 0.020], 0.04, 1);
+  k.ico(0.78, 0.75, 8.45, -0.45, 1.28, 0.48, 1.25, [0.026, 0.058, 0.024], 0.02, 1);
+  k.ico(0.74, -0.75, 8.20, 0.55, 1.25, 0.48, 1.22, [0.020, 0.046, 0.019], 0.02, 1);
   return k.build();
 }
 
@@ -198,25 +284,62 @@ function wasteGeo() {
   return k.build();
 }
 
-/** Shattered ground-floor storefront cavity: dark interior void + jagged broken glass teeth around the frame. */
+/**
+ * Full 3D Breached Ground-Floor Room (`shatteredBayGeo`):
+ * When the car crashes through a building's bottom tier, `recordWallBreach()` punches a jagged 3D hole
+ * in the outer wall (`alphaTest`), and this 3D interior room sits behind the hole (`x in [-6.4, 0.1]`)
+ * with an interior floor, ceiling with dangling broken light bars, structural concrete columns (which
+ * match the physics colliders so the car can pass between them or get wedged!), and jagged masonry/glass collar.
+ */
 function shatteredBayGeo() {
   const k = new Kit();
-  // Dark smashed-in interior void (faces +x outward normal, 3.8 m wide along z, 2.6 m tall along y)
-  k.box(0.08, 2.55, 3.8, 0.02, 1.95, 0, [0.004, 0.005, 0.007], 0);
-  // Broken aluminum mullion stub & top/bottom jagged glass shards
+  const concrete: RGB = [0.075, 0.072, 0.068];
+  const darkWall: RGB = [0.045, 0.042, 0.040];
+  const brickBroken: RGB = [0.22, 0.10, 0.07];
+  const rebar: RGB = [0.12, 0.11, 0.10];
   const glass: RGB = [0.68, 0.88, 0.98];
+
+  // 1. 3D Interior Floor Slab & Ceiling Slab (extending 6.4m inside the building along -x, 6.4m wide along z)
+  k.box(6.4, 0.10, 6.4, -3.2, 0.05, 0, [0.04, 0.04, 0.042], 0);
+  k.box(6.4, 0.14, 6.4, -3.2, 3.88, 0, concrete, 0);
+  // 2. Interior Back Wall & Side Partition Walls
+  k.box(0.14, 3.85, 6.4, -6.35, 1.92, 0, darkWall, 0.02);
+  k.box(6.4, 3.85, 0.14, -3.2, 1.92, -3.15, darkWall, 0.01);
+  k.box(6.4, 3.85, 0.14, -3.2, 1.92, 3.15, darkWall, 0.01);
+  // 3. Two Interior Structural Concrete Columns (at x = -2.85, z = +-1.55m — car can drive between or get wedged!)
+  k.box(0.56, 3.85, 0.56, -2.85, 1.92, -1.55, [0.14, 0.135, 0.13], 0);
+  k.box(0.56, 3.85, 0.56, -2.85, 1.92, 1.55, [0.14, 0.135, 0.13], 0);
+  // 4. Dangling broken fluorescent ceiling light fixtures inside the breached room
+  k.box(1.5, 0.05, 0.32, -2.1, 3.76, -1.1, [1.0, 0.88, 0.68], 0.95);
+  k.limb(0.05, 0.05, -3.6, 3.80, 0.6, -3.5, 2.95, 1.45, [1.0, 0.78, 0.45], 0.85, 6);
+  // 5. Interior masonry rubble mounds & smashed counter on the floor
+  k.box(0.85, 0.32, 1.4, -1.7, 0.18, 0.9, brickBroken, 0);
+  k.box(0.75, 0.28, 1.1, -3.9, 0.16, -0.7, concrete, 0);
+  // 6. Jagged fractured brick/concrete wall collar + bent rebar + jagged glass teeth around the breach
   for (let i = -5; i <= 5; i++) {
-    const z = i * 0.32;
-    const hTop = 0.16 + ((Math.abs(i * 7 + 3) % 5) * 0.05);
-    const hBot = 0.14 + ((Math.abs(i * 11 + 1) % 5) * 0.05);
-    k.box(0.09, hTop, 0.22, 0.05, 3.18 - hTop / 2, z, glass, 0.45);
-    k.box(0.09, hBot, 0.22, 0.05, 0.72 + hBot / 2, z, glass, 0.45);
+    const z = i * 0.42;
+    const hTop = 0.22 + ((Math.abs(i * 7 + 3) % 5) * 0.08);
+    const hBot = 0.18 + ((Math.abs(i * 11 + 1) % 5) * 0.06);
+    k.box(0.28, hTop, 0.38, -0.06, 3.72 - hTop / 2, z, i % 2 === 0 ? brickBroken : concrete, 0);
+    k.box(0.10, hTop * 0.8, 0.24, 0.05, 3.55 - hTop / 2, z, glass, 0.45);
+    k.box(0.10, hBot, 0.24, 0.05, 0.22 + hBot / 2, z, glass, 0.45);
   }
-  for (let j = 0; j < 5; j++) {
-    const y = 0.95 + j * 0.45;
-    k.box(0.09, 0.26, 0.24, 0.05, y, -1.78, glass, 0.45);
-    k.box(0.09, 0.26, 0.24, 0.05, y, 1.78, glass, 0.45);
+  for (let j = 0; j < 6; j++) {
+    const y = 0.55 + j * 0.55;
+    const wSide = 0.32 + (j % 3) * 0.14;
+    k.box(0.32, 0.48, wSide, -0.05, y, -2.55, j % 2 ? brickBroken : concrete, 0);
+    k.box(0.32, 0.48, wSide, -0.05, y, 2.55, j % 2 ? concrete : brickBroken, 0);
+    k.limb(0.02, 0.02, -0.04, y, -2.4, 0.08, y - 0.12, -2.15, rebar, 0, 5);
+    k.limb(0.02, 0.02, -0.04, y, 2.4, 0.08, y + 0.10, 2.15, rebar, 0, 5);
   }
+  return k.build();
+}
+
+/** 3D brick & concrete masonry wall chunk for ground-floor wall demolition. */
+function wallDebrisGeo() {
+  const k = new Kit();
+  k.box(0.38, 0.22, 0.26, 0, 0, 0, [0.28, 0.13, 0.09], 0);
+  k.box(0.24, 0.18, 0.22, 0.12, 0.08, 0.06, [0.36, 0.34, 0.31], 0);
   return k.build();
 }
 
@@ -242,6 +365,32 @@ function litMaterial(glowGain: number, rough = 0.75, metal = 0.05, tint?: any) {
   m.colorNode = tint ? col.mul(tint) : col;
   m.emissiveNode = col.mul(glow).mul(glowGain);
   m.roughness = rough; m.metalness = metal;
+  return m;
+}
+
+/**
+ * Photorealistic NYC street tree material:
+ * - Per-instance species/seasonal tint variation (London Plane emerald, Honey Locust olive, Pin Oak warm green)
+ * - Procedural 3D leaf-cluster & bark furrow bump normal relief (`bumpMap`)
+ * - Warm nocturnal streetlight subsurface scattering on the lower canopy (`glow` attribute)
+ */
+function treeMaterial() {
+  const m = new THREE.MeshStandardNodeMaterial();
+  const col = attribute('color', 'vec3');
+  const subsurf = attribute('glow', 'float');
+  const hInst = hash(instanceIndex);
+  const speciesTint = mix(vec3(0.78, 1.04, 0.74), vec3(1.15, 0.96, 0.68), smoothstep(0.2, 0.85, hInst));
+  // Multi-scale 3D leaf-cluster shadowing so each bough has deep interior shadow pockets and crisp outer leaf tufts
+  const macroClump = sin(positionWorld.x.mul(9.5).add(positionWorld.y.mul(8.2))).mul(cos(positionWorld.z.mul(10.3).sub(positionWorld.y.mul(7.1))));
+  const microLeaf = sin(positionWorld.x.mul(27.0)).mul(cos(positionWorld.y.mul(31.0))).mul(sin(positionWorld.z.mul(25.0)));
+  const leafClump = smoothstep(-0.42, 0.48, macroClump.add(microLeaf.mul(0.45)));
+  const leafShade = mix(0.24, 1.38, leafClump);
+  m.colorNode = col.mul(speciesTint).mul(leafShade);
+  // Warm amber streetlight subsurface translucency on the outer leaf tips of the lower boughs
+  m.emissiveNode = vec3(1.0, 0.66, 0.30).mul(col).mul(subsurf).mul(leafClump).mul(1.85);
+  m.roughness = 0.86;
+  m.metalness = 0.02;
+  m.normalNode = bumpMap(microLeaf.add(macroClump.mul(0.5)).mul(0.45), float(1.15));
   return m;
 }
 
@@ -362,6 +511,9 @@ export class NycProps {
   private shardMesh: THREE.InstancedMesh;
   private shards: Particle[] = [];
   private shardCursor = 0;
+  private debrisMesh: THREE.InstancedMesh;
+  private debris: Particle[] = [];
+  private debrisCursor = 0;
   private sparkMesh: THREE.InstancedMesh;
   private sparks: Particle[] = [];
   private sparkCursor = 0;
@@ -391,7 +543,7 @@ export class NycProps {
       return s;
     };
     mk('lamp', lampGeo(), litMaterial(5.0, 0.45, 0.35), 6000);
-    mk('tree', treeGeo(), litMaterial(0.0, 0.95, 0.0, mix(0.7, 1.35, hash(instanceIndex))), 14000);
+    mk('tree', treeGeo(), treeMaterial(), 14000);
     const phaseA = new THREE.InstancedBufferAttribute(new Float32Array(900 * 2), 2);
     const phaseB = new THREE.InstancedBufferAttribute(new Float32Array(900 * 2), 2);
     mk('signalR', signalGeo(1), signalMaterial(phaseA), 900, 2, phaseA);
@@ -419,8 +571,8 @@ export class NycProps {
     this.steamSet.mesh.renderOrder = 6;
     this.root.add(this.steamSet.mesh); this.meshes.push(this.steamSet.mesh);
 
-    // Shattered storefront cavities (persistent broken shop windows)
-    this.shatteredMesh = new THREE.InstancedMesh(shatteredBayGeo(), litMaterial(2.2, 0.15, 0.8), 160);
+    // Breached 3D ground-floor interior rooms (persistent smashed-through building ground floors)
+    this.shatteredMesh = new THREE.InstancedMesh(shatteredBayGeo(), litMaterial(2.2, 0.65, 0.15), 160);
     this.shatteredMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.shatteredMesh.instanceMatrix.array.fill(0);
     this.shatteredMesh.count = 1;
@@ -439,6 +591,19 @@ export class NycProps {
     this.root.add(this.shardMesh); this.meshes.push(this.shardMesh);
     for (let i = 0; i < SHARD_CAP; i++) {
       this.shards.push({ active: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, rx: 0, ry: 0, rz: 0, wx: 0, wy: 0, wz: 0, scale: 1, groundY: 0, age: 0, maxAge: 1 });
+    }
+
+    // 3D brick & concrete masonry wall chunks (for ground-floor building wall demolition)
+    const DEBRIS_CAP = 360;
+    this.debrisMesh = new THREE.InstancedMesh(wallDebrisGeo(), litMaterial(0.0, 0.88, 0.05), DEBRIS_CAP);
+    this.debrisMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.debrisMesh.instanceMatrix.array.fill(0);
+    this.debrisMesh.count = 1;
+    this.debrisMesh.frustumCulled = false;
+    this.debrisMesh.name = 'nyc_wall_debris';
+    this.root.add(this.debrisMesh); this.meshes.push(this.debrisMesh);
+    for (let i = 0; i < DEBRIS_CAP; i++) {
+      this.debris.push({ active: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, rx: 0, ry: 0, rz: 0, wx: 0, wy: 0, wz: 0, scale: 1, groundY: 0, age: 0, maxAge: 1 });
     }
 
     // Electric & metallic collision sparks (for sheared poles & storefronts)
@@ -511,7 +676,26 @@ export class NycProps {
     (this.pools.instanceMatrix.array as Float32Array).set(S.lamp.mesh.instanceMatrix.array as Float32Array);
     this.pools.instanceMatrix.needsUpdate = true;
 
-    S.tree.add(key, d.tree, (r, m, mo) => writeMatrix(m, mo, r[0], r[1], z, r[2], r[3], r[3] * (0.9 + 0.2 * ((r[2] * 7) % 1)), r[3]));
+    const treeRows: number[][] = [...(d.tree ?? [])];
+    if (d.lamp && d.lamp.length > 1) {
+      for (let i = 0; i < d.lamp.length - 1; i++) {
+        const l0 = d.lamp[i], l1 = d.lamp[i + 1];
+        const yaw = l0[2] ?? 0;
+        const dyaw = Math.abs(yaw - (l1[2] ?? 0));
+        const dx = l1[0] - l0[0], dy = l1[1] - l0[1];
+        // Mast arm points into street along (cos(yaw), sin(yaw)); curb runs along (-sin(yaw), cos(yaw))
+        const crossCurb = Math.abs(dx * Math.cos(yaw) + dy * Math.sin(yaw));
+        const alongCurb = Math.abs(-dx * Math.sin(yaw) + dy * Math.cos(yaw));
+        if (dyaw < 0.12 && crossCurb < 1.0 && alongCurb >= 18 && alongCurb <= 38) {
+          const tx = (l0[0] + l1[0]) * 0.5 - Math.cos(yaw) * 0.95;
+          const ty = (l0[1] + l1[1]) * 0.5 - Math.sin(yaw) * 0.95;
+          const rot = ((Math.abs(tx * 1.7 + ty * 2.3)) % 6.283);
+          const sc = 0.88 + ((Math.abs(tx * 3.1 + ty * 1.3)) % 0.24);
+          treeRows.push([tx, ty, rot, sc]);
+        }
+      }
+    }
+    S.tree.add(key, treeRows, (r, m, mo) => writeMatrix(m, mo, r[0], r[1], z, r[2], r[3], r[3] * (0.9 + 0.2 * ((r[2] * 7) % 1)), r[3]));
     for (const [set, side, kName] of [[S.signalR, 1, 'signalR'], [S.signalL, -1, 'signalL']] as [InstanceSet, number, BreakableKind][]) {
       const sigRows = d.signal?.filter((r) => r[3] === side);
       const slots = set.add(key, sigRows, (r, m, mo, ex, eo) => {
@@ -619,8 +803,37 @@ export class NycProps {
     }
   }
 
+  /** Spawn a burst of 3D tumbling brick & concrete masonry wall chunks at (x, y, z) in Three.js coordinates. */
+  private emitWallDebris(x: number, y: number, z: number, nx: number, nz: number, vxCar: number, vzCar: number, groundY: number, count = 36) {
+    for (let i = 0; i < count; i++) {
+      const p = this.debris[this.debrisCursor];
+      this.debrisCursor = (this.debrisCursor + 1) % this.debris.length;
+      const lat = (Math.random() - 0.5) * 4.2;
+      // Half the wall chunks fly inward with the car into the breached ground floor, half burst outward
+      const inOut = (Math.random() - 0.62) * 8.5;
+      p.active = true;
+      p.x = x - nz * lat + nx * (Math.random() - 0.5) * 0.4;
+      p.y = groundY + 0.35 + Math.random() * 2.9;
+      p.z = z + nx * lat + nz * (Math.random() - 0.5) * 0.4;
+      p.vx = vxCar * 0.45 + nx * inOut + (Math.random() - 0.5) * 4.0;
+      p.vy = 1.0 + Math.random() * 4.5;
+      p.vz = vzCar * 0.45 + nz * inOut + (Math.random() - 0.5) * 4.0;
+      p.rx = Math.random() * 6.28; p.ry = Math.random() * 6.28; p.rz = Math.random() * 6.28;
+      p.wx = (Math.random() - 0.5) * 11; p.wy = (Math.random() - 0.5) * 11; p.wz = (Math.random() - 0.5) * 11;
+      p.scale = 0.65 + Math.random() * 1.15;
+      p.groundY = groundY + 0.08;
+      p.age = 0;
+      p.maxAge = 8.0 + Math.random() * 4.0;
+    }
+  }
+
   /** Break a specific pole and launch it with 3D tumbling rigid-body motion. */
-  private triggerPoleBreak(p: BreakablePole, vx: number, vz: number, onImpact?: (impulse: number) => void) {
+  private triggerPoleBreak(
+    p: BreakablePole,
+    vx: number,
+    vz: number,
+    onImpact?: (impulse: number, kind?: 'pole' | 'shop' | 'wall', wx?: number, wz?: number) => void,
+  ) {
     if (p.broken) return;
     p.broken = true;
     this.brokenPolesCount++;
@@ -657,32 +870,57 @@ export class NycProps {
     if (p.kind === 'bus' || p.kind === 'kiosk') {
       this.emitGlassShards(tx, ty + 1.2, tz, dirX, dirZ, vx, vz, ty, 36);
     }
-    onImpact?.(p.kind === 'hydrant' || p.kind === 'waste' ? 0.35 : 0.65);
+    onImpact?.(p.kind === 'hydrant' || p.kind === 'waste' ? 85 : 155, 'pole', tx, tz);
   }
 
-  /** Shatter a ground-floor storefront bay at world Three.js coordinates (wx, groundY, wz) with outward normal (nx, nz). */
-  shatterStorefrontAt(wx: number, groundY: number, wz: number, nx: number, nz: number, vx = 0, vz = 0, onImpact?: (impulse: number) => void): boolean {
-    const bayKey = `${Math.round(wx / 3.8)}_${Math.round(wz / 3.8)}`;
+  /**
+   * Breach a ground-floor building wall & storefront bay at world Three.js coordinates (wx, groundY, wz)
+   * with outward normal (nx, nz):
+   * 1. Punches a jagged 3D hole through the outer facade (`recordWallBreach`),
+   * 2. Places a full 3D breached interior room (`shatteredBayGeo`: floor, ceiling, hanging light bars, structural columns, rubble),
+   * 3. Explodes 52 spinning 3D glass prism shards + 36 tumbling brick/concrete wall chunks + 24 electric sparks,
+   * 4. Signals `onImpact(210, 'wall', wx, wz)` so `NycStreamer` opens the ground-floor physics collider and `GameAudio` plays the wall demolition sound.
+   */
+  shatterStorefrontAt(
+    wx: number,
+    groundY: number,
+    wz: number,
+    nx: number,
+    nz: number,
+    vx = 0,
+    vz = 0,
+    onImpact?: (impulse: number, kind?: 'pole' | 'shop' | 'wall', wx?: number, wz?: number) => void,
+  ): boolean {
+    const bayKey = `${Math.round(wx / 4.2)}_${Math.round(wz / 4.2)}`;
     if (this.shatteredSet.has(bayKey)) return false;
     this.shatteredSet.add(bayKey);
     this.brokenShopsCount++;
 
+    // Punch a real 3D hole in the building's ground-floor facade mesh
+    recordWallBreach(wx, wz, 4.4);
+
     const slot = this.shatteredCount % 160;
     this.shatteredCount++;
     const yaw = Math.atan2(-nz, nx);
-    // Place the shattered cavity flush against the storefront wall
-    writeMatrix(this.shatteredMesh.instanceMatrix.array as Float32Array, slot * 16, wx + nx * 0.06, -(wz + nz * 0.06), groundY, yaw, 1, 1, 1);
+    // Place the 3D breached interior room aligned with the wall
+    writeMatrix(this.shatteredMesh.instanceMatrix.array as Float32Array, slot * 16, wx + nx * 0.04, -(wz + nz * 0.04), groundY, yaw, 1, 1, 1);
     this.shatteredMesh.count = Math.min(160, Math.max(1, this.shatteredCount));
     this.shatteredMesh.instanceMatrix.needsUpdate = true;
 
     this.emitGlassShards(wx, groundY + 1.5, wz, nx, nz, vx, vz, groundY, 52);
-    this.emitSparks(wx, groundY + 2.8, wz, nx * 4, nz * 4, 22);
-    onImpact?.(0.8);
+    this.emitWallDebris(wx, groundY + 1.6, wz, nx, nz, vx, vz, groundY, 36);
+    this.emitSparks(wx, groundY + 2.8, wz, nx * 4, nz * 4, 24);
+    onImpact?.(210, 'wall', wx, wz);
     return true;
   }
 
   /** Force-break the nearest metal pole within `maxDist` of `carPos` (Three.js coords) — also exposed for automated verification. */
-  breakNearestPole(carPos: THREE.Vector3, carVel?: THREE.Vector3, maxDist = 45): boolean {
+  breakNearestPole(
+    carPos: THREE.Vector3,
+    carVel?: THREE.Vector3,
+    maxDist = 45,
+    onImpact?: (impulse: number, kind?: 'pole' | 'shop' | 'wall', wx?: number, wz?: number) => void,
+  ): boolean {
     const cx = carPos.x, cy = -carPos.z;
     let best: BreakablePole | null = null, bestD = maxDist;
     for (const poles of this.tilePoles.values()) {
@@ -693,12 +931,17 @@ export class NycProps {
       }
     }
     if (!best) return false;
-    this.triggerPoleBreak(best, carVel?.x ?? 12, carVel?.z ?? -12);
+    this.triggerPoleBreak(best, carVel?.x ?? 12, carVel?.z ?? -12, onImpact);
     return true;
   }
 
-  /** Force-shatter the nearest ground-floor glass storefront within `maxDist` of `carPos` (Three.js coords). */
-  breakNearestShop(carPos: THREE.Vector3, carVel?: THREE.Vector3, maxDist = 60): boolean {
+  /** Force-breach the nearest ground-floor building wall & storefront within `maxDist` of `carPos` (Three.js coords). */
+  breakNearestShop(
+    carPos: THREE.Vector3,
+    carVel?: THREE.Vector3,
+    maxDist = 60,
+    onImpact?: (impulse: number, kind?: 'pole' | 'shop' | 'wall', wx?: number, wz?: number) => void,
+  ): boolean {
     const cx = carPos.x, cy = -carPos.z;
     let bestHit: { wx: number; wz: number; nx: number; nz: number; z: number; d: number } | null = null;
     for (const tb of this.tileBuildings.values()) {
@@ -710,7 +953,6 @@ export class NycProps {
         const cyClamped = Math.max(-b.hy, Math.min(b.hy, ly));
         const dist = Math.hypot(lx - cxClamped, ly - cyClamped);
         if (dist < maxDist && (!bestHit || dist < bestHit.d)) {
-          // Outward face normal in local space
           const onX = Math.abs(b.hx - Math.abs(lx)) < Math.abs(b.hy - Math.abs(ly));
           const lnx = onX ? (lx >= 0 ? 1 : -1) : 0;
           const lny = onX ? 0 : (ly >= 0 ? 1 : -1);
@@ -726,10 +968,14 @@ export class NycProps {
       }
     }
     if (!bestHit) return false;
-    return this.shatterStorefrontAt(bestHit.wx, bestHit.z, bestHit.wz, bestHit.nx, bestHit.nz, carVel?.x ?? 10, carVel?.z ?? -10);
+    return this.shatterStorefrontAt(bestHit.wx, bestHit.z, bestHit.wz, bestHit.nx, bestHit.nz, carVel?.x ?? 10, carVel?.z ?? -10, onImpact);
   }
 
-  private checkCollisions(carPos: THREE.Vector3, carVel: THREE.Vector3, onImpact?: (impulse: number) => void) {
+  private checkCollisions(
+    carPos: THREE.Vector3,
+    carVel: THREE.Vector3,
+    onImpact?: (impulse: number, kind?: 'pole' | 'shop' | 'wall', wx?: number, wz?: number) => void,
+  ) {
     const speed = Math.hypot(carVel.x, carVel.z);
     if (speed < 1.8) return;
     const cx = carPos.x, cy = -carPos.z;
@@ -750,21 +996,21 @@ export class NycProps {
           }
         }
         const tb = this.tileBuildings.get(key);
-        if (tb && speed > 2.8) {
+        if (tb && speed > 2.4) {
           for (const b of tb.boxes) {
             const bdx = cx - b.cx, bdy = cy - b.cy;
-            if (Math.abs(bdx) > b.hx + 16 || Math.abs(bdy) > b.hy + 16) continue;
+            if (Math.abs(bdx) > b.hx + 18 || Math.abs(bdy) > b.hy + 18) continue;
             const c = Math.cos(-b.yaw), s = Math.sin(-b.yaw);
             const lx = bdx * c - bdy * s, ly = bdy * c + bdx * s;
             const px = Math.max(-b.hx, Math.min(b.hx, lx));
             const py = Math.max(-b.hy, Math.min(b.hy, ly));
             const distSq = (lx - px) * (lx - px) + (ly - py) * (ly - py);
-            if (distSq < 2.75 * 2.75) {
+            if (distSq < 3.4 * 3.4) {
               const onX = Math.abs(b.hx - Math.abs(lx)) < Math.abs(b.hy - Math.abs(ly));
               const lnx = onX ? (lx >= 0 ? 1 : -1) : 0;
               const lny = onX ? 0 : (ly >= 0 ? 1 : -1);
-              const snapX = onX ? lnx * b.hx : Math.max(-b.hx + 2.0, Math.min(b.hx - 2.0, Math.round(lx / 4.2) * 4.2));
-              const snapY = onX ? Math.max(-b.hy + 2.0, Math.min(b.hy - 2.0, Math.round(ly / 4.2) * 4.2)) : lny * b.hy;
+              const snapX = onX ? lnx * b.hx : Math.max(-b.hx + 1.8, Math.min(b.hx - 1.8, Math.round(lx / 4.2) * 4.2));
+              const snapY = onX ? Math.max(-b.hy + 1.8, Math.min(b.hy - 1.8, Math.round(ly / 4.2) * 4.2)) : lny * b.hy;
               const c2 = Math.cos(b.yaw), s2 = Math.sin(b.yaw);
               const wx = b.cx + (snapX * c2 - snapY * s2);
               const wy = b.cy + (snapX * s2 + snapY * c2);
@@ -859,7 +1105,42 @@ export class NycProps {
       this.shardMesh.instanceMatrix.needsUpdate = true;
     }
 
-    // 3. Electric & metallic collision sparks
+    // 3. 3D brick & concrete masonry wall chunks
+    let activeDebris = false;
+    const debrisArr = this.debrisMesh.instanceMatrix.array as Float32Array;
+    for (let i = 0; i < this.debris.length; i++) {
+      const p = this.debris[i];
+      if (!p.active) continue;
+      activeDebris = true;
+      p.age += dt;
+      if (p.age >= p.maxAge) {
+        p.active = false;
+        debrisArr.fill(0, i * 16, i * 16 + 16);
+        continue;
+      }
+      p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+      p.vy -= 21.0 * dt;
+      p.rx += p.wx * dt; p.ry += p.wy * dt; p.rz += p.wz * dt;
+      if (p.y <= p.groundY) {
+        p.y = p.groundY;
+        p.vy = Math.abs(p.vy) * 0.22;
+        p.vx *= 0.68; p.vz *= 0.68;
+        p.wx *= 0.6; p.wy *= 0.6; p.wz *= 0.6;
+      }
+      const s = p.scale * Math.min(1, (p.maxAge - p.age) * 1.2);
+      _pos.set(p.x, p.y, p.z);
+      _euler.set(p.rx, p.ry, p.rz);
+      _quat.setFromEuler(_euler);
+      _scale.set(s, s, s);
+      _mat4.compose(_pos, _quat, _scale);
+      _mat4.toArray(debrisArr, i * 16);
+    }
+    if (activeDebris) {
+      this.debrisMesh.count = this.debris.length;
+      this.debrisMesh.instanceMatrix.needsUpdate = true;
+    }
+
+    // 4. Electric & metallic collision sparks
     let activeSparks = false;
     const sparkArr = this.sparkMesh.instanceMatrix.array as Float32Array;
     for (let i = 0; i < this.sparks.length; i++) {
@@ -893,7 +1174,12 @@ export class NycProps {
     }
   }
 
-  update(dt: number, carPos?: THREE.Vector3, carVel?: THREE.Vector3, onImpact?: (impulse: number) => void) {
+  update(
+    dt: number,
+    carPos?: THREE.Vector3,
+    carVel?: THREE.Vector3,
+    onImpact?: (impulse: number, kind?: 'pole' | 'shop' | 'wall', wx?: number, wz?: number) => void,
+  ) {
     this.time += dt;
     nycTime.value = this.time;
     this.flush();
@@ -982,6 +1268,7 @@ export class NycProps {
     this.pools.removeFromParent(); this.pools.geometry.dispose(); (this.pools.material as THREE.Material).dispose();
     this.shatteredMesh.removeFromParent(); this.shatteredMesh.geometry.dispose(); (this.shatteredMesh.material as THREE.Material).dispose();
     this.shardMesh.removeFromParent(); this.shardMesh.geometry.dispose(); (this.shardMesh.material as THREE.Material).dispose();
+    this.debrisMesh.removeFromParent(); this.debrisMesh.geometry.dispose(); (this.debrisMesh.material as THREE.Material).dispose();
     this.sparkMesh.removeFromParent(); this.sparkMesh.geometry.dispose(); (this.sparkMesh.material as THREE.Material).dispose();
     this.signs.dispose();
     for (const s of this.lights) { s.light.removeFromParent(); s.light.dispose?.(); }

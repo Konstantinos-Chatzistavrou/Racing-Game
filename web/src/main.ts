@@ -792,14 +792,14 @@ async function main() {
       if (live) rig.update(frame, pos, quat, carAcc, car.out);
     }
     cityLights.update(frame, camera);   // WebGL 2 pool only (5 Hz); a no-op with clustered lighting
-    nyc?.update(pos, frame, driving() ? visual.velocity : undefined, (impulse) => {
+    nyc?.update(pos, frame, driving() ? visual.velocity : undefined, (impulse, kind) => {
       const lv = car.body.linvel();
       const s = Math.hypot(lv.x, lv.z);
       if (s > 1) {
         const drag = Math.min(0.28, (impulse / 1800) / Math.max(4, s));
         car.body.setLinvel({ x: lv.x * (1 - drag), y: lv.y, z: lv.z * (1 - drag) }, true);
       }
-      audio.impact(Math.max(12, impulse * 0.08), impulse > 150);
+      audio.impact(Math.max(12, impulse * 0.18), kind === 'shop' || kind === 'wall', kind);
     });
     city.update(camera);
     // Frame cap (default 30 fps: the quality target; ?cap=0 uncapped, ?cap=45 etc.). Simulation, camera and HUD run every
