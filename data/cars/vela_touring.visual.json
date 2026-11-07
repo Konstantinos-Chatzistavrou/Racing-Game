@@ -15,7 +15,7 @@
     "rl": "wheel_RL",
     "rr": "wheel_RR"
   },
-  "wheel_visual_offset_m": -0.04,
+  "wheel_visual_offset_m": 0.038,
   "collision_box": {
     "size_m": [
       1.9,
@@ -25,7 +25,7 @@
     "centre_in_model_m": [
       0.0,
       0.725,
-      0.24
+      0.026
     ],
     "end_lift_m": 0.13,
     "end_lift_start_m": 1.5,
@@ -41,12 +41,12 @@
     [
       -0.41,
       0.5,
-      2.22
+      2.01
     ],
     [
       0.41,
       0.5,
-      2.22
+      2.01
     ]
   ],
   "panels": {
@@ -110,7 +110,7 @@
   "engine_smoke_in_model_m": [
     0.0,
     0.78,
-    1.7
+    1.49
   ],
   "lod_model": "res://assets/cars/v3/vela_gt_traffic.glb",
   "lod_distance_m": 30.0
