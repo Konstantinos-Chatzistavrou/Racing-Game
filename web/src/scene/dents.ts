@@ -22,10 +22,10 @@
 // different transforms and shared materials, and a part that breaks off keeps its dents. Meshes
 // without the matrices (wheels, interior sharing a material) get dentOn = 0: never dented.
 import * as THREE from 'three/webgpu';
-import { Fn, Loop, If, uniform, uniformArray, positionLocal, normalLocal, vec3, vec4, float, sin, cos, smoothstep } from 'three/tsl';
+import { Fn, Loop, If, uniform, uniformArray, positionLocal, normalLocal, vec3, vec4, float, sin, cos, smoothstep, step } from 'three/tsl';
 
 export const MAX_DENTS = 16;
-const MAX_DEPTH = 0.24;           // m per slot (merged dents stop deepening here)
+const MAX_DEPTH = 0.45;           // m per slot (merged dents stop deepening here)
 const I4 = new THREE.Matrix4();
 
 type Obj = { object?: THREE.Object3D | null };
@@ -35,6 +35,10 @@ export class Dents {
   private dir = Array.from({ length: MAX_DENTS }, () => new THREE.Vector4());   // xyz inward dir, w radius (m)
   private wheels = Array.from({ length: 4 }, () => new THREE.Vector4(0, -10, 0, 0.4)); // xyz wheel hub in model space, w keep-out radius
   private countU = uniform(0, 'int');
+  /** Whole-zone crumple (m): front, rear, left, right. Fed from the core's crush depth, smoothed. */
+  private crushU = uniform(new THREE.Vector4());
+  /** Car extent in model space: z of the rear and front bumpers, half width, mid height. */
+  private boundsU = uniform(new THREE.Vector4(-2.3, 2.3, 0.95, 0.6));
   count = 0;
   readonly positionNode: THREE.Node;
 
@@ -47,7 +51,7 @@ export class Dents {
     const toModel = uniform(new THREE.Matrix4()).onObjectUpdate(({ object }: Obj) => mat(object?.userData.dentToModel));
     const toLocal = uniform(new THREE.Matrix4()).onObjectUpdate(({ object }: Obj) => mat(object?.userData.dentToLocal));
     const on = uniform(0, 'int').onObjectUpdate(({ object }: Obj) => (isM4(object?.userData.dentToModel) ? 1 : 0));
-    const count = this.countU;
+    const count = this.countU, crush = this.crushU, bounds = this.boundsU;
     this.positionNode = Fn(() => {
       const active = count.mul(on);
       const p = toModel.mul(vec4(positionLocal, 1)).xyz.toVar();
@@ -79,8 +83,25 @@ export class Dents {
         const ed = dx.mul(dx).add(dy.mul(dy)).add(dz.mul(dz)).sqrt();
         archMask.assign(archMask.min(smoothstep(float(0.92), float(1.48), ed)));
       }
-      const maxDisp = float(0.22);
-      const clamped = disp.mul(maxDisp.div(disp.length().max(maxDisp))).mul(archMask);
+      // Whole-zone crumple. A crush of c metres at the front shortens the front end by c over a zone that grows with it
+      // (0.9 + 1.2 c m back from the bumper), the panels wrinkle across it, and the bonnet (upper surfaces) buckles up
+      // into a ridge while the underside folds down: what a crumple zone looks like after a wall. Same at the rear.
+      const crumple = vec3(0).toVar();
+      for (const [cz, end, dirZ] of [[crush.x, bounds.y, -1], [crush.y, bounds.x, 1]] as const) {
+        const L = float(0.9).add(cz.mul(1.2));
+        const along = end.sub(p.z).mul(-dirZ).div(L).clamp(0, 1);       // 0 at the bumper -> 1 at the end of the zone
+        const zone = float(1).sub(along).mul(step(float(1e-4), cz));
+        const s = smoothstep(float(0), float(1), zone);
+        const upper = smoothstep(bounds.w.sub(0.1), bounds.w.add(0.35), p.y);
+        const buckle = sin(along.mul(3.1416)).mul(cz.mul(0.32)).mul(upper.mul(1.3).sub(0.3));
+        const wrinkle = sin(p.z.mul(17).add(p.y.mul(9))).mul(cz.mul(0.07)).mul(s);
+        crumple.addAssign(vec3(wrinkle.mul(p.x.sign()), buckle, cz.mul(s).mul(dirZ)));
+        // lighting reads the buckle: tilt the normal along the slope of the ridge (d buckle / dz)
+        tilt.addAssign(vec3(0, 0, cos(along.mul(3.1416)).mul(3.1416).div(L).mul(cz.mul(0.32)).mul(upper.mul(1.3).sub(0.3)).mul(dirZ)));
+      }
+      const maxDisp = float(0.6);
+      const total = disp.add(crumple);
+      const clamped = total.mul(maxDisp.div(total.length().max(maxDisp))).mul(archMask);
       const t = tilt.mul(archMask).sub(n.mul(tilt.mul(archMask).dot(n)));   // tangential part only
       normalLocal.assign(toLocal.mul(vec4(n.add(t.mul(float(1.5).div(t.length().max(1.5)))), 0)).xyz.normalize());
       return toLocal.mul(vec4(p.add(clamped), 1)).xyz;
@@ -122,5 +143,10 @@ export class Dents {
     this.countU.value = ++this.count;
   }
 
-  clear() { this.count = 0; this.countU.value = 0; }
+  /** Model-space extent of the car body (bumper to bumper). */
+  setBounds(box: THREE.Box3) { this.boundsU.value.set(box.min.z, box.max.z, Math.max(-box.min.x, box.max.x), box.min.y + (box.max.y - box.min.y) * 0.45); }
+  /** Zone crumple depths (m): front, rear, left, right. */
+  setCrush(front: number, rear: number, left: number, right: number) { this.crushU.value.set(front, rear, left, right); }
+
+  clear() { this.count = 0; this.countU.value = 0; this.crushU.value.set(0, 0, 0, 0); }
 }

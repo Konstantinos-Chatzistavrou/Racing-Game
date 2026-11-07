@@ -65,7 +65,9 @@ struct WheelOutput {
     Vec3 contact_point;              // world, where the tyre touches the ground
     Vec3 force_world;                // world, tyre force in the ground plane (Fx + Fy), N
     double grip_limit = 0;           // N, approx. max friction force (peak mu * surface * load)
-    TireCondition condition;         // tyre temperature & wear state
+    TireCondition condition;         // tyre temperature (core + surface), pressure & wear state
+    double brake_temp_c = 0;         // brake disc temperature, C
+    double brake_mu = 1;             // pad friction relative to its working range (cold / fading < 1)
 };
 
 struct VehicleOutput {
@@ -136,6 +138,12 @@ private:
     std::array<double, 4> kappa_{};      // relaxed longitudinal slip per wheel
     std::array<double, 4> tan_alpha_{};  // relaxed lateral slip (tan of slip angle) per wheel
     std::array<TireCondition, 4> tire_condition_{};
+    std::array<double, 4> disc_temp_{};          // brake disc temperatures, C (set from BrakeThermal at reset)
+public:
+    /** Tests / tooling: set every brake disc to this temperature (C); reset_motion puts them back to warm. */
+    void set_brake_temperature(double c) { disc_temp_.fill(c); disc_init_ = true; }
+private:
+    bool disc_init_ = false;
     std::array<double, 2> prev_axle_fy_{};
     int last_gear_ = 1;                     // auto-clutch: detects gear changes
     double shift_timer_ = 0;  // last lateral force per axle (geometric load transfer)

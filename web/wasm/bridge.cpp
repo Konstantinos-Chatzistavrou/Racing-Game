@@ -131,7 +131,9 @@ EMSCRIPTEN_KEEPALIVE void rs_rays(int id) {
 //     [113] abs active  [114] tc active  [115] esc active
 //     buf[120 + 12 i]: wheel i centre xyz (three world), steer rad, spin rad, contact, load N,
 //                      slip ratio, slip angle rad, compression m, angular velocity rad/s, surface
-//     buf[168 + 4 i]:  wheel i self-aligning torque Mz (N m), camber rad, tread temperature C, wear 0..1
+//     buf[168 + 4 i]:  wheel i self-aligning torque Mz (N m), camber rad, tread (core) temperature C, wear 0..1
+//     buf[184 + i]: brake disc temperature C   buf[188 + i]: tread surface temperature C   buf[192 + i]: tyre pressure kPa
+//     buf[196 + i]: brake pad friction vs. its working range (fade < 1)
 EMSCRIPTEN_KEEPALIVE void rs_step(int id, double dt) {
     Car& c = *g_cars[id];
     double* b = c.buf.data();
@@ -202,6 +204,10 @@ EMSCRIPTEN_KEEPALIVE void rs_step(int id, double dt) {
         ext[1] = w.camber;
         ext[2] = w.condition.temperature_c;
         ext[3] = w.condition.wear;
+        b[184 + i] = w.brake_temp_c;
+        b[188 + i] = w.condition.surface_c;
+        b[192 + i] = w.condition.pressure_kpa;
+        b[196 + i] = w.brake_mu;
     }
 }
 

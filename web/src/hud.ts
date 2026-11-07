@@ -114,7 +114,7 @@ export class Hud {
       on('ESC', assists.esc, out[OUT.esc] !== 0), on('AUTO', assists.autoGearbox),
     ].join(' · ');
     if (assistHtml !== this.assistHtml) $('assists').innerHTML = this.assistHtml = assistHtml;
-    this.updateWarnings(dmg);
+    this.updateWarnings(dmg, out);
     const el = $('damage');
     if (!dmg || dmg.totalKj < 1) { el.textContent = ''; return; }
     const pct = (x: number) => Math.round(Math.min(1, x) * 100);
@@ -125,8 +125,14 @@ export class Hud {
   }
 
   /** Fire and brake lamps (DOM rebuilt only when the text changes). */
-  private updateWarnings(dmg: Damage | null) {
+  private updateWarnings(dmg: Damage | null, out?: Float64Array) {
     const chips: string[] = [];
+    // hot brakes (thermal fade, core brake model): the hottest disc and what the pads have left
+    if (out) {
+      let t = 0, mu = 1;
+      for (let i = 0; i < 4; i++) { t = Math.max(t, out[OUT.brakeTemp(i)]); mu = Math.min(mu, out[OUT.padMu(i)]); }
+      if (t > 620 && !(dmg && (dmg.brakesFailed || dmg.brakes < 0.97))) chips.push(`<div class="chip ${mu < 0.75 ? 'red' : ''}">${ICON_BRAKE}BRAKES ${mu < 0.95 ? 'FADING' : 'HOT'} ${Math.round(t / 10) * 10}°C</div>`);
+    }
     if (this.outWarn) chips.push(`<div class="chip">${this.outWarn}</div>`);
     if (dmg) {
       if (dmg.fire > 0) chips.push(`<div class="chip red">${ICON_FIRE}ENGINE FIRE</div>`);

@@ -167,3 +167,23 @@ In Godot (`--autotest`): ABS full pedal from 100 km/h = 33.6 m (fixed 0.78 pedal
   90 km/h; aggressive follower (0.8 s, 0.15 s headway) on a single lane hits it at 41 km/h.
 - Recovery: stuck 2 s with throttle -> 1.6 s reverse. Race rule (core RaceTracker): upside down
   3 s or < 1 km/h for 10 s -> respawn 15 m back on the route, damage kept.
+
+## MF 6.1 completion, tyre thermals, brake thermals (2026-11-07)
+
+- **Friction vs. sliding speed** (MF 6.1 LMUV): lambda_mu* = lambda_mu (1 + LMUV V_ref/V0) / (1 + LMUV Vs/V0), Vs = |contact
+  patch slip velocity|, V0 = 16.7 m/s, LMUV = 0.12, V_ref = 1.5 m/s (the sliding speed the coefficients were fitted at, so
+  ordinary cornering is unchanged). Fy at 25 m/s sliding = 0.85 of the 1.5 m/s value. Locked-wheel 100-0: 51.9 m vs 35.4 m
+  threshold braking.
+- **Inflation pressure** (MF 6.1, Pacejka 3rd ed. Table 4.2 passenger tyre): Kx * (1 + PPX1 dpi + PPX2 dpi^2),
+  mu_x * (1 + PPX3 dpi + PPX4 dpi^2), Ky: pKy1 (1 + PPY1 dpi), load scale pKy2 (1 + PPY2 dpi), mu_y * (1 + PPY3 dpi + PPY4
+  dpi^2). Hot pressure from the gas law: gas temperature = 20 + 0.55 (T_core - 20); 188 kPa cold -> ~223 kPa at 85 C core
+  (nominal 220).
+- **Two-layer tread temperature**: surface C_s = 1.5 kJ/K (takes all sliding power), core C_c = 16 kJ/K, conduction 400 W/K,
+  surface air cooling 20 + 2.5 v W/K, core relaxes to the rolling equilibrium (78 C). 10 s at 25 kW sliding from 30 C:
+  surface 94 C, core 53 C. Grip window on 0.65 core + 0.35 surface around 90 C +- 25; surface over 140 C greases.
+- **Brake discs**: per wheel, heated by T_brake |w| (a locked wheel heats the tyre, not the disc), cooled by hA = 5 + 1.0 v
+  W/K (vented) + radiation eps sigma A (T^4 - Ta^4); cast iron 8.5 / 6 kg front / rear. Pad friction vs. disc temperature:
+  0.86 cold, 1.0 at 250-500 C, 0.82 at 700, 0.52 at 900. Six back-to-back ABS stops from 200 km/h: 135, 136, 136, 137,
+  160, 202 m; front discs 306 -> 967 C. HUD shows BRAKES HOT / FADING over 620 C.
+- Output buffer: [184+i] disc C, [188+i] tread surface C, [192+i] pressure kPa, [196+i] pad mu.
+

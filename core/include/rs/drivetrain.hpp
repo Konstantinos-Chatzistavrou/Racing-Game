@@ -14,6 +14,7 @@ struct DrivetrainInput {
     double brake_power_scale = 1.0;             // damage hook: brake fade / failure (all brakes)
     std::array<double, 4> brake_scale{1, 1, 1, 1};   // ABS: fraction of driver brake pressure
     std::array<double, 4> extra_brake{};             // ESC: added brake torque, N m
+    std::array<double, 4> pad_mu{1, 1, 1, 1};        // brake pad friction vs. its working range (disc temperature)
 };
 
 class Drivetrain {
@@ -26,6 +27,7 @@ public:
               const std::array<double, 4>& rolling_torque, double h);
 
     std::array<double, 4> wheel_omega{};        // rad/s
+    std::array<double, 4> brake_torque{};       // N m, friction torque the brakes applied last step (disc heating)
     double engine_omega = 0;                    // rad/s
     bool stalled = false;
     double engine_rpm() const;

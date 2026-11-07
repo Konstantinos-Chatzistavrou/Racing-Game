@@ -162,6 +162,36 @@ RS_TEST(braking) {
     test::check("fronts lock before rears (stable brake bias)", lock_f < lock_r);
 }
 
+// ---------------------------------------------------------------- brake fade
+// Six back-to-back ABS stops from 200 km/h (no cooling lap between): each dumps ~700 kJ into each front disc. Street
+// pads fade above ~600 C: the last stop must be clearly longer than the first, the discs well past 600 C.
+RS_TEST(brake_fade) {
+    CarConfig cfg = test::car();
+    const double v0 = 200 / 3.6;
+    double temp = cfg.brake_thermal.start_temp_c, first = 0, last = 0;
+    for (int k = 0; k < 6; ++k) {
+        auto s = test::make_sim(cfg);
+        s->reset({}, 0, v0);
+        s->vehicle.set_brake_temperature(temp);
+        s->vehicle.assists().abs = true;
+        DriverInput in;
+        in.clutch = 1;
+        double x0 = s->body.state.position.x;
+        while (test::speed(*s) > 0.3 && s->time < 30) {
+            in.brake = std::min(1.0, s->time / 0.2);
+            s->step(in);
+        }
+        double d = s->body.state.position.x - x0;
+        temp = 0.5 * (s->last.wheels[FL].brake_temp_c + s->last.wheels[FR].brake_temp_c);
+        std::printf("         stop %d: %.1f m, front discs %.0f C, pad mu %.2f\n", k + 1, d, temp, s->last.wheels[FL].brake_mu);
+        if (k == 0) first = d;
+        last = d;
+    }
+    test::check_range("200-0 km/h, first stop", first, 100, 150, "m");
+    test::check_range("front disc temperature after 6 stops", temp, 600, 1000, "C");
+    test::check_range("6th stop / 1st stop (fade)", last / first, 1.08, 2.0, "x");
+}
+
 // ---------------------------------------------------------------- cornering
 // Reference: performance road cars on summer tyres reach ~0.95-1.1 g on a skidpad.
 // Understeer gradient K = d(delta)/d(a_y) > 0 for a road car (stable): the driver must add

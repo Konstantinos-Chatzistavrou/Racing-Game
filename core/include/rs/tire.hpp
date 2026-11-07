@@ -14,22 +14,35 @@ struct TireForces {
     double pneumatic_trail = 0;  // instantaneous pneumatic trail t, m
 };
 
-// Tyre thermal & wear state: sliding friction power heats the tread, airflow and road contact cool it.
+// Tyre thermal, pressure & wear state. Two layers: the tread SURFACE takes the sliding friction power and swings fast
+// (a few seconds), the CORE (bulk tread + carcass) follows it slowly and sets the inflation gas temperature. Grip comes
+// from a blend of the two inside the compound's window; a surface far over the window greases up on its own.
 struct TireCondition {
-    double temperature_c = 80.0;
+    double temperature_c = 80.0;  // core (bulk) temperature, C
+    double surface_c = 80.0;      // tread surface temperature, C
+    double pressure_kpa = 0.0;    // gauge, from the gas law (0 until the first update)
     double wear = 0.0;            // 0 = new, 1 = worn out
-    void update(double slip_power_w, double load_n, double speed_mps, double dt);
-    double grip_factor() const;
+    void update(double slip_power_w, double load_n, double speed_mps, double dt, const TireParams* p = nullptr);
+    double grip_factor(const TireParams* p = nullptr) const;
+    /** Relative pressure change dpi = (p - p_nom) / p_nom (MF 6.1). */
+    double dpi(const TireParams& p) const;
+};
+
+// Operating state passed to the Magic Formula besides the slips (MF 6.1).
+struct TireOperating {
+    double slip_speed = 0;        // |v_slip| m/s: friction falls with sliding speed (LMUV)
+    double dpi = 0;               // relative inflation pressure change
 };
 
 // kappa: longitudinal slip ratio (-), tan_alpha: tangent of the slip angle (-, + gives +Fy),
 // fz: vertical load (N), mu_scale: surface/condition grip multiplier,
 // gamma: inclination / camber angle in the tyre frame (rad, + = top tilted toward +left).
-TireForces magic_formula(const TireParams& p, double kappa, double tan_alpha, double fz, double mu_scale, double gamma = 0.0);
+TireForces magic_formula(const TireParams& p, double kappa, double tan_alpha, double fz, double mu_scale, double gamma = 0.0,
+                         const TireOperating& op = {});
 
 // Pure-slip curves and self-aligning moment, exposed for tests/plots.
-double mf_pure_fx(const TireParams& p, double kappa, double fz, double mu_scale, double gamma = 0.0);
-double mf_pure_fy(const TireParams& p, double alpha, double fz, double mu_scale, double gamma = 0.0);
+double mf_pure_fx(const TireParams& p, double kappa, double fz, double mu_scale, double gamma = 0.0, double dpi = 0.0);
+double mf_pure_fy(const TireParams& p, double alpha, double fz, double mu_scale, double gamma = 0.0, double dpi = 0.0);
 double mf_aligning_torque(const TireParams& p, double kappa, double alpha, double fz, double mu_scale, double gamma,
                           double fx, double fy_no_svyk, double* out_trail = nullptr);
 

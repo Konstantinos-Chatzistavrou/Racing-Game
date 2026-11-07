@@ -62,6 +62,29 @@ struct TireParams {
     double relax_x = 0.12, relax_y = 0.30;
     double rolling_resistance = 0.012;   // F_rr = (c_rr0 + c_rr2 * (v/30)^2) * Fz
     double rolling_resistance_v2 = 0.001; // speed-dependent rolling hysteresis
+    // MF 6.1 additions
+    // Friction falls with sliding speed (rubber friction, Persson): lambda_mu* = 1 / (1 + LMUV Vs / V0), Vs = |slip
+    // velocity|, V0 = 16.7 m/s (LONGVL). The slip curves alone can't tell a 10 km/h slide from a 100 km/h one.
+    double lmuv = 0.12;
+    double lmuv_ref_mps = 1.5;        // sliding speed the mu coefficients were fitted at (normal cornering): no decay there
+    // Inflation pressure (gauge, kPa): nominal (the coefficients' reference) and cold set pressure. Hot pressure follows
+    // the gas law from the tyre's core temperature; dpi = (p - p_nom) / p_nom changes slip stiffness and friction
+    // (Pacejka 3rd ed. Table 4.2 passenger tyre: PPX1..4, PPY1..4).
+    double p_nominal_kpa = 220, p_cold_kpa = 188;   // 188 kPa cold -> ~220 kPa with the core at ~80 C
+    double ppx1 = -0.3485, ppx2 = 0.37824, ppx3 = -0.09603, ppx4 = 0.06518;
+    double ppy1 = -0.6255, ppy2 = -0.06523, ppy3 = -0.16666, ppy4 = 0.2811;
+    // Thermal window: core/surface blend temperature with full grip (C), and the half-width of the window.
+    double temp_optimal_c = 90, temp_window_c = 25;
+};
+
+/** Brakes: disc + pad thermal model (per axle). */
+struct BrakeThermal {
+    double disc_mass_front = 8.5, disc_mass_rear = 6.0;   // kg (cast iron, c = 460 J/kg K)
+    double disc_area_front = 0.13, disc_area_rear = 0.10; // m^2 of radiating / cooled surface
+    // Convective cooling h A = base + per_mps v (W/K): ~35 W/K for a vented disc at 30 m/s (h ~100 W/m^2K over ~0.35 m^2
+    // of faces and vanes): a hot disc takes minutes, not seconds, to come back down.
+    double cooling_base = 5.0, cooling_per_mps = 1.0;
+    double start_temp_c = 150;                             // warm brakes
 };
 
 struct WheelGeom {
@@ -133,7 +156,8 @@ struct CarConfig {
     double wheelbase = 2.65;
     double inertia_xx = 550, inertia_yy = 2100, inertia_zz = 2400;   // kg m^2 about the CG
     double brake_bias_front = 0.62;           // fraction of total brake torque on the front axle
-    double brake_torque_total = 7000;         // N m, all four wheels together at full pedal
+    double brake_torque_total = 7000;         // N m, all four wheels together at full pedal (pads in their range)
+    BrakeThermal brake_thermal;
     AxleParams front, rear;
     TireParams tire_front, tire_rear;
     EngineParams engine;

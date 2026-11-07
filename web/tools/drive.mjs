@@ -604,6 +604,17 @@ try {
       if (i === 8) await brakeTest('cooked brakes');
     }
     await shot('dmg_2_fire_big.png');
+    // front three-quarter views of the wreck: crumpled nose, hanging bumper, flames and smoke (chase rig frozen)
+    for (const [i, az] of [[3, 0.75], [4, -0.9], [5, 2.6]]) {
+      await evaluate(`(() => { const g = window.__game; g.__rigUpdate ??= g.rig.update.bind(g.rig); g.rig.update = () => {};
+        g.input.hold = true; g.car.body.setLinvel({ x: 0, y: 0, z: 0 }, true); g.car.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+        const t = g.car.body.translation(), r = g.car.body.rotation(), V = g.camera.position.constructor, Q = g.camera.quaternion.constructor;
+        const f = new V(0, 0, 1).applyQuaternion(new Q(r.x, r.y, r.z, r.w)); f.y = 0; f.normalize();
+        const side = new V(-f.z, 0, f.x), d = f.clone().multiplyScalar(Math.cos(${az})).add(side.multiplyScalar(Math.sin(${az})));
+        g.camera.position.set(t.x + d.x * 5.2, t.y + 1.3, t.z + d.z * 5.2); g.camera.lookAt(t.x + f.x * 0.8, t.y + 0.5, t.z + f.z * 0.8); return 1; })()`);
+      await sleep(700); await shot(`dmg_${i}_view.png`);
+    }
+    await evaluate(`(() => { const g = window.__game; if (g.__rigUpdate) g.rig.update = g.__rigUpdate; return 1; })()`);
     await key('keyDown', 'KeyR', 'r'); await key('keyUp', 'KeyR', 'r');
     await sleep(800);
     console.log('after R', JSON.stringify(await evaluate(dmg)), '| lights', await evaluate(lights), '| physics', await evaluate(phys));

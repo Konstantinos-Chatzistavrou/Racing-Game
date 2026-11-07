@@ -58,12 +58,40 @@ RS_TEST(tire) {
     relaxation_lengths(p, 5000, 0.0, sx_hi, sy_hi);
     test::check("relaxation length grows with load (sigma = K / C_F)", sy_hi > sy_lo && sx_hi > sx_lo);
 
-    // Tire thermodynamics & wear:
+    // Tyre thermodynamics (two layers) & wear: 10 s of hard sliding (25 kW) on a cold tyre
     TireCondition cond;
-    cond.temperature_c = 30.0; // cold tyre
-    double cold_grip = cond.grip_factor();
-    for (int i = 0; i < 100; ++i) cond.update(25000.0, 4000.0, 25.0, 0.1);
-    test::check("sliding work heats tyre into optimal window", cond.temperature_c > 65.0 && cond.grip_factor() > cold_grip);
+    cond.temperature_c = cond.surface_c = 30.0;
+    double cold_grip = cond.grip_factor(&p);
+    for (int i = 0; i < 100; ++i) cond.update(25000.0, 4000.0, 25.0, 0.1, &p);
+    std::printf("         10 s at 25 kW sliding from 30 C: surface %.0f C, core %.0f C, grip %.3f -> %.3f\n", cond.surface_c, cond.temperature_c, cold_grip, cond.grip_factor(&p));
+    test::check("sliding heats the surface fast", cond.surface_c > 70.0);
+    test::check("the core follows slowly", cond.temperature_c > 40.0 && cond.temperature_c < cond.surface_c);
+    test::check("warmer tyre grips better", cond.grip_factor(&p) > cold_grip);
+    for (int i = 0; i < 100; ++i) cond.update(0.0, 4000.0, 25.0, 0.1, &p);
+    test::check("the surface spike fades in seconds once the slide stops", cond.surface_c - cond.temperature_c < 8.0);
+
+    // MF 6.1 friction decay with sliding speed: same slip angle, slow slide vs. fast slide
+    TireOperating slow, fast;
+    slow.slip_speed = 1.5;
+    fast.slip_speed = 25.0;
+    double fy_slow = magic_formula(p, 0.0, std::tan(20 * deg), 4000, 1.0, 0.0, slow).fy;
+    double fy_fast = magic_formula(p, 0.0, std::tan(20 * deg), 4000, 1.0, 0.0, fast).fy;
+    test::check_range("Fy at 25 m/s sliding / at 1.5 m/s (LMUV)", fy_fast / fy_slow, 0.80, 0.92, "x");
+
+    // Inflation: gas law from the core temperature; a warm tyre sits near its nominal pressure
+    TireCondition pc;
+    pc.temperature_c = pc.surface_c = 20.0;
+    pc.update(0.0, 0.0, 0.0, 0.01, &p);
+    double cold_p = pc.pressure_kpa;
+    pc.temperature_c = pc.surface_c = 85.0;
+    pc.update(0.0, 0.0, 0.0, 0.01, &p);
+    std::printf("         pressure cold %.0f kPa, core 85 C %.0f kPa (nominal %.0f)\n", cold_p, pc.pressure_kpa, p.p_nominal_kpa);
+    test::check_range("pressure rise cold -> hot", pc.pressure_kpa - cold_p, 20, 50, "kPa");
+    TireOperating over;
+    over.dpi = 0.25;   // 25 % over-inflated: stiffer, less grip
+    double fy_nom = magic_formula(p, 0.0, std::tan(8 * deg), 4000, 1.0).fy;
+    double fy_over = magic_formula(p, 0.0, std::tan(8 * deg), 4000, 1.0, 0.0, over).fy;
+    test::check("over-inflated tyre: less lateral force at the limit", fy_over < fy_nom);
 }
 
 RS_TEST(config) {

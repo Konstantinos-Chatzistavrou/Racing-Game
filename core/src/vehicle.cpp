@@ -3,6 +3,20 @@
 
 namespace rs {
 
+/**
+ * Brake pad friction vs. disc temperature, relative to its working range (road / track-day performance pad).
+ * Cold pads bite ~20 % less; 250-500 C is the plateau; above ~600 C the resin gasses out and the pads fade
+ * (~0.5 of their grip at 900 C). Brake torque at full pedal = brake_torque_total * this.
+ */
+double brake_pad_mu(double t) {
+    static const double T[] = {0, 100, 200, 300, 500, 600, 700, 800, 900, 1000};
+    static const double M[] = {0.86, 0.95, 0.99, 1.0, 1.0, 0.94, 0.82, 0.66, 0.52, 0.45};
+    if (t <= T[0]) return M[0];
+    for (int i = 1; i < 10; ++i) if (t <= T[i]) return M[i - 1] + (M[i] - M[i - 1]) * (t - T[i - 1]) / (T[i] - T[i - 1]);
+    return M[9];
+}
+
+
 namespace {
 std::array<Vec3, 4> wheel_points(const CarConfig& c) {
     std::array<Vec3, 4> p;
@@ -23,7 +37,9 @@ void Vehicle::reset_motion(double v, int gear) {
         drivetrain_.wheel_omega[w] = v / cfg_.tire(w).radius;
         kappa_[w] = tan_alpha_[w] = 0;
         tire_condition_[w] = TireCondition{};
+        disc_temp_[w] = cfg_.brake_thermal.start_temp_c;
     }
+    disc_init_ = true;
     const auto& g = cfg_.drivetrain.gear_ratios;
     if (gear >= 0 && gear < (int)g.size() && g[gear] != 0.0) {
         double idle_w = cfg_.engine.idle_rpm * 2.0 * kPi / 60.0;
@@ -151,7 +167,7 @@ VehicleOutput Vehicle::update(const ChassisState& s, const std::array<WheelConta
         // A leftward force (left turn) loads the right (outer) wheel. Uses last step's Fy.
         double geo = prev_axle_fy_[w < 2 ? 0 : 1] * ax.roll_centre_height / ax.track;
         k.load = std::max(0.0, k.load + (w % 2 == 0 ? -geo : geo));
-        k.mu = cfg_.grip_for_surface(c.surface) * tire_condition_[w].grip_factor() * damage_.grip[w];
+        k.mu = cfg_.grip_for_surface(c.surface) * tire_condition_[w].grip_factor(&cfg_.tire(w)) * damage_.grip[w];
         // Dynamic inclination / camber angle gamma in the tyre frame (+ = top tilted toward +left):
         //   1. Chassis roll relative to the road normal (dot(up, k.lat))
         //   2. Static camber + suspension bump camber gain (negative = top tilted inward)
@@ -249,6 +265,8 @@ VehicleOutput Vehicle::update(const ChassisState& s, const std::array<WheelConta
     }
     last_gear_ = input_.gear;
     const double throttle_after_shift = din.throttle;
+    if (!disc_init_) { disc_temp_.fill(cfg_.brake_thermal.start_temp_c); disc_init_ = true; }
+    for (int w = 0; w < 4; ++w) din.pad_mu[w] = brake_pad_mu(disc_temp_[w]);
     for (int step = 0; step < n_sub; ++step) {
         std::array<double, 4> tyre_t{}, roll_t{};
         for (int w = 0; w < 4; ++w) {
@@ -256,19 +274,22 @@ VehicleOutput Vehicle::update(const ChassisState& s, const std::array<WheelConta
             if (!touching[w]) {
                 kappa_[w] *= 0.9;
                 tan_alpha_[w] *= 0.9;
-                tire_condition_[w].update(0.0, 0.0, length(s.velocity), h);
+                tire_condition_[w].update(0.0, 0.0, length(s.velocity), h, &tp);
                 continue;
             }
             const Kin& k = kin[w];
             double v_sx = drivetrain_.wheel_omega[w] * k.re - k.vx;
             kappa_[w] = (kappa_[w] + h * v_sx / k.sigma_x) / (1.0 + h * std::abs(k.vx) / k.sigma_x);
             tan_alpha_[w] = (tan_alpha_[w] + h * (-k.vy) / k.sigma_y) / (1.0 + h * std::abs(k.vx) / k.sigma_y);
-            TireForces f = magic_formula(tp, kappa_[w], tan_alpha_[w], k.load, k.mu, k.gamma);
+            TireOperating op;
+            op.slip_speed = std::hypot(v_sx, k.vy);           // contact patch sliding speed
+            op.dpi = tire_condition_[w].dpi(tp);              // hot inflation pressure vs. nominal
+            TireForces f = magic_formula(tp, kappa_[w], tan_alpha_[w], k.load, k.mu, k.gamma, op);
             fx_sum[w] += f.fx;
             fy_sum[w] += f.fy;
             mz_sum[w] += f.mz;
             double slip_power = std::abs(f.fx * v_sx) + std::abs(f.fy * k.vy);
-            tire_condition_[w].update(slip_power, k.load, std::hypot(k.vx, k.vy), h);
+            tire_condition_[w].update(slip_power, k.load, std::hypot(k.vx, k.vy), h, &tp);
             tyre_t[w] = -f.fx * k.re;                                // road pushes back on the wheel
             double c_rr = tp.rolling_resistance + tp.rolling_resistance_v2 * (k.vx / 30.0) * (k.vx / 30.0);
             roll_t[w] = c_rr * k.load * k.re;
@@ -297,6 +318,21 @@ VehicleOutput Vehicle::update(const ChassisState& s, const std::array<WheelConta
         tc_cut_ += (cut_target - tc_cut_) * std::min(1.0, h / 0.03);
         din.throttle = throttle_after_shift * (1.0 - tc_cut_) * (1.0 - esc_throttle_cut);
         drivetrain_.step(din, tyre_t, roll_t, h);
+        // ---- brake discs: heated by the friction power the pads absorb (T_brake |w|; a locked wheel heats the tyre,
+        // not the disc), cooled by airflow (vented disc: h = base + k v) and radiation (eps sigma A (T^4 - Ta^4)).
+        const BrakeThermal& bt = cfg_.brake_thermal;
+        const double v_car = length(s.velocity);
+        for (int w = 0; w < 4; ++w) {
+            const bool front = w < 2;
+            const double cap = (front ? bt.disc_mass_front : bt.disc_mass_rear) * 460.0;
+            const double area = front ? bt.disc_area_front : bt.disc_area_rear;
+            const double tk = disc_temp_[w] + 273.15, ta = 25.0 + 273.15;
+            const double heat = drivetrain_.brake_torque[w] * std::abs(drivetrain_.wheel_omega[w]);
+            const double cool = (bt.cooling_base + bt.cooling_per_mps * v_car) * (disc_temp_[w] - 25.0)
+                              + 0.55 * 5.670e-8 * area * (tk * tk * tk * tk - ta * ta * ta * ta);
+            disc_temp_[w] = clamp(disc_temp_[w] + h * (heat - cool) / cap, 0.0, 1100.0);
+            din.pad_mu[w] = brake_pad_mu(disc_temp_[w]);
+        }
     }
     for (int w = 0; w < 4; ++w) {
         as.abs_pressure[w] = abs_pressure_[w];
@@ -318,6 +354,8 @@ VehicleOutput Vehicle::update(const ChassisState& s, const std::array<WheelConta
         wo.slip_ratio = kappa_[w];
         wo.slip_angle = std::atan(tan_alpha_[w]);
         wo.condition = tire_condition_[w];
+        wo.brake_temp_c = disc_temp_[w];
+        wo.brake_mu = brake_pad_mu(disc_temp_[w]);
         if (!touching[w]) continue;
         const Kin& k = kin[w];
         double fx = fx_sum[w] / n_sub, fy = fy_sum[w] / n_sub, mz = mz_sum[w] / n_sub;

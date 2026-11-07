@@ -30,52 +30,86 @@ double dfz_of(const TireParams& p, double fz) { return (fz - p.fz0) / std::max(p
 
 // Longitudinal slip stiffness K_xk (MF 5.2 eq. 4.E13):
 //   K_xk = Fz (pKx1 + pKx2 dfz) exp(pKx3 dfz)
-double kx_of(const TireParams& p, double fz, double dfz) {
+//   MF 6.1 pressure: * (1 + pPx1 dpi + pPx2 dpi^2)
+double kx_of(const TireParams& p, double fz, double dfz, double dpi = 0.0) {
     double factor = std::max(0.2, 1.0 + (p.pkx2 / std::max(p.kx, 1e-6)) * dfz);
-    return p.kx * fz * factor * std::exp(clamp(p.pkx3 * dfz, -1.0, 1.0));
+    double press = std::max(0.3, 1.0 + p.ppx1 * dpi + p.ppx2 * dpi * dpi);
+    return p.kx * fz * factor * std::exp(clamp(p.pkx3 * dfz, -1.0, 1.0)) * press;
 }
 
 // Lateral cornering stiffness K_ya (MF 5.2 eq. 4.E25):
 //   K_ya = pKy1 Fz0 sin(2 atan(Fz / (pKy2 Fz0))) (1 - pKy3 |gamma|)
 // Rises with load, then saturates: doubling load does NOT double cornering stiffness.
-double ky_of(const TireParams& p, double fz, double gamma) {
+//   MF 6.1 pressure: pKy1 Fz0 (1 + pPy1 dpi) sin(2 atan(Fz / (pKy2 Fz0 (1 + pPy2 dpi))))
+double ky_of(const TireParams& p, double fz, double gamma, double dpi = 0.0) {
     double camber_loss = std::max(0.2, 1.0 - p.pky3 * std::abs(gamma));
-    return p.pky1 * p.fz0 * std::sin(2.0 * std::atan(fz / (p.pky2 * p.fz0))) * camber_loss;
+    double peak_load = p.pky2 * p.fz0 * std::max(0.3, 1.0 + p.ppy2 * dpi);
+    return p.pky1 * p.fz0 * std::max(0.3, 1.0 + p.ppy1 * dpi) * std::sin(2.0 * std::atan(fz / peak_load)) * camber_loss;
+}
+
+// Peak friction coefficients with load, camber and pressure sensitivity (MF 6.1 eqs. 4.E13 / 4.E23):
+//   mu_x = pDx1 (1 + pDx2 dfz)(1 + pPx3 dpi + pPx4 dpi^2)(1 - pDx3 gamma^2) lambda_mu
+double mu_x_of(const TireParams& p, double dfz, double gamma, double mu_scale, double dpi) {
+    return p.mu_x * std::max(0.2, 1.0 + p.pdx2 * dfz) * std::max(0.5, 1.0 + p.ppx3 * dpi + p.ppx4 * dpi * dpi)
+           * std::max(0.2, 1.0 - p.pdx3 * gamma * gamma) * mu_scale;
+}
+double mu_y_of(const TireParams& p, double dfz, double gamma, double mu_scale, double dpi) {
+    return p.mu_y * std::max(0.2, 1.0 + p.pdy2 * dfz) * std::max(0.5, 1.0 + p.ppy3 * dpi + p.ppy4 * dpi * dpi)
+           * std::max(0.2, 1.0 - p.pdy3 * gamma * gamma) * mu_scale;
 }
 
 }  // namespace
 
-void TireCondition::update(double slip_power_w, double load_n, double speed_mps, double dt) {
+void TireCondition::update(double slip_power_w, double load_n, double speed_mps, double dt, const TireParams* p) {
     if (dt <= 0) return;
-    // Tread thermal balance:
-    //   - Frictional dissipation P_slip = |Fx * v_sx| + |Fy * v_sy| heats the surface & bulk tread
-    //   - Rolling hysteresis adds mild internal warmth proportional to load * speed
-    //   - Convective airflow + road conduction cool the tread toward equilibrium (~78 C under normal running)
-    constexpr double kThermalCapJPerC = 18000.0;   // effective thermal heat capacity of tread layer (J/C)
-    constexpr double kEquilibriumC = 78.0;         // rolling equilibrium temperature (C)
-    double cooling_rate = 0.03 + 0.0022 * std::abs(speed_mps);  // 1/s, rises with airflow speed
-    double hysteresis_w = 0.03 * load_n * std::abs(speed_mps);
-    double dtemp = ((slip_power_w + hysteresis_w) / kThermalCapJPerC) - cooling_rate * (temperature_c - kEquilibriumC);
-    temperature_c = clamp(temperature_c + dtemp * dt, 20.0, 160.0);
-    // Wear accumulates slowly from severe sliding work above normal cornering threshold.
-    if (slip_power_w > 18000.0) {
-        wear = clamp(wear + (slip_power_w - 18000.0) * 1.2e-9 * dt, 0.0, 1.0);
+    // Two-layer tread model (lumped capacitances):
+    //   surface: C_s dTs/dt = P_slip - G (Ts - Tc) - h_a(v) (Ts - T_air)
+    //   core:    C_c dTc/dt = G (Ts - Tc) - k_c(v) (Tc - T_eq) * C_c
+    // P_slip = |Fx v_sx| + |Fy v_sy| (all friction work lands in the surface). The core relaxes toward the rolling
+    // equilibrium T_eq (hysteresis heating balanced by carcass / rim cooling). C_s = 1.5 kJ/K (the outer 2-3 mm of
+    // tread), C_c = 16 kJ/K, G = 400 W/K, air h A = 20 + 2.5 v W/K (~0.6 m^2 of tread): a 25 kW drift puts the surface
+    // near 100 C in a few seconds while the core climbs ~1 C/s; the spike fades ~3 s after the slide.
+    constexpr double Cs = 1500.0, Cc = 16000.0, G = 400.0, Teq = 78.0, Tair = 30.0;
+    const double v = std::abs(speed_mps);
+    const double ha = 20.0 + 2.5 * v;                       // W/K, surface convection to air
+    const double kc = 0.012 + 0.0012 * v;                   // 1/s, core toward the rolling equilibrium
+    const double hyst = 0.012 * load_n * v;                 // W, rolling hysteresis (mostly in the core)
+    // integrate in <= 50 ms steps ((G + h_a) / C_s ~ 0.3 /s)
+    const int n = std::max(1, (int)std::ceil(dt / 0.05));
+    const double h = dt / n;
+    for (int i = 0; i < n; ++i) {
+        const double ts = surface_c, tc = temperature_c;
+        const double dts = (slip_power_w - G * (ts - tc) - ha * (ts - Tair)) / Cs;
+        const double dtc = (G * (ts - tc) + hyst) / Cc - kc * (tc - Teq);
+        surface_c = clamp(ts + dts * h, 10.0, 260.0);
+        temperature_c = clamp(tc + dtc * h, 10.0, 180.0);
     }
+    // Inflation gas: warms with the core (it sees the inner liner, ~55 % of the core's rise above 20 C), constant
+    // volume: p_abs = p_abs,cold * T_gas / T_cold.
+    const double p_cold = p ? p->p_cold_kpa : 200.0;
+    const double t_gas = 20.0 + 0.55 * (temperature_c - 20.0);
+    pressure_kpa = (p_cold + 101.3) * (t_gas + 273.15) / 293.15 - 101.3;
+    // Wear: sliding work above normal cornering
+    if (slip_power_w > 18000.0) wear = clamp(wear + (slip_power_w - 18000.0) * 1.2e-9 * dt, 0.0, 1.0);
 }
 
-double TireCondition::grip_factor() const {
-    // Optimal operating window [60 C, 110 C] gives peak grip 1.0.
-    // Cold tyres (< 60 C) or overheated/greasy tyres (> 110 C) lose grip parabolically.
+double TireCondition::dpi(const TireParams& p) const {
+    if (pressure_kpa <= 0) return 0.0;
+    return clamp((pressure_kpa - p.p_nominal_kpa) / std::max(p.p_nominal_kpa, 1.0), -0.5, 0.5);
+}
+
+double TireCondition::grip_factor(const TireParams* p) const {
+    // The compound works in a window around T_opt of the core/surface blend (the contact patch feels the surface,
+    // hysteresis friction the bulk). Outside it grip falls off parabolically: cold rubber is hard, hot rubber soft and
+    // greasy. A surface far above the window (long slide, burnout) greases on top of that, until it cools down.
+    const double t_opt = p ? p->temp_optimal_c : 90.0, w = p ? p->temp_window_c : 25.0;
+    const double t = 0.65 * temperature_c + 0.35 * surface_c;
     double temp_grip = 1.0;
-    if (temperature_c < 60.0) {
-        double d = (60.0 - temperature_c) / 40.0;
-        temp_grip = std::max(0.88, 1.0 - 0.10 * d * d);
-    } else if (temperature_c > 110.0) {
-        double d = (temperature_c - 110.0) / 50.0;
-        temp_grip = std::max(0.85, 1.0 - 0.12 * d * d);
-    }
+    if (t < t_opt - w) { double d = (t_opt - w - t) / 60.0; temp_grip = std::max(0.85, 1.0 - 0.14 * d * d - 0.02 * d); }
+    else if (t > t_opt + w) { double d = (t - t_opt - w) / 50.0; temp_grip = std::max(0.82, 1.0 - 0.14 * d * d); }
+    double grease = surface_c > 140.0 ? std::max(0.88, 1.0 - 0.0012 * (surface_c - 140.0)) : 1.0;
     double wear_grip = 1.0 - 0.15 * wear * wear;
-    return temp_grip * wear_grip;
+    return temp_grip * grease * wear_grip;
 }
 
 double effective_rolling_radius(const TireParams& p, double fz) {
@@ -104,15 +138,13 @@ void relaxation_lengths(const TireParams& p, double fz, double gamma, double& si
     sigma_y = clamp(p.relax_y * (ky / ky0), 0.05, p.relax_y * 2.5);
 }
 
-double mf_pure_fx(const TireParams& p, double kappa, double fz, double mu_scale, double gamma) {
+double mf_pure_fx(const TireParams& p, double kappa, double fz, double mu_scale, double gamma, double dpi) {
     if (fz <= 0) return 0;
     double dfz = dfz_of(p, fz);
-    // Load sensitivity & camber sensitivity (MF 5.2 eq. 4.E11):
-    //   mu_x = (pDx1 + pDx2 dfz) (1 - pDx3 gamma^2) * mu_scale
-    // Note: in our config, p.pdx2 is normalised by p.mu_x so mu = p.mu_x * (1 + p.pdx2 * dfz).
-    double mu = p.mu_x * std::max(0.2, 1.0 + p.pdx2 * dfz) * std::max(0.2, 1.0 - p.pdx3 * gamma * gamma) * mu_scale;
+    // Load, camber and pressure sensitivity (MF 6.1 eq. 4.E13). Note: in our config, p.pdx2 is normalised by p.mu_x.
+    double mu = mu_x_of(p, dfz, gamma, mu_scale, dpi);
     double D = mu * fz;
-    double K = kx_of(p, fz, dfz);
+    double K = kx_of(p, fz, dfz, dpi);
     double B = K / (p.cx * D + 1e-9);
     double shx = p.phx1 + p.phx2 * dfz;
     double svx = fz * (p.pvx1 + p.pvx2 * dfz) * mu_scale;
@@ -122,14 +154,13 @@ double mf_pure_fx(const TireParams& p, double kappa, double fz, double mu_scale,
     return mf(kx, B, p.cx, D, ex) + svx;
 }
 
-double mf_pure_fy(const TireParams& p, double alpha, double fz, double mu_scale, double gamma) {
+double mf_pure_fy(const TireParams& p, double alpha, double fz, double mu_scale, double gamma, double dpi) {
     if (fz <= 0) return 0;
     double dfz = dfz_of(p, fz);
-    // Lateral friction coefficient with load and camber sensitivity (MF 5.2 eq. 4.E23):
-    //   mu_y = p.mu_y * (1 + p.pdy2 * dfz) * (1 - p.pdy3 * gamma^2) * mu_scale
-    double mu = p.mu_y * std::max(0.2, 1.0 + p.pdy2 * dfz) * std::max(0.2, 1.0 - p.pdy3 * gamma * gamma) * mu_scale;
+    // Lateral friction coefficient with load, camber and pressure sensitivity (MF 6.1 eq. 4.E23)
+    double mu = mu_y_of(p, dfz, gamma, mu_scale, dpi);
     double D = mu * fz;
-    double K = ky_of(p, fz, gamma);
+    double K = ky_of(p, fz, gamma, dpi);
     double B = K / (p.cy * D + 1e-9);
     // Camber shifts (camber thrust, MF 5.2 eqs. 4.E27-4.E28):
     double shy = (p.phy1 + p.phy2 * dfz) + p.phy3 * gamma;
@@ -184,13 +215,20 @@ double mf_aligning_torque(const TireParams& p, double kappa, double alpha, doubl
     return -trail * fy_no_svyk + mzr + s * fx;
 }
 
-TireForces magic_formula(const TireParams& p, double kappa, double tan_alpha, double fz, double mu_scale, double gamma) {
+TireForces magic_formula(const TireParams& p, double kappa, double tan_alpha, double fz, double mu_scale, double gamma,
+                         const TireOperating& op) {
     TireForces out;
     if (fz <= 0) return out;
+    // MF 6.1 friction decay with sliding speed:  lambda_mu* = lambda_mu / (1 + LMUV Vs / V0), V0 = LONGVL = 16.7 m/s.
+    // Rubber friction drops as the slide gets faster: a locked wheel at 100 km/h holds ~17 % less than at walking pace,
+    // a drift at speed sits lower on the curve than the same slip angle in a hairpin.
+    // (relative to the sliding speed the coefficients describe, so ordinary cornering is unchanged)
+    mu_scale *= (1.0 + p.lmuv * p.lmuv_ref_mps / 16.7) / (1.0 + p.lmuv * std::abs(op.slip_speed) / 16.7);
+    const double dpi = op.dpi;
     double dfz = dfz_of(p, fz);
     double alpha = std::atan(tan_alpha);
-    double fx0 = mf_pure_fx(p, kappa, fz, mu_scale, gamma);
-    double fy0 = mf_pure_fy(p, alpha, fz, mu_scale, gamma);
+    double fx0 = mf_pure_fx(p, kappa, fz, mu_scale, gamma, dpi);
+    double fy0 = mf_pure_fy(p, alpha, fz, mu_scale, gamma, dpi);
 
     // Combined slip (Pacejka MF 5.2 weighting functions Gxa, Gyk + kappa-induced side force SVyk):
     //   Gxa = cos(Cxa atan(Bxa alpha_S - Exa (Bxa alpha_S - atan(Bxa alpha_S)))) / cos(...)
@@ -211,7 +249,7 @@ TireForces magic_formula(const TireParams& p, double kappa, double tan_alpha, do
     double gyk = clamp(mf_cos(kappa_s, byk, p.rcy1, eyk) / gyk0, 0.0, 1.0);
 
     // Braking/driving-induced lateral force SVyk (MF 5.2 eqs. 4.E65-4.E66):
-    double mu_y = p.mu_y * std::max(0.2, 1.0 + p.pdy2 * dfz) * std::max(0.2, 1.0 - p.pdy3 * gamma * gamma) * mu_scale;
+    double mu_y = mu_y_of(p, dfz, gamma, mu_scale, dpi);
     double dvyk = mu_y * fz * (p.rvy1 + p.rvy2 * dfz + p.rvy3 * gamma) * std::cos(std::atan(p.rvy4 * alpha));
     double svyk = dvyk * std::sin(p.rvy5 * std::atan(p.rvy6 * kappa));
 
@@ -221,7 +259,7 @@ TireForces magic_formula(const TireParams& p, double kappa, double tan_alpha, do
 
     // Friction-ellipse envelope protection: ensures combined force vector never exceeds the
     // anisotropic pure-slip peak envelope (Dx, Dy) under extreme simultaneous slip + camber.
-    double mu_x = p.mu_x * std::max(0.2, 1.0 + p.pdx2 * dfz) * std::max(0.2, 1.0 - p.pdx3 * gamma * gamma) * mu_scale;
+    double mu_x = mu_x_of(p, dfz, gamma, mu_scale, dpi);
     double dx_max = std::max({mu_x * fz, std::abs(fx0), 1e-6});
     double dy_max = std::max({mu_y * fz, std::abs(fy0), 1e-6});
     double ellipse = std::hypot(fx / dx_max, fy / dy_max);

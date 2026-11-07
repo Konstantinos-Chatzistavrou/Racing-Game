@@ -173,7 +173,8 @@ void Drivetrain::step(const DrivetrainInput& in, const std::array<double, 4>& ty
         wheel_omega[w] += h * (drive[w] + tyre_torque[w]) / I;
         double t_brake = in.brake * cfg_.brake_torque_total * (w < 2 ? bias : 1 - bias) * 0.5 * in.brake_scale[w];
         t_brake += in.handbrake * cfg_.axle(w).handbrake_torque + in.extra_brake[w];
-        t_brake *= in.brake_power_scale;                // cooked brakes: fade, then nothing
+        t_brake *= in.brake_power_scale * in.pad_mu[w];  // cooked brakes (damage) and pad temperature
+        brake_torque[w] = t_brake;
         double dw = h * (t_brake + rolling_torque[w]) / I;
         wheel_omega[w] = std::abs(wheel_omega[w]) <= dw ? 0.0 : wheel_omega[w] - sign(wheel_omega[w]) * dw;
     }

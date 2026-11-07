@@ -115,7 +115,11 @@ export const OUT = {
   force: 96, torque: 99, speed: 102, rpm: 103, gear: 104, sideslip: 105, stalled: 106,
   throttle: 107, brake: 108, steer: 109, abs: 113, tc: 114, esc: 115,
   wheel: (i: number) => 120 + 12 * i,   // centre xyz, steer, spin, contact, load, slipRatio, slipAngle, compression, angVel, surface
-  wheelExt: (i: number) => 168 + 4 * i, // mz (N m), camber (rad), temperature (C), wear (0..1)
+  wheelExt: (i: number) => 168 + 4 * i, // mz (N m), camber (rad), core temperature (C), wear (0..1)
+  brakeTemp: (i: number) => 184 + i,    // brake disc temperature, C
+  treadSurface: (i: number) => 188 + i, // tread surface temperature, C
+  pressure: (i: number) => 192 + i,     // tyre pressure, kPa gauge
+  padMu: (i: number) => 196 + i,        // brake pad friction vs. its working range (< 1: cold or fading)
 } as const;
 
 export interface LapInfo { laps: number; current: number; last: number; best: number; distance: number; position: number; finished: boolean; routeLength: number }

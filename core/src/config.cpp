@@ -47,6 +47,11 @@ TireParams parse_tire(const json& j, const std::string& ctx) {
     t.inertia = num(j, "inertia_kgm2", ctx);
     t.fz0 = num(j, "fz0_n", ctx);
     t.vertical_stiffness = num_or(j, "vertical_stiffness_n_per_m", 220000);
+    t.lmuv = num_or(j, "friction_speed_decay", t.lmuv);
+    t.p_nominal_kpa = num_or(j, "pressure_nominal_kpa", t.p_nominal_kpa);
+    t.p_cold_kpa = num_or(j, "pressure_cold_kpa", t.p_cold_kpa);
+    t.temp_optimal_c = num_or(j, "temp_optimal_c", t.temp_optimal_c);
+    t.temp_window_c = num_or(j, "temp_window_c", t.temp_window_c);
     const json& lo = j.at("longitudinal");
     t.cx = num(lo, "C", ctx + ".longitudinal");
     t.mu_x = num(lo, "mu", ctx + ".longitudinal");
@@ -143,6 +148,13 @@ CarConfig parse_car_config(const std::string& text) {
     c.tire_rear = j.contains("tire_rear") ? parse_tire(j.at("tire_rear"), "tire_rear") : c.tire_front;
     c.brake_bias_front = num(j.at("brakes"), "bias_front", "brakes");
     c.brake_torque_total = num(j.at("brakes"), "max_total_torque_nm", "brakes");
+    {
+        const json& b = j.at("brakes");
+        BrakeThermal& bt = c.brake_thermal;
+        bt.disc_mass_front = num_or(b, "disc_mass_front_kg", bt.disc_mass_front);
+        bt.disc_mass_rear = num_or(b, "disc_mass_rear_kg", bt.disc_mass_rear);
+        bt.cooling_per_mps = num_or(b, "cooling_w_per_k_per_mps", bt.cooling_per_mps);
+    }
 
     const json& e = j.at("engine");
     for (const auto& pt : e.at("torque_curve")) c.engine.torque_curve.push_back({pt.at(0).get<double>(), pt.at(1).get<double>()});
