@@ -13,7 +13,13 @@ import type { PhysicsWorld } from '../../physics/world';
 import { gltfLoader } from '../loaders';
 import { createPlaceholderFacade, createPlaceholderGround, createPlaceholderRoof } from './placeholders';
 import { createGroundMaterials } from './groundMaterials';
-import { createFacadeMaterial, createRoofMaterial } from './facade';
+import {
+  createBreachableFacadeMaterial,
+  createFacadeMaterial,
+  createFarFacadeMaterial,
+  createRoofMaterial,
+  recordWallBreach,
+} from './facade';
 import { NycProps, type BuildingColliderBox } from './props';
 import { applyNycAtmosphere, type NycAtmosphere } from './atmosphere';
 import { generateProceduralNycTile, type ProceduralNycTileData } from './infiniteNyc';
@@ -22,6 +28,7 @@ import { generateProceduralNycTile, type ProceduralNycTileData } from './infinit
 export interface NycPropsLike {
   setTile(key: string, data: unknown): void;
   setTileBuildings?(key: string, boxes: BuildingColliderBox[] | undefined, z?: number): void;
+  addInteriorPillar?(wx: number, groundY: number, wz: number, yaw: number): void;
   removeTile(key: string): void;
   update(
     dt: number,
@@ -44,7 +51,14 @@ export interface NycPropsLike {
   primeLights?(): void;
   dispose(): void;
 }
-export interface NycMaterials { ground: Record<string, THREE.Material>; facade: THREE.Material; roof: THREE.Material; source: string }
+export interface NycMaterials {
+  ground: Record<string, THREE.Material>;
+  facade: THREE.Material;
+  facadeBreached: THREE.Material;
+  facadeFar: THREE.Material;
+  roof: THREE.Material;
+  source: string;
+}
 
 /** Shared material singletons (one per name). */
 export async function loadNycMaterials(): Promise<NycMaterials> {
@@ -56,8 +70,10 @@ export async function loadNycMaterials(): Promise<NycMaterials> {
   };
   const ground = { ...createPlaceholderGround(), ...tryMake<Record<string, THREE.Material>>(createGroundMaterials, () => ({}), 'ground') };
   const facade = tryMake(createFacadeMaterial, createPlaceholderFacade, 'facade');
+  const facadeBreached = tryMake(createBreachableFacadeMaterial, () => facade, 'facadeBreached');
+  const facadeFar = tryMake(createFarFacadeMaterial, () => facade, 'facadeFar');
   const roof = tryMake(createRoofMaterial, createPlaceholderRoof, 'roof');
-  return { ground, facade, roof, source: src.join(' ') };
+  return { ground, facade, facadeBreached, facadeFar, roof, source: src.join(' ') };
 }
 
 async function createNycProps(scene: THREE.Scene, camera: THREE.Camera): Promise<NycPropsLike | null> {
@@ -88,6 +104,7 @@ interface Tile {
   nearGroup: THREE.Group | null; farGroup: THREE.Group | null;
   colliders: RAPIER.Collider[];
   buildingCols?: { box: BuildingColliderBox; col: RAPIER.Collider; breached: boolean }[];
+  hasBreach?: boolean;
   propsSet: boolean;
   forced: number;                  // meshes revealed but not drawn yet (tile must stay un-culled so their upload happens)
   gen: { near: number; far: number; col: number };   // bumped on every unload of that kind: stale async results are dropped
@@ -341,7 +358,7 @@ export class NycStreamer {
           const grp = new THREE.Group();
           const meshes: THREE.Mesh[] = [];
           for (const [g, part] of [[pd.groundGroup, 'ground'], [pd.bldGroup, 'bld']] as const) {
-            this.prepare(g, part);
+            this.prepare(g, part, Boolean(t.hasBreach));
             g.traverse((o) => { if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh); });
             grp.add(g);
           }
@@ -385,7 +402,7 @@ export class NycStreamer {
         const meshes: THREE.Mesh[] = [];
         for (const [g, part] of [[gg, 'ground'], [bb, 'bld']] as const) {
           if (!g) continue;
-          this.prepare(g.scene, part);
+          this.prepare(g.scene, part, Boolean(t.hasBreach));
           g.scene.traverse((o) => { if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh); });
           grp.add(g.scene);
         }
@@ -403,8 +420,13 @@ export class NycStreamer {
   private retryLater(t: Tile, kind: string, now: number) { const f = this.failed.get(t.key + ':' + kind); return f !== undefined && now - f < 10000; }
 
   /** Material swap, static matrices, culling flags, hidden until revealed. */
-  private prepare(root: THREE.Object3D, part: Part) {
+  private prepare(root: THREE.Object3D, part: Part, breached = false) {
     root.updateMatrixWorld(true);
+    const facadeMat = part === 'far'
+      ? this.mats.facadeFar
+      : breached
+        ? this.mats.facadeBreached
+        : this.mats.facade;
     root.traverse((o) => {
       o.matrixAutoUpdate = false;
       const m = o as THREE.Mesh;
@@ -413,13 +435,28 @@ export class NycStreamer {
       m.receiveShadow = this.o.receiveShadow;
       const old = m.material as THREE.Material;
       const name = old.name;
-      const mat = name === 'facade' ? this.mats.facade : name === 'roof' ? this.mats.roof : this.mats.ground[name] ?? (part === 'ground' ? this.mats.ground.sidewalk : this.mats.facade);
+      const mat = name === 'facade'
+        ? facadeMat
+        : name === 'roof'
+          ? this.mats.roof
+          : this.mats.ground[name] ?? (part === 'ground' ? this.mats.ground.sidewalk : facadeMat);
       if (!this.mats.ground[name] && name !== 'facade' && name !== 'roof') console.warn('nyc: unknown glb material name', name);
       old.dispose();
       m.material = mat;
       m.visible = false;
       m.geometry.computeBoundingSphere();
       if (!this.templates[part]) this.templates[part] = m.geometry;
+    });
+  }
+
+  private upgradeTileFacadeForBreach(t: Tile) {
+    if (t.hasBreach) return;
+    t.hasBreach = true;
+    t.nearGroup?.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (m.isMesh && m.material === this.mats.facade) {
+        m.material = this.mats.facadeBreached;
+      }
     });
   }
 
@@ -500,7 +537,13 @@ export class NycStreamer {
     const q = new THREE.Quaternion(), Y = new THREE.Vector3(0, 1, 0);
     let anyBreached = false;
 
+    // Ensure the shader breach slot is populated even if breachBuildingAt is invoked directly
+    recordWallBreach(wx, wz, 2.95);
+
     for (const t of this.tiles.values()) {
+      if (this.dist(t, wx, wz) < 28) {
+        this.upgradeTileFacadeForBreach(t);
+      }
       if (!t.buildingCols?.length) continue;
       for (const bc of t.buildingCols) {
         if (bc.breached) continue;
@@ -515,6 +558,7 @@ export class NycStreamer {
 
         bc.breached = true;
         anyBreached = true;
+        this.upgradeTileFacadeForBreach(t);
 
         // Remove solid ground-to-roof collider
         surf.delete(bc.col.handle);
@@ -542,17 +586,18 @@ export class NycStreamer {
           addCol(b.hx, hh, b.hy, b.cx, (upperZ0 + b.z1) * 0.5, -b.cy, S.wall, 0.4);
         }
 
-        // 2. Interior structural concrete columns + low rubble mounds inside the ground floor:
-        //    Car can pass between the columns (spaced ~5.6m apart) or get wedged/stuck if hitting a pillar off-center!
+        // 2. Interior structural concrete columns + matching 3D visual concrete pillars strictly deep inside the building:
+        //    Car can pass between the columns (spaced ~5.8m apart) or get wedged/stuck if hitting a pillar off-center!
         const c2 = Math.cos(b.yaw), s2 = Math.sin(b.yaw);
-        const stepX = Math.max(5.6, b.hx * 0.85);
-        const stepY = Math.max(5.6, b.hy * 0.85);
-        for (let ox = -b.hx + 2.6; ox <= b.hx - 2.2; ox += stepX) {
-          for (let oy = -b.hy + 2.6; oy <= b.hy - 2.2; oy += stepY) {
+        const stepX = Math.max(5.8, b.hx * 0.85);
+        const stepY = Math.max(5.8, b.hy * 0.85);
+        for (let ox = -b.hx + 3.6; ox <= b.hx - 3.6; ox += stepX) {
+          for (let oy = -b.hy + 3.6; oy <= b.hy - 3.6; oy += stepY) {
             const pxW = b.cx + (ox * c2 - oy * s2);
             const pyW = b.cy + (ox * s2 + oy * c2);
             // Structural concrete column (0.34m half-width -> 68cm square pillar)
             addCol(0.34, 2.0, 0.34, pxW, b.z0 + 2.0, -pyW, S.wall, 0.85);
+            this.props?.addInteriorPillar?.(pxW, b.z0, -pyW, b.yaw);
           }
         }
         // Low masonry rubble mound near the centre of the breached bay (bumps suspension / slows car)
@@ -721,9 +766,11 @@ export class NycStreamer {
     };
     for (const mat of Object.values(this.mats.ground)) mk(this.templates.ground ?? this.templates.bld, mat);
     mk(this.templates.bld ?? this.templates.far, this.mats.facade);
+    mk(this.templates.bld ?? this.templates.far, this.mats.facadeBreached);
+    mk(this.templates.far ?? this.templates.bld, this.mats.facadeFar);
     mk(this.templates.bld ?? this.templates.far, this.mats.roof);
-    if (this.templates.far && this.templates.far !== this.templates.bld) { mk(this.templates.far, this.mats.facade); mk(this.templates.far, this.mats.roof); }
-    // Also warm the procedural Float32Array vertex layout for facade and roof so infinite NYC tiles compile 0 pipelines at runtime
+    if (this.templates.far && this.templates.far !== this.templates.bld) { mk(this.templates.far, this.mats.roof); }
+    // Also warm the procedural Float32Array vertex layout for facade variants and roof so infinite NYC tiles compile 0 pipelines at runtime
     const procTpl = new THREE.BufferGeometry();
     procTpl.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9), 3));
     procTpl.setAttribute('normal', new THREE.BufferAttribute(new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0]), 3));
@@ -732,6 +779,8 @@ export class NycStreamer {
     mk(procTpl, this.mats.roof);
     procTpl.setAttribute('_bld', new THREE.BufferAttribute(new Float32Array([0.5, 8, 2, 0.5, 0.5, 8, 2, 0.5, 0.5, 8, 2, 0.5]), 4));
     mk(procTpl, this.mats.facade);
+    mk(procTpl, this.mats.facadeBreached);
+    mk(procTpl, this.mats.facadeFar);
     procTpl.dispose();
   }
 
