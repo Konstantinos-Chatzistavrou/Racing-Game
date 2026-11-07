@@ -134,43 +134,37 @@ function treeGeo() {
   for (const s of [-0.68, 0.68]) {
     k.box(1.38, 0.03, 0.03, 0, 0.36, s, DARK, 0);
     k.box(0.03, 0.03, 1.38, s, 0.36, 0, DARK, 0);
-    k.cyl(0.02, 0.02, 0.36, s, 0, s, DARK, 0, 5);
-    k.cyl(0.02, 0.02, 0.36, s, 0, -s, DARK, 0, 5);
+    k.cyl(0.02, 0.02, 0.36, s, 0, s, DARK, 0, 4);
+    k.cyl(0.02, 0.02, 0.36, s, 0, -s, DARK, 0, 4);
   }
   // Buttressed trunk (0..2.9 m)
-  k.cyl(0.26, 0.19, 1.1, 0, 0, 0, barkDark, 0, 7);
-  k.limb(0.19, 0.145, 0, 1.05, 0, 0.08, 2.85, -0.05, barkMid, 0, 7);
+  k.cyl(0.26, 0.19, 1.1, 0, 0, 0, barkDark, 0, 6);
+  k.limb(0.19, 0.145, 0, 1.05, 0, 0.08, 2.85, -0.05, barkMid, 0, 6);
 
-  // 5 primary ascending scaffold limbs + 10 secondary forks + open, flat-tiered leaf sprays
+  // 4 primary ascending scaffold limbs + 4 secondary forks + 12 crinkled flat-tiered leaf sprays (~6x fewer vertices!)
   const scaffolds: [number, number, number, number, number, number][] = [
-    [1.45, 4.8, 0.50, 2.55, 6.6, 1.05],
-    [-1.35, 4.6, 0.90, -2.40, 6.4, 1.65],
-    [0.40, 5.0, -1.45, 0.85, 6.8, -2.50],
-    [-1.05, 4.9, -1.15, -1.90, 6.7, -2.05],
-    [0.18, 5.5, 0.15, 0.30, 7.9, 0.25],
+    [1.45, 4.8, 0.50, 2.50, 6.5, 1.05],
+    [-1.35, 4.6, 0.90, -2.35, 6.4, 1.60],
+    [0.40, 5.0, -1.45, 0.85, 6.8, -2.45],
+    [-1.05, 4.9, -1.15, -1.85, 6.7, -2.00],
   ];
   for (let i = 0; i < scaffolds.length; i++) {
     const [mx, my, mz, tx, ty, tz] = scaffolds[i];
-    k.limb(0.115, 0.075, 0.06, 2.65, -0.04, mx, my, mz, barkMid, 0, 6);
-    k.limb(0.072, 0.042, mx, my, mz, tx, ty, tz, barkMid, 0, 5);
-    // Secondary lateral fork off each main scaffold limb
+    k.limb(0.115, 0.075, 0.06, 2.65, -0.04, mx, my, mz, barkMid, 0, 5);
+    k.limb(0.072, 0.042, mx, my, mz, tx, ty, tz, barkMid, 0, 4);
     const fx = mx * 1.18 - mz * 0.62;
     const fy = my + 1.45;
     const fz = mz * 1.18 + mx * 0.62;
-    k.limb(0.062, 0.032, mx, my - 0.15, mz, fx, fy, fz, barkMid, 0, 5);
+    k.limb(0.062, 0.032, mx, my - 0.15, mz, fx, fy, fz, barkMid, 0, 4);
 
-    // Lower foliage spray perched at outer branch (catches warm streetlight bounce from below)
-    k.ico(0.76, mx * 1.18, my + 0.42, mz * 1.18, 1.35, 0.48, 1.25, [0.022, 0.048, 0.020], 0.16, 1);
-    // Mid-canopy flat foliage sprays at outer twig ends (leaving visible gaps around trunk/limbs)
-    k.ico(0.84, tx * 1.04, ty + 0.18, tz * 1.04, 1.38, 0.50, 1.28, [0.019, 0.044, 0.018], 0.08, 1);
-    k.ico(0.74, fx * 1.04, fy + 0.22, fz * 1.04, 1.32, 0.46, 1.32, [0.016, 0.038, 0.016], 0.06, 1);
-    // Upper-crown sun/moon-facing foliage spray
-    k.ico(0.78, tx * 0.72, ty + 1.25, tz * 0.72, 1.28, 0.52, 1.22, [0.024, 0.054, 0.022], 0.02, 1);
+    k.ico(0.86, mx * 1.18, my + 0.42, mz * 1.18, 1.42, 0.50, 1.32, [0.022, 0.048, 0.020], 0.16, 0);
+    k.ico(0.92, tx * 1.04, ty + 0.22, tz * 1.04, 1.44, 0.52, 1.34, [0.019, 0.044, 0.018], 0.08, 0);
+    k.ico(0.82, fx * 1.04, fy + 0.24, fz * 1.04, 1.38, 0.48, 1.36, [0.016, 0.038, 0.016], 0.06, 0);
   }
   // Open crown apex sprays
-  k.ico(0.92, 0.0, 7.65, 0.0, 1.42, 0.52, 1.36, [0.021, 0.048, 0.020], 0.04, 1);
-  k.ico(0.78, 0.75, 8.45, -0.45, 1.28, 0.48, 1.25, [0.026, 0.058, 0.024], 0.02, 1);
-  k.ico(0.74, -0.75, 8.20, 0.55, 1.25, 0.48, 1.22, [0.020, 0.046, 0.019], 0.02, 1);
+  k.limb(0.09, 0.045, 0.06, 2.75, -0.03, 0.22, 7.6, 0.18, barkMid, 0, 5);
+  k.ico(1.02, 0.0, 7.65, 0.0, 1.48, 0.54, 1.42, [0.021, 0.048, 0.020], 0.04, 0);
+  k.ico(0.88, 0.75, 8.35, -0.45, 1.35, 0.50, 1.30, [0.026, 0.058, 0.024], 0.02, 0);
   return k.build();
 }
 
@@ -285,53 +279,30 @@ function wasteGeo() {
 }
 
 /**
- * Full 3D Breached Ground-Floor Room (`shatteredBayGeo`):
- * When the car crashes through a building's bottom tier, `recordWallBreach()` punches a jagged 3D hole
- * in the outer wall (`alphaTest`), and this 3D interior room sits behind the hole (`x in [-6.4, 0.1]`)
- * with an interior floor, ceiling with dangling broken light bars, structural concrete columns (which
- * match the physics colliders so the car can pass between them or get wedged!), and jagged masonry/glass collar.
+ * Interior Structural Concrete Column (`interiorPillarGeo`):
+ * Placed strictly INSIDE a breached building's ground floor at the exact coordinates of the Rapier
+ * interior concrete pillar colliders (`0.68m x 3.85m x 0.68m`) so the player sees the structural columns
+ * inside the broken building wall that the car can drive between or get wedged against — without ever
+ * spawning a box on the outside of the building!
  */
 function shatteredBayGeo() {
   const k = new Kit();
-  const concrete: RGB = [0.075, 0.072, 0.068];
-  const darkWall: RGB = [0.045, 0.042, 0.040];
-  const brickBroken: RGB = [0.22, 0.10, 0.07];
-  const rebar: RGB = [0.12, 0.11, 0.10];
-  const glass: RGB = [0.68, 0.88, 0.98];
-
-  // 1. 3D Interior Floor Slab & Ceiling Slab (extending 6.4m inside the building along -x, 6.4m wide along z)
-  k.box(6.4, 0.10, 6.4, -3.2, 0.05, 0, [0.04, 0.04, 0.042], 0);
-  k.box(6.4, 0.14, 6.4, -3.2, 3.88, 0, concrete, 0);
-  // 2. Interior Back Wall & Side Partition Walls
-  k.box(0.14, 3.85, 6.4, -6.35, 1.92, 0, darkWall, 0.02);
-  k.box(6.4, 3.85, 0.14, -3.2, 1.92, -3.15, darkWall, 0.01);
-  k.box(6.4, 3.85, 0.14, -3.2, 1.92, 3.15, darkWall, 0.01);
-  // 3. Two Interior Structural Concrete Columns (at x = -2.85, z = +-1.55m — car can drive between or get wedged!)
-  k.box(0.56, 3.85, 0.56, -2.85, 1.92, -1.55, [0.14, 0.135, 0.13], 0);
-  k.box(0.56, 3.85, 0.56, -2.85, 1.92, 1.55, [0.14, 0.135, 0.13], 0);
-  // 4. Dangling broken fluorescent ceiling light fixtures inside the breached room
-  k.box(1.5, 0.05, 0.32, -2.1, 3.76, -1.1, [1.0, 0.88, 0.68], 0.95);
-  k.limb(0.05, 0.05, -3.6, 3.80, 0.6, -3.5, 2.95, 1.45, [1.0, 0.78, 0.45], 0.85, 6);
-  // 5. Interior masonry rubble mounds & smashed counter on the floor
-  k.box(0.85, 0.32, 1.4, -1.7, 0.18, 0.9, brickBroken, 0);
-  k.box(0.75, 0.28, 1.1, -3.9, 0.16, -0.7, concrete, 0);
-  // 6. Jagged fractured brick/concrete wall collar + bent rebar + jagged glass teeth around the breach
-  for (let i = -5; i <= 5; i++) {
-    const z = i * 0.42;
-    const hTop = 0.22 + ((Math.abs(i * 7 + 3) % 5) * 0.08);
-    const hBot = 0.18 + ((Math.abs(i * 11 + 1) % 5) * 0.06);
-    k.box(0.28, hTop, 0.38, -0.06, 3.72 - hTop / 2, z, i % 2 === 0 ? brickBroken : concrete, 0);
-    k.box(0.10, hTop * 0.8, 0.24, 0.05, 3.55 - hTop / 2, z, glass, 0.45);
-    k.box(0.10, hBot, 0.24, 0.05, 0.22 + hBot / 2, z, glass, 0.45);
-  }
-  for (let j = 0; j < 6; j++) {
-    const y = 0.55 + j * 0.55;
-    const wSide = 0.32 + (j % 3) * 0.14;
-    k.box(0.32, 0.48, wSide, -0.05, y, -2.55, j % 2 ? brickBroken : concrete, 0);
-    k.box(0.32, 0.48, wSide, -0.05, y, 2.55, j % 2 ? concrete : brickBroken, 0);
-    k.limb(0.02, 0.02, -0.04, y, -2.4, 0.08, y - 0.12, -2.15, rebar, 0, 5);
-    k.limb(0.02, 0.02, -0.04, y, 2.4, 0.08, y + 0.10, 2.15, rebar, 0, 5);
-  }
+  const concrete: RGB = [0.16, 0.155, 0.148];
+  const baseDark: RGB = [0.09, 0.085, 0.08];
+  const brickBroken: RGB = [0.24, 0.11, 0.08];
+  const dustyFloor: RGB = [0.052, 0.049, 0.045];
+  // 3cm-flat matte dusty concrete interior floor pad strictly inside the building around each interior pillar (zero box walls!)
+  k.box(5.2, 0.03, 5.2, 0, 0.165, 0, dustyFloor, 0);
+  // Structural concrete column shaft (matches the 0.34m half-width Rapier pillar collider 1:1)
+  k.box(0.66, 3.85, 0.66, 0, 1.925, 0, concrete, 0);
+  // Column base plinth & flared capital
+  k.box(0.82, 0.28, 0.82, 0, 0.14, 0, baseDark, 0);
+  k.box(0.92, 0.24, 0.92, 0, 3.75, 0, baseDark, 0);
+  // Overhead ceiling fluorescent light bar attached to the column capital inside the building
+  k.box(1.85, 0.06, 0.24, 0, 3.68, 0, [1.0, 0.86, 0.64], 0.95);
+  // Low masonry rubble scatter around the pillar base
+  k.box(0.42, 0.16, 0.34, 0.45, 0.22, 0.28, brickBroken, 0);
+  k.box(0.36, 0.14, 0.38, -0.42, 0.21, -0.32, concrete, 0);
   return k.build();
 }
 
@@ -343,10 +314,10 @@ function wallDebrisGeo() {
   return k.build();
 }
 
-/** Sharp 3D triangular glass shard for storefront shattering. */
+/** Sharp 3D triangular tempered-glass shard for storefront shattering. */
 function glassShardGeo() {
   const k = new Kit();
-  k.ico(0.22, 0, 0, 0, 1.35, 0.12, 0.85, [0.75, 0.92, 1.0], 0.65, 0);
+  k.ico(0.19, 0, 0, 0, 1.45, 0.06, 0.78, [0.34, 0.48, 0.58], 0.45, 0);
   return k.build();
 }
 
@@ -371,7 +342,7 @@ function litMaterial(glowGain: number, rough = 0.75, metal = 0.05, tint?: any) {
 /**
  * Photorealistic NYC street tree material:
  * - Per-instance species/seasonal tint variation (London Plane emerald, Honey Locust olive, Pin Oak warm green)
- * - Procedural 3D leaf-cluster & bark furrow bump normal relief (`bumpMap`)
+ * - Distance-faded procedural 3D leaf-cluster & bark furrow bump normal relief (`bumpMap`)
  * - Warm nocturnal streetlight subsurface scattering on the lower canopy (`glow` attribute)
  */
 function treeMaterial() {
@@ -390,7 +361,8 @@ function treeMaterial() {
   m.emissiveNode = vec3(1.0, 0.66, 0.30).mul(col).mul(subsurf).mul(leafClump).mul(1.85);
   m.roughness = 0.86;
   m.metalness = 0.02;
-  m.normalNode = bumpMap(microLeaf.add(macroClump.mul(0.5)).mul(0.45), float(1.15));
+  const dfadeTree = float(1).sub(smoothstep(18.0, 52.0, positionView.z.negate()));
+  m.normalNode = bumpMap(microLeaf.add(macroClump.mul(0.5)).mul(0.45), dfadeTree.mul(1.15));
   return m;
 }
 
@@ -410,9 +382,9 @@ function signalMaterial(phase: THREE.InstancedBufferAttribute) {
 function lampPoolMaterial() {
   const m = new THREE.MeshBasicNodeMaterial();
   const r = length(uv().sub(0.5)).mul(2);
-  const fall = smoothstep(1.0, 0.0, r).pow(2.2);
+  const fall = float(1).sub(smoothstep(0.0, 1.0, r)).pow(2.2);
   const dist = positionView.z.negate();
-  const far = smoothstep(260, 120, dist);
+  const far = float(1).sub(smoothstep(120, 260, dist));
   m.colorNode = vec3(1.0, 0.56, 0.24).mul(fall).mul(far).mul(0.5);
   m.opacityNode = float(1);
   m.transparent = true; m.blending = THREE.AdditiveBlending; m.depthWrite = false; m.fog = false;
@@ -432,7 +404,7 @@ function steamMaterial(data: THREE.InstancedBufferAttribute) {
   const q = positionGeometry.xy.mul(size);
   m.vertexNode = cameraProjectionMatrix.mul(vec4(view.x.add(q.x), view.y.add(q.y), view.z, 1));
   const rr = length(uv().sub(0.5)).mul(2);
-  const a = smoothstep(1.0, 0.1, rr).mul(smoothstep(0.0, 0.08, age)).mul(float(1).sub(age).pow(1.4)).mul(0.5);
+  const a = float(1).sub(smoothstep(0.1, 1.0, rr)).mul(smoothstep(0.0, 0.08, age)).mul(float(1).sub(age).pow(1.4)).mul(0.5);
   m.colorNode = vec3(0.9, 0.8, 0.72).mul(0.55);
   m.opacityNode = a;
   m.transparent = true; m.depthWrite = false;
@@ -508,19 +480,24 @@ export class NycProps {
   private shatteredMesh: THREE.InstancedMesh;
   private shatteredCount = 0;
   private shatteredSet = new Set<string>();
+  private pillarSet = new Set<string>();
   private shardMesh: THREE.InstancedMesh;
   private shards: Particle[] = [];
   private shardCursor = 0;
+  private activeShardCount = 0;
   private debrisMesh: THREE.InstancedMesh;
   private debris: Particle[] = [];
   private debrisCursor = 0;
+  private activeDebrisCount = 0;
   private sparkMesh: THREE.InstancedMesh;
   private sparks: Particle[] = [];
   private sparkCursor = 0;
+  private activeSparkCount = 0;
 
   private lights: Slot[] = [];
   private tileLights = new Map<string, TileLights>();
   private tilePoles = new Map<string, BreakablePole[]>();
+  private tileTrees = new Map<string, { slot: number; x: number; y: number }[]>();
   private tileBuildings = new Map<string, { z: number; boxes: BuildingColliderBox[] }>();
   private flyingPoles: FlyingPole[] = [];
   brokenPolesCount = 0;
@@ -582,7 +559,7 @@ export class NycProps {
 
     // 3D spinning glass shards (for broken storefronts & bus shelters)
     const SHARD_CAP = 540;
-    this.shardMesh = new THREE.InstancedMesh(glassShardGeo(), litMaterial(2.4, 0.08, 0.9), SHARD_CAP);
+    this.shardMesh = new THREE.InstancedMesh(glassShardGeo(), litMaterial(0.28, 0.06, 0.92), SHARD_CAP);
     this.shardMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.shardMesh.instanceMatrix.array.fill(0);
     this.shardMesh.count = 1;
@@ -650,9 +627,45 @@ export class NycProps {
     await renderer.compileAsync(this.scene, this.camera);
   }
 
+  private isInsideAnyBuilding(gx: number, gy: number, margin = 0.85): boolean {
+    const ix0 = Math.floor(gx / 256), iy0 = Math.floor(gy / 256);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const tb = this.tileBuildings.get(`${ix0 + dx}_${iy0 + dy}`);
+        if (!tb) continue;
+        for (const b of tb.boxes) {
+          const bdx = gx - b.cx, bdy = gy - b.cy;
+          if (Math.abs(bdx) > b.hx + 16 || Math.abs(bdy) > b.hy + 16) continue;
+          const c = Math.cos(-b.yaw), s = Math.sin(-b.yaw);
+          const lx = bdx * c - bdy * s, ly = bdx * s + bdy * c;
+          if (Math.abs(lx) < b.hx + margin && Math.abs(ly) < b.hy + margin) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private cullTreesInBuildings(centerKey: string) {
+    const [ix0, iy0] = centerKey.split('_').map(Number);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const list = this.tileTrees.get(`${ix0 + dx}_${iy0 + dy}`);
+        if (!list) continue;
+        for (let i = list.length - 1; i >= 0; i--) {
+          const tr = list[i];
+          if (this.isInsideAnyBuilding(tr.x, tr.y)) {
+            this.sets.tree.hideSlot(tr.slot);
+            list.splice(i, 1);
+          }
+        }
+      }
+    }
+  }
+
   setTileBuildings(key: string, boxes: BuildingColliderBox[] | undefined, z = 0) {
     if (!boxes || !boxes.length) { this.tileBuildings.delete(key); return; }
     this.tileBuildings.set(key, { z, boxes });
+    this.cullTreesInBuildings(key);
   }
 
   setTile(key: string, data: unknown) {
@@ -676,7 +689,7 @@ export class NycProps {
     (this.pools.instanceMatrix.array as Float32Array).set(S.lamp.mesh.instanceMatrix.array as Float32Array);
     this.pools.instanceMatrix.needsUpdate = true;
 
-    const treeRows: number[][] = [...(d.tree ?? [])];
+    const rawTreeRows: number[][] = [...(d.tree ?? [])];
     if (d.lamp && d.lamp.length > 1) {
       for (let i = 0; i < d.lamp.length - 1; i++) {
         const l0 = d.lamp[i], l1 = d.lamp[i + 1];
@@ -691,11 +704,13 @@ export class NycProps {
           const ty = (l0[1] + l1[1]) * 0.5 - Math.sin(yaw) * 0.95;
           const rot = ((Math.abs(tx * 1.7 + ty * 2.3)) % 6.283);
           const sc = 0.88 + ((Math.abs(tx * 3.1 + ty * 1.3)) % 0.24);
-          treeRows.push([tx, ty, rot, sc]);
+          rawTreeRows.push([tx, ty, rot, sc]);
         }
       }
     }
-    S.tree.add(key, treeRows, (r, m, mo) => writeMatrix(m, mo, r[0], r[1], z, r[2], r[3], r[3] * (0.9 + 0.2 * ((r[2] * 7) % 1)), r[3]));
+    const treeRows = rawTreeRows.filter((r) => !this.isInsideAnyBuilding(r[0], r[1]));
+    const treeSlots = S.tree.add(key, treeRows, (r, m, mo) => writeMatrix(m, mo, r[0], r[1], z, r[2], r[3], r[3] * (0.9 + 0.2 * ((r[2] * 7) % 1)), r[3]));
+    this.tileTrees.set(key, treeSlots.map((slot, i) => ({ slot, x: treeRows[i][0], y: treeRows[i][1] })));
     for (const [set, side, kName] of [[S.signalR, 1, 'signalR'], [S.signalL, -1, 'signalL']] as [InstanceSet, number, BreakableKind][]) {
       const sigRows = d.signal?.filter((r) => r[3] === side);
       const slots = set.add(key, sigRows, (r, m, mo, ex, eo) => {
@@ -739,6 +754,7 @@ export class NycProps {
     this.signs.removeTile(key);
     this.tileLights.delete(key);
     this.tilePoles.delete(key);
+    this.tileTrees.delete(key);
     this.tileBuildings.delete(key);
   }
 
@@ -762,6 +778,7 @@ export class NycProps {
     for (let i = 0; i < count; i++) {
       const p = this.sparks[this.sparkCursor];
       this.sparkCursor = (this.sparkCursor + 1) % this.sparks.length;
+      if (!p.active) this.activeSparkCount++;
       const ang = Math.random() * Math.PI * 2;
       const spd = 3.0 + Math.random() * 11.0;
       p.active = true;
@@ -785,6 +802,7 @@ export class NycProps {
     for (let i = 0; i < count; i++) {
       const p = this.shards[this.shardCursor];
       this.shardCursor = (this.shardCursor + 1) % this.shards.length;
+      if (!p.active) this.activeShardCount++;
       const lat = (Math.random() - 0.5) * 3.4;
       const out = (Math.random() - 0.25) * 7.5;
       p.active = true;
@@ -808,6 +826,7 @@ export class NycProps {
     for (let i = 0; i < count; i++) {
       const p = this.debris[this.debrisCursor];
       this.debrisCursor = (this.debrisCursor + 1) % this.debris.length;
+      if (!p.active) this.activeDebrisCount++;
       const lat = (Math.random() - 0.5) * 4.2;
       // Half the wall chunks fly inward with the car into the breached ground floor, half burst outward
       const inOut = (Math.random() - 0.62) * 8.5;
@@ -874,12 +893,28 @@ export class NycProps {
   }
 
   /**
+   * Place a 3D structural concrete column (`0.66m x 3.85m x 0.66m`) strictly inside a breached building
+   * at the exact Three.js coordinates `(wx, groundY, wz)` of a Rapier interior pillar collider.
+   */
+  addInteriorPillar(wx: number, groundY: number, wz: number, yaw: number) {
+    const key = `${Math.round(wx * 2)}_${Math.round(wz * 2)}`;
+    if (this.pillarSet.has(key)) return;
+    this.pillarSet.add(key);
+    const slot = this.shatteredCount % 160;
+    this.shatteredCount++;
+    writeMatrix(this.shatteredMesh.instanceMatrix.array as Float32Array, slot * 16, wx, -wz, groundY, yaw, 1, 1, 1);
+    this.shatteredMesh.count = Math.min(160, Math.max(1, this.shatteredCount));
+    this.shatteredMesh.instanceMatrix.needsUpdate = true;
+  }
+
+  /**
    * Breach a ground-floor building wall & storefront bay at world Three.js coordinates (wx, groundY, wz)
    * with outward normal (nx, nz):
-   * 1. Punches a jagged 3D hole through the outer facade (`recordWallBreach`),
-   * 2. Places a full 3D breached interior room (`shatteredBayGeo`: floor, ceiling, hanging light bars, structural columns, rubble),
-   * 3. Explodes 52 spinning 3D glass prism shards + 36 tumbling brick/concrete wall chunks + 24 electric sparks,
-   * 4. Signals `onImpact(210, 'wall', wx, wz)` so `NycStreamer` opens the ground-floor physics collider and `GameAudio` plays the wall demolition sound.
+   * 1. Punches a jagged 3D hole directly through the visible building's ground-floor facade mesh (`recordWallBreach`),
+   *    without spawning any box on the outside of the building,
+   * 2. Explodes 52 spinning 3D glass prism shards + 36 tumbling brick/concrete wall chunks + 24 electric sparks,
+   * 3. Signals `onImpact(210, 'wall', wx, wz)` so `NycStreamer` swaps the tile to `facadeBreached`, opens the
+   *    ground-floor physics collider, places interior concrete pillars inside the building, and plays the demolition sound.
    */
   shatterStorefrontAt(
     wx: number,
@@ -891,21 +926,14 @@ export class NycProps {
     vz = 0,
     onImpact?: (impulse: number, kind?: 'pole' | 'shop' | 'wall', wx?: number, wz?: number) => void,
   ): boolean {
-    const bayKey = `${Math.round(wx / 4.2)}_${Math.round(wz / 4.2)}`;
+    const bayKey = `${Math.round(wx / 3.8)}_${Math.round(wz / 3.8)}`;
     if (this.shatteredSet.has(bayKey)) return false;
     this.shatteredSet.add(bayKey);
     this.brokenShopsCount++;
 
-    // Punch a real 3D hole in the building's ground-floor facade mesh
-    recordWallBreach(wx, wz, 4.4);
-
-    const slot = this.shatteredCount % 160;
-    this.shatteredCount++;
-    const yaw = Math.atan2(-nz, nx);
-    // Place the 3D breached interior room aligned with the wall
-    writeMatrix(this.shatteredMesh.instanceMatrix.array as Float32Array, slot * 16, wx + nx * 0.04, -(wz + nz * 0.04), groundY, yaw, 1, 1, 1);
-    this.shatteredMesh.count = Math.min(160, Math.max(1, this.shatteredCount));
-    this.shatteredMesh.instanceMatrix.needsUpdate = true;
+    // Car-sized (~5.6m wide) stepped-brick breach along the wall + inward penetration so recessed polygon walls are cleanly pierced
+    recordWallBreach(wx, wz, 2.85);
+    recordWallBreach(wx - nx * 1.35, wz - nz * 1.35, 2.75);
 
     this.emitGlassShards(wx, groundY + 1.5, wz, nx, nz, vx, vz, groundY, 52);
     this.emitWallDebris(wx, groundY + 1.6, wz, nx, nz, vx, vz, groundY, 36);
@@ -949,18 +977,20 @@ export class NycProps {
         const dx = cx - b.cx, dy = cy - b.cy;
         const c = Math.cos(-b.yaw), s = Math.sin(-b.yaw);
         const lx = dx * c - dy * s, ly = dx * s + dy * c;
-        const cxClamped = Math.max(-b.hx, Math.min(b.hx, lx));
-        const cyClamped = Math.max(-b.hy, Math.min(b.hy, ly));
-        const dist = Math.hypot(lx - cxClamped, ly - cyClamped);
+        const px = Math.max(-b.hx, Math.min(b.hx, lx));
+        const py = Math.max(-b.hy, Math.min(b.hy, ly));
+        const dist = Math.hypot(lx - px, ly - py);
         if (dist < maxDist && (!bestHit || dist < bestHit.d)) {
-          const onX = Math.abs(b.hx - Math.abs(lx)) < Math.abs(b.hy - Math.abs(ly));
-          const lnx = onX ? (lx >= 0 ? 1 : -1) : 0;
-          const lny = onX ? 0 : (ly >= 0 ? 1 : -1);
-          const fx = onX ? lnx * b.hx : Math.round(lx / 4.2) * 4.2;
-          const fy = onX ? Math.round(ly / 4.2) * 4.2 : lny * b.hy;
+          const dxWall = b.hx - Math.abs(px);
+          const dyWall = b.hy - Math.abs(py);
+          const onX = dxWall < dyWall;
+          const lnx = onX ? (px >= 0 ? 1 : -1) : 0;
+          const lny = onX ? 0 : (py >= 0 ? 1 : -1);
+          const wallLx = onX ? lnx * b.hx : px;
+          const wallLy = onX ? py : lny * b.hy;
           const c2 = Math.cos(b.yaw), s2 = Math.sin(b.yaw);
-          const wx = b.cx + (fx * c2 - fy * s2);
-          const wy = b.cy + (fx * s2 + fy * c2);
+          const wx = b.cx + (wallLx * c2 - wallLy * s2);
+          const wy = b.cy + (wallLx * s2 + wallLy * c2);
           const wnx = lnx * c2 - lny * s2;
           const wny = lnx * s2 + lny * c2;
           bestHit = { wx, wz: -wy, nx: wnx, nz: -wny, z: tb.z, d: dist };
@@ -1005,15 +1035,18 @@ export class NycProps {
             const px = Math.max(-b.hx, Math.min(b.hx, lx));
             const py = Math.max(-b.hy, Math.min(b.hy, ly));
             const distSq = (lx - px) * (lx - px) + (ly - py) * (ly - py);
-            if (distSq < 3.4 * 3.4) {
-              const onX = Math.abs(b.hx - Math.abs(lx)) < Math.abs(b.hy - Math.abs(ly));
-              const lnx = onX ? (lx >= 0 ? 1 : -1) : 0;
-              const lny = onX ? 0 : (ly >= 0 ? 1 : -1);
-              const snapX = onX ? lnx * b.hx : Math.max(-b.hx + 1.8, Math.min(b.hx - 1.8, Math.round(lx / 4.2) * 4.2));
-              const snapY = onX ? Math.max(-b.hy + 1.8, Math.min(b.hy - 1.8, Math.round(ly / 4.2) * 4.2)) : lny * b.hy;
+            const dxWall = b.hx - Math.abs(px);
+            const dyWall = b.hy - Math.abs(py);
+            // Breach either when impacting from outside (`distSq < 3.4^2`) or smashing out through an unbreached wall from inside
+            if ((distSq > 0 && distSq < 3.4 * 3.4) || (distSq === 0 && Math.min(dxWall, dyWall) < 2.2)) {
+              const onX = dxWall < dyWall;
+              const lnx = onX ? (px >= 0 ? 1 : -1) : 0;
+              const lny = onX ? 0 : (py >= 0 ? 1 : -1);
+              const wallLx = onX ? lnx * b.hx : px;
+              const wallLy = onX ? py : lny * b.hy;
               const c2 = Math.cos(b.yaw), s2 = Math.sin(b.yaw);
-              const wx = b.cx + (snapX * c2 - snapY * s2);
-              const wy = b.cy + (snapX * s2 + snapY * c2);
+              const wx = b.cx + (wallLx * c2 - wallLy * s2);
+              const wy = b.cy + (wallLx * s2 + wallLy * c2);
               const wnx = lnx * c2 - lny * s2;
               const wny = lnx * s2 + lny * c2;
               this.shatterStorefrontAt(wx, tb.z, -wy, wnx, -wny, carVel.x, carVel.z, onImpact);
@@ -1070,106 +1103,103 @@ export class NycProps {
       for (const k of touched) this.sets[k].mesh.instanceMatrix.needsUpdate = true;
     }
 
-    // 2. 3D glass shards
-    let activeShards = false;
-    const shardArr = this.shardMesh.instanceMatrix.array as Float32Array;
-    for (let i = 0; i < this.shards.length; i++) {
-      const p = this.shards[i];
-      if (!p.active) continue;
-      activeShards = true;
-      p.age += dt;
-      if (p.age >= p.maxAge) {
-        p.active = false;
-        shardArr.fill(0, i * 16, i * 16 + 16);
-        continue;
+    // 2. 3D glass shards (zero CPU cost when inactive)
+    if (this.activeShardCount > 0) {
+      const shardArr = this.shardMesh.instanceMatrix.array as Float32Array;
+      for (let i = 0; i < this.shards.length; i++) {
+        const p = this.shards[i];
+        if (!p.active) continue;
+        p.age += dt;
+        if (p.age >= p.maxAge) {
+          p.active = false;
+          this.activeShardCount--;
+          shardArr.fill(0, i * 16, i * 16 + 16);
+          continue;
+        }
+        p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+        p.vy -= 18.0 * dt;
+        p.rx += p.wx * dt; p.ry += p.wy * dt; p.rz += p.wz * dt;
+        if (p.y <= p.groundY) {
+          p.y = p.groundY;
+          p.vy = Math.abs(p.vy) * 0.35;
+          p.vx *= 0.82; p.vz *= 0.82;
+          p.wx *= 0.75; p.wy *= 0.75; p.wz *= 0.75;
+        }
+        const s = p.scale * Math.min(1, (p.maxAge - p.age) * 1.5);
+        _pos.set(p.x, p.y, p.z);
+        _euler.set(p.rx, p.ry, p.rz);
+        _quat.setFromEuler(_euler);
+        _scale.set(s, s, s);
+        _mat4.compose(_pos, _quat, _scale);
+        _mat4.toArray(shardArr, i * 16);
       }
-      p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
-      p.vy -= 18.0 * dt;
-      p.rx += p.wx * dt; p.ry += p.wy * dt; p.rz += p.wz * dt;
-      if (p.y <= p.groundY) {
-        p.y = p.groundY;
-        p.vy = Math.abs(p.vy) * 0.35;
-        p.vx *= 0.82; p.vz *= 0.82;
-        p.wx *= 0.75; p.wy *= 0.75; p.wz *= 0.75;
-      }
-      const s = p.scale * Math.min(1, (p.maxAge - p.age) * 1.5);
-      _pos.set(p.x, p.y, p.z);
-      _euler.set(p.rx, p.ry, p.rz);
-      _quat.setFromEuler(_euler);
-      _scale.set(s, s, s);
-      _mat4.compose(_pos, _quat, _scale);
-      _mat4.toArray(shardArr, i * 16);
-    }
-    if (activeShards) {
-      this.shardMesh.count = this.shards.length;
+      this.shardMesh.count = this.activeShardCount > 0 ? this.shards.length : 1;
       this.shardMesh.instanceMatrix.needsUpdate = true;
     }
 
-    // 3. 3D brick & concrete masonry wall chunks
-    let activeDebris = false;
-    const debrisArr = this.debrisMesh.instanceMatrix.array as Float32Array;
-    for (let i = 0; i < this.debris.length; i++) {
-      const p = this.debris[i];
-      if (!p.active) continue;
-      activeDebris = true;
-      p.age += dt;
-      if (p.age >= p.maxAge) {
-        p.active = false;
-        debrisArr.fill(0, i * 16, i * 16 + 16);
-        continue;
+    // 3. 3D brick & concrete masonry wall chunks (zero CPU cost when inactive)
+    if (this.activeDebrisCount > 0) {
+      const debrisArr = this.debrisMesh.instanceMatrix.array as Float32Array;
+      for (let i = 0; i < this.debris.length; i++) {
+        const p = this.debris[i];
+        if (!p.active) continue;
+        p.age += dt;
+        if (p.age >= p.maxAge) {
+          p.active = false;
+          this.activeDebrisCount--;
+          debrisArr.fill(0, i * 16, i * 16 + 16);
+          continue;
+        }
+        p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+        p.vy -= 21.0 * dt;
+        p.rx += p.wx * dt; p.ry += p.wy * dt; p.rz += p.wz * dt;
+        if (p.y <= p.groundY) {
+          p.y = p.groundY;
+          p.vy = Math.abs(p.vy) * 0.22;
+          p.vx *= 0.68; p.vz *= 0.68;
+          p.wx *= 0.6; p.wy *= 0.6; p.wz *= 0.6;
+        }
+        const s = p.scale * Math.min(1, (p.maxAge - p.age) * 1.2);
+        _pos.set(p.x, p.y, p.z);
+        _euler.set(p.rx, p.ry, p.rz);
+        _quat.setFromEuler(_euler);
+        _scale.set(s, s, s);
+        _mat4.compose(_pos, _quat, _scale);
+        _mat4.toArray(debrisArr, i * 16);
       }
-      p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
-      p.vy -= 21.0 * dt;
-      p.rx += p.wx * dt; p.ry += p.wy * dt; p.rz += p.wz * dt;
-      if (p.y <= p.groundY) {
-        p.y = p.groundY;
-        p.vy = Math.abs(p.vy) * 0.22;
-        p.vx *= 0.68; p.vz *= 0.68;
-        p.wx *= 0.6; p.wy *= 0.6; p.wz *= 0.6;
-      }
-      const s = p.scale * Math.min(1, (p.maxAge - p.age) * 1.2);
-      _pos.set(p.x, p.y, p.z);
-      _euler.set(p.rx, p.ry, p.rz);
-      _quat.setFromEuler(_euler);
-      _scale.set(s, s, s);
-      _mat4.compose(_pos, _quat, _scale);
-      _mat4.toArray(debrisArr, i * 16);
-    }
-    if (activeDebris) {
-      this.debrisMesh.count = this.debris.length;
+      this.debrisMesh.count = this.activeDebrisCount > 0 ? this.debris.length : 1;
       this.debrisMesh.instanceMatrix.needsUpdate = true;
     }
 
-    // 4. Electric & metallic collision sparks
-    let activeSparks = false;
-    const sparkArr = this.sparkMesh.instanceMatrix.array as Float32Array;
-    for (let i = 0; i < this.sparks.length; i++) {
-      const p = this.sparks[i];
-      if (!p.active) continue;
-      activeSparks = true;
-      p.age += dt;
-      if (p.age >= p.maxAge) {
-        p.active = false;
-        sparkArr.fill(0, i * 16, i * 16 + 16);
-        continue;
+    // 4. Electric & metallic collision sparks (zero CPU cost when inactive)
+    if (this.activeSparkCount > 0) {
+      const sparkArr = this.sparkMesh.instanceMatrix.array as Float32Array;
+      for (let i = 0; i < this.sparks.length; i++) {
+        const p = this.sparks[i];
+        if (!p.active) continue;
+        p.age += dt;
+        if (p.age >= p.maxAge) {
+          p.active = false;
+          this.activeSparkCount--;
+          sparkArr.fill(0, i * 16, i * 16 + 16);
+          continue;
+        }
+        p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+        p.vy -= 22.0 * dt;
+        if (p.y <= p.groundY) {
+          p.y = p.groundY;
+          p.vy = Math.abs(p.vy) * 0.45;
+          p.vx *= 0.78; p.vz *= 0.78;
+        }
+        const s = p.scale * (1 - p.age / p.maxAge);
+        _pos.set(p.x, p.y, p.z);
+        _euler.set(0, Math.atan2(-p.vz, p.vx), Math.atan2(p.vy, Math.hypot(p.vx, p.vz)));
+        _quat.setFromEuler(_euler);
+        _scale.set(s * 1.4, s, s);
+        _mat4.compose(_pos, _quat, _scale);
+        _mat4.toArray(sparkArr, i * 16);
       }
-      p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
-      p.vy -= 22.0 * dt;
-      if (p.y <= p.groundY) {
-        p.y = p.groundY;
-        p.vy = Math.abs(p.vy) * 0.45;
-        p.vx *= 0.78; p.vz *= 0.78;
-      }
-      const s = p.scale * (1 - p.age / p.maxAge);
-      _pos.set(p.x, p.y, p.z);
-      _euler.set(0, Math.atan2(-p.vz, p.vx), Math.atan2(p.vy, Math.hypot(p.vx, p.vz)));
-      _quat.setFromEuler(_euler);
-      _scale.set(s * 1.4, s, s);
-      _mat4.compose(_pos, _quat, _scale);
-      _mat4.toArray(sparkArr, i * 16);
-    }
-    if (activeSparks) {
-      this.sparkMesh.count = this.sparks.length;
+      this.sparkMesh.count = this.activeSparkCount > 0 ? this.sparks.length : 1;
       this.sparkMesh.instanceMatrix.needsUpdate = true;
     }
   }
