@@ -20,11 +20,12 @@
   </div>
   <div id="menu" hidden></div>
   <div id="countdown"></div>
+  <div id="tags"></div>
   <div id="rotate">Rotate your phone to landscape ↻</div>
   <div id="hud" hidden>
     <div id="hud-top-left">
       <div id="hud-actions">
-        <button id="hud-garage" type="button" title="Leave race and return to Garage (G)">← Garage</button>
+        <button id="hud-garage" type="button" title="Leave the session for the menu (G)">← Menu</button>
         <button id="hud-pause" type="button" title="Pause (Esc)">⏸ Pause</button>
         <button id="hud-reset" type="button" title="Reset / Repair Car (R)">⟲ Reset</button>
         <button id="hud-cam" type="button" title="Switch Camera (C)">🎥 Cam</button>
@@ -32,11 +33,13 @@
       <div id="perf"></div>
     </div>
     <div id="laps">
+      <div class="row pos" id="lappos-row" hidden><span class="k">POS</span><span id="lappos">—</span></div>
       <div class="row"><span class="k">LAP</span><span id="lapno">1</span></div>
       <div class="row big"><span id="lapcur">0:00.000</span></div>
       <div class="row"><span class="k">LAST</span><span id="laplast">—</span></div>
       <div class="row"><span class="k">BEST</span><span id="lapbest">—</span></div>
     </div>
+    <div id="board" hidden></div>
     <div id="toast"></div>
     <div id="warn"></div>
     <div id="dash">
@@ -54,7 +57,7 @@
       <div id="damage"></div>
     </div>
     <div id="credits">Map: © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a> (ODbL) &amp; NYC Open Data · Cars: modified from Eric Chadwick (Khronos glTF Sample Assets) &amp; Dave Love SketchFab (<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>) · full list: CREDITS.md</div>
-    <div id="help"><kbd>W</kbd><kbd>S</kbd> Throttle / Brake &nbsp; <kbd>A</kbd><kbd>D</kbd> Steer &nbsp; <kbd>Q</kbd><kbd>E</kbd> Shift &nbsp; <kbd>Space</kbd> Handbrake &nbsp; <kbd>R</kbd> Repair &nbsp; <kbd>C</kbd> Camera &nbsp; <kbd>L</kbd> Lights &nbsp; <kbd>G</kbd> Garage &nbsp; <kbd>1-3,5</kbd> Assists &nbsp; <kbd>H</kbd> Hide HUD</div>
+    <div id="help"><kbd>W</kbd><kbd>S</kbd> Throttle / Brake &nbsp; <kbd>A</kbd><kbd>D</kbd> Steer &nbsp; <kbd>Q</kbd><kbd>E</kbd> Shift &nbsp; <kbd>Space</kbd> Handbrake &nbsp; <kbd>R</kbd> Recover / Repair &nbsp; <kbd>C</kbd> Camera &nbsp; <kbd>L</kbd> Lights &nbsp; <kbd>G</kbd> Menu &nbsp; <kbd>1-3,5</kbd> Assists &nbsp; <kbd>H</kbd> Hide HUD</div>
   </div>
   <script type="module" src="/src/main.ts"></script>
 </body>

@@ -247,3 +247,101 @@ body.touch #warn { right: auto; left: calc(8px + env(safe-area-inset-left)); tra
   #menu .g-bottom { flex-wrap: wrap; } #menu .g-cams { display: none; }
 }
 body.touch #menu .g-right, body.touch #menu .g-left { font-size: 12px; }
+
+/* ---- title invite, garage footer ------------------------------------------------------------ */
+#menu .invite { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--panel); border: 1px solid var(--accent); border-radius: var(--r); }
+#menu .invite b { color: var(--fg); letter-spacing: .12em; }
+#menu .g-summary { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 13px; }
+#menu .g-summary b { font-size: 16px; font-weight: 800; }
+#menu .g-summary .dim { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#menu .back-btn { white-space: nowrap; font-weight: 700; }
+
+/* ---- game modes ------------------------------------------------------------------------------ */
+#menu[data-screen="modes"], #menu[data-screen="lobby"] { background: linear-gradient(180deg, #04060a90 0%, #04060ad8 70%); }
+#menu .modes-screen { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: safe center; gap: 22px; padding: 24px clamp(16px, 4vw, 56px); overflow-y: auto; pointer-events: auto; }
+#menu .m-head { display: flex; align-items: center; gap: 20px; }
+#menu .m-head h2 { margin: 0; font-size: 30px; font-style: italic; font-weight: 900; }
+#menu .m-car { margin-left: auto; font-size: 13px; }
+#menu .m-car b { color: var(--fg); }
+#menu .mode-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+#menu .mcard { display: flex; flex-direction: column; gap: 12px; padding: 20px; background: var(--panel); border: 1px solid var(--line); border-top: 2px solid var(--accent); border-radius: var(--r); min-width: 0; }
+#menu .mcard-top { display: grid; grid-template-columns: auto 1fr; column-gap: 12px; align-items: center; }
+#menu .mcard-top .micon { grid-row: span 2; font-size: 30px; }
+#menu .mcard-top b { font-size: 22px; font-weight: 900; font-style: italic; letter-spacing: .02em; }
+#menu .mcard-top span.dim { font-size: 12px; letter-spacing: .04em; }
+#menu .mcard p { margin: 0; font-size: 13px; line-height: 1.5; flex: 1; }
+#menu .mcard .huge { width: 100%; }
+#menu .pill { display: inline-block; font-size: 9px; font-weight: 800; letter-spacing: .16em; padding: 3px 7px; border-radius: 5px; background: #ffffff14; color: var(--fg); margin-left: 6px; }
+#menu .pill.gold { background: #ffb54733; color: var(--warn); }
+
+/* ---- party lobby ----------------------------------------------------------------------------- */
+#menu .lobby-screen { position: absolute; inset: 0; display: flex; padding: 20px 16px; overflow-y: auto; pointer-events: auto; }
+#menu .lobby-card { width: min(720px, 100%); padding: 22px 26px; margin: auto; }
+#menu .lobby-head { display: flex; align-items: center; gap: 18px; margin-bottom: 14px; }
+#menu .lobby-head h2 { margin: 0; font-style: italic; font-weight: 900; }
+#menu .lobby-head .code { color: var(--accent); letter-spacing: .14em; font-style: normal; font-family: ui-monospace, monospace; }
+#menu .field { display: flex; align-items: center; gap: 10px; margin: 6px 0 4px; }
+#menu .field > span { font-size: 10px; font-weight: 700; letter-spacing: .2em; min-width: 86px; }
+#menu input[type=text] { pointer-events: auto; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--line2); background: #0009; color: var(--fg); font: inherit; font-size: 14px; min-width: 0; }
+#menu input[type=text]:focus { outline: none; border-color: var(--accent); }
+#menu .field input { flex: 1; max-width: 280px; }
+#menu .lobby-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 10px; }
+#menu .lcol { padding: 14px; background: var(--panel2); border: 1px solid var(--line); border-radius: var(--r); display: flex; flex-direction: column; gap: 10px; }
+#menu .lcol h3 { margin: 0; }
+#menu .lcol p { margin: 0; font-size: 13px; }
+#menu .joinrow { display: flex; gap: 8px; }
+#menu .joinrow input { flex: 1; font: 700 18px ui-monospace, monospace; letter-spacing: .25em; text-transform: uppercase; }
+#menu .invite-box { display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: var(--panel2); border: 1px solid var(--line); border-radius: var(--r); }
+#menu .invite-box > span { font-size: 10px; font-weight: 700; letter-spacing: .2em; }
+#menu .invite-box input { flex: 1; font: 12px ui-monospace, monospace; }
+#menu .members { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+#menu .member { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; font-size: 13px; min-width: 0; }
+#menu .member .dot { flex: none; width: 14px; height: 14px; border-radius: 50%; background: #ffffff18; border: 2px solid #ffffff30; }
+#menu .mtext { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+#menu .mname { display: flex; align-items: center; gap: 2px; min-width: 0; }
+#menu .mname b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-right: 4px; }
+#menu .mtext > .dim { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#menu .member .mstate { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; }
+#menu .member .mstate.ok { color: var(--ok); }
+#menu .member.empty { opacity: .45; border-style: dashed; }
+#menu .opts .sep { margin-left: 10px; }
+#menu .pnote { margin-top: 12px; font-size: 13px; color: var(--ok); display: flex; align-items: center; gap: 8px; }
+#menu .pnote.bad { color: #ff7a8c; }
+#menu .lobby-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; flex-wrap: wrap; }
+#menu .wait { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.spin.inline { display: inline-block; width: 14px; height: 14px; margin: 0; border-width: 2px; }
+
+/* ---- results standings, HUD running order, name tags ----------------------------------------- */
+#menu .results-card { max-height: calc(100vh - 32px); overflow-y: auto; }
+#menu .big.win { color: var(--warn); }
+#menu .big small { font-size: 22px; color: var(--dim); }
+#menu .standings { margin: 16px auto 0; max-width: 420px; text-align: left; }
+#menu .srow { display: grid; grid-template-columns: 28px 1fr auto 86px; gap: 10px; align-items: center; padding: 7px 8px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; font-size: 13px; }
+#menu .srow .spos { font-weight: 900; color: var(--dim); text-align: center; }
+#menu .srow .sgap { text-align: right; }
+#menu .srow.you { background: #ff2d5522; border-radius: 8px; border-bottom-color: transparent; }
+#menu .srow.you .spos { color: var(--accent); }
+#laps .row.pos span:last-child { font-weight: 900; font-size: 16px; color: var(--warn); }
+#board { position: absolute; top: 158px; right: 16px; min-width: 180px; padding: 6px 8px; border-radius: var(--r); background: var(--panel); border: 1px solid var(--line);
+  font-size: 12px; font-variant-numeric: tabular-nums; contain: layout style paint; }
+#board .b { display: grid; grid-template-columns: 16px 1fr auto; gap: 8px; padding: 2px 4px; border-radius: 6px; }
+#board .b i { font-style: normal; color: var(--dim); font-weight: 800; }
+#board .b span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
+#board .b em { font-style: normal; color: var(--dim); }
+#board .b.you { background: #ff2d5533; }
+#board .b.you span { font-weight: 800; }
+#tags { position: fixed; inset: 0; pointer-events: none; z-index: 5; overflow: hidden; contain: strict; }
+#tags .tag { position: absolute; left: 0; top: 0; padding: 2px 8px; border-radius: 6px; background: #0a0e16c8; border: 1px solid var(--line2); font-size: 12px; font-weight: 700; white-space: nowrap; will-change: transform; }
+body.menu #tags { display: none; }
+
+@media (max-width: 900px) {
+  #menu .mode-cards { grid-template-columns: 1fr; }
+  #menu .modes-screen { justify-content: flex-start; }
+  #menu .lobby-cols, #menu .members { grid-template-columns: 1fr; }
+  #menu .g-summary { display: none; }
+}
+@media (max-height: 520px) {
+  #menu .mcard p { display: none; }
+  #menu .modes-screen { gap: 12px; }
+  #board { top: 120px; }
+}

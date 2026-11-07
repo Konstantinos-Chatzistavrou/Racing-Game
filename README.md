@@ -18,47 +18,57 @@ npm run dev          # http://127.0.0.1:5173
 URL options: `?scale=0.75` (render resolution), `?bloom=0`, `?aa=0`, `?shadows=0`.
 
 Controls: W/S throttle and brake · A/D steer · Q/E shift · Space handbrake · Shift clutch ·
-R reset · C camera · 1 ABS · 2 TC · 3 ESC · 5 auto gearbox · H hide HUD. Gamepads work too.
+R recover · G menu · C camera · 1 ABS · 2 TC · 3 ESC · 5 auto gearbox · H hide HUD. Gamepads work too.
 
 The compiled physics (`web/src/physics/rs_core.wasm`) is checked in. To rebuild it after changing
 `core/`, install [Emscripten](https://emscripten.org/docs/getting_started/downloads.html) to `~/emsdk`
 and run `npm run wasm`.
 
-## Multiplayer (optional)
+## Multiplayer (parties)
 
-A minimal relay in `server/` (Express + ws) forwards each player's car pose to the others. No
-authority or collisions between players yet: you see the other cars, they pass through you.
+Parties are peer to peer (WebRTC through [PeerJS](https://peerjs.com/)): no game server to run. In the game:
+**Play → Multiplayer → Create Party**, then send friends the invite link (`…/?party=CODE`, opening it shows a
+**Join Party** banner on the title) or the 5-letter code. Up to 6 drivers. The leader picks **Race** (1/3/5/10 laps,
+synchronised 3-2-1 once everyone has loaded, live running order, results with everyone's times) or **Free Roam**
+together, and can send everyone back to the lobby. The leader's browser forwards each player's car pose and race
+progress to the others; other cars carry name tags and pass through you (no collisions between players).
+
+The public PeerJS broker (`0.peerjs.com`) introduces the players and PeerJS's STUN/TURN servers get them through home
+routers. To use your own broker instead:
 
 ```bash
 cd server
 npm i
-npm start            # ws://localhost:8787, health check at http://localhost:8787/health (PORT env to change)
-npm test             # starts the server and checks welcome / state relay / validation / leave with two clients
+npm start            # PeerJS on http://localhost:9000/peerjs, health at /health (PORT env to change)
+npm test             # starts it and checks /health + id issue
 ```
 
-Then open the game with `?mp=1` (relay on the page's host, port 8787) or `?mp=ws://host:port`.
-Without `?mp` the game is single-player and opens no connection. The HUD's second line shows
-`online · N players`.
-
-Hosting: the Vercel deployment serves only the static game. The relay needs a long-lived process:
-Vercel Functions can accept WebSockets through `ws` with Fluid Compute, or run `server/` on
-Render or Fly.io. A page served over HTTPS must use `wss://`.
+and open the game with `?peer=your-host:9000/peerjs` (`wss://` prefix when served over HTTPS). Protocol checks over a
+real broker: `node web/tools/party_test.mjs` (two headless peers) and `node web/tools/party_game_test.mjs` (two full game
+windows), both with the Vite dev server running.
 
 ## Playing
 
 The game opens on a title screen that tunes the graphics once for the device (resolution and effects
-level, behind a cover; the result is remembered; Auto / High / Medium / Low can be set there). Quality never
-changes while a car is on screen. **Start** opens the garage: pick a car (three trims of the Vela GT), paint
-and finish, four tuning steps (engine, tyres, weight, aero; applied to the physics data), then a mode:
-**Free run**, **Race** (1/3/5/10 laps, 3-2-1 start, results screen) or **Online** (enter a relay server address,
-Check, Join). Esc pauses: resume, restart or back to the garage. Details in `docs/web_port.md`.
+level, behind a cover; the result is remembered; Auto / Max / Ultra / High / Medium / Low can be set there). Quality never
+changes while a car is on screen. **Play** opens the game modes:
+
+- **Race**: a 6-car grid, you (P4) against 5 AI rivals, 1/3/5/10 laps, 3-2-1 start, live position and running order,
+  results with everyone's finishing order and gaps.
+- **Free Roam**: just you in the open city, lap timer running.
+- **Multiplayer**: the party lobby (above).
+
+**Garage** (from the title) is for the car only: pick a car, paint and finish, upgrades (engine, tyres, weight, aero;
+applied to the physics data). From there go back to the **Main Menu** or **Continue** to the game modes. Esc pauses:
+resume, restart or quit to the main menu. R puts you back on the road where you are (race, party) or at the start
+(free roam). Details in `docs/web_port.md`.
 
 ## Layout
 
 | Path | What |
 |---|---|
 | `core/` | C++17 physics + game logic (tyres, drivetrain, assists, damage, AI, race rules), no engine deps, with tests |
-| `server/` | Optional multiplayer relay (Node, Express + ws) |
+| `server/` | Optional self-hosted PeerJS matchmaking for parties (the game defaults to the public broker) |
 | `web/` | Browser game: three.js WebGPU renderer, Rapier rigid bodies, WASM bridge (`web/wasm/bridge.cpp`) |
 | `data/` | Car and track data (JSON, engine-neutral) |
 | `assets_source/` | Blender sources and full-resolution textures |

@@ -1,10 +1,11 @@
-// Minimal multiplayer: send our car pose to the relay in server/, draw the other players' cars.
-// Off unless the URL asks for it: ?mp=ws://host:port (or wss://), ?mp=1 -> <page host>:8787.
-// Remote cars are drawn ~100 ms in the past, interpolated between the network frames around that
-// time (lerp position, slerp rotation), briefly extrapolated when a frame is late, snapped on teleports.
+// Other players' cars (party.ts carries the data). Our pose goes out at up to 20 Hz when it changed
+// meaningfully, plus a 1 s heartbeat. Remote cars are drawn ~100 ms in the past, interpolated between
+// the network frames around that time (lerp position, slerp rotation), briefly extrapolated when a
+// frame is late, snapped on teleports. Each carries a name tag.
 import * as THREE from 'three/webgpu';
 import { setupCarMaterials, type CarVisual } from './scene/car';
 import { assetUrl, loadGLTF } from './scene/loaders';
+import type { Pose } from './party';
 
 const SEND_HZ = 20;
 const HEARTBEAT_MS = 1000;      // resend an unchanged pose this often (keeps the newcomer view and timelines fresh)
@@ -12,38 +13,23 @@ const DELAY_MS = 100;           // remote render delay
 const EXTRAPOLATE_MS = 200;     // max time to run past the newest frame
 const SNAP_M = 15;              // a jump this big between frames is a reset: no interpolation
 const MOVED_M = 0.02, TURNED = 0.005;   // "changed meaningfully": 2 cm or ~0.6 deg
+const TAG_RANGE = 180;          // name tags beyond this many metres are hidden
 
 interface Frame { t: number; p: THREE.Vector3; q: THREE.Quaternion }
-interface Remote { root: THREE.Group; frames: Frame[]; paint?: number }
-type Pose = { x: number; y: number; z: number; qx: number; qy: number; qz: number; qw: number };
+interface Remote { root: THREE.Group; frames: Frame[]; paint?: number; tag: HTMLDivElement | null }
 
-/** Relay URL from the page URL, or null for single-player. */
-export function netUrl(params: URLSearchParams): string | null {
-  const mp = params.get('mp');
-  if (!mp || mp === '0') return null;
-  if (/^wss?:\/\//.test(mp)) return mp;
-  return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.hostname}:8787`;
-}
-
-const finite = (m: Record<string, unknown>, ...k: string[]) => k.every((key) => typeof m[key] === 'number' && Number.isFinite(m[key]));
-
-export class Net {
-  private ws: WebSocket | null = null;
-  private remotes = new Map<number, Remote>();
+export class RemoteCars {
+  private remotes = new Map<string, Remote>();
   private proto: THREE.Object3D;          // car model as loaded (rest wheels, no lights, no damage)
   private lastSend = 0;
   private sentPos = new THREE.Vector3(Infinity, 0, 0);
   private sentQuat = new THREE.Quaternion();
-  private retry = 1000;
   private v = new THREE.Vector3();
-  id = 0;
-  connected = false;
-  private closed = false;
-  /** Our paint colour (0xrrggbb), sent with every pose so the others see our car in it. */
-  paint = -1;
-  onChange = () => {};
+  private tags = document.getElementById('tags');
+  /** names by player id (from the party lobby) */
+  names = new Map<string, string>();
 
-  constructor(private url: string, private scene: THREE.Scene, private visual: CarVisual) {
+  constructor(private scene: THREE.Scene, private visual: CarVisual) {
     this.proto = visual.model.clone(true);
     this.proto.traverse((o) => { if ((o as THREE.Light).isLight) o.visible = false; });
     // Remote cars use the light traffic model (~28k triangles, shared with the AI cars) once it is
@@ -55,62 +41,30 @@ export class Net {
         this.proto = p;
       }).catch(() => {});
     }
-    this.connect();
   }
 
-  /** Leave the server and take the remote cars away (back to the garage). */
-  close() {
-    this.closed = true;
-    this.onChange = () => {};
-    this.ws?.close();
-    this.ws = null;
-    this.connected = false;
-    for (const id of [...this.remotes.keys()]) this.remove(id, false);
-  }
+  get count() { return this.remotes.size; }
 
-  /** HUD text: connection state and player count (us included). */
-  get status() {
-    return this.connected ? `online · ${this.remotes.size + 1} player${this.remotes.size ? 's' : ''}` : 'offline';
+  /** Our pose to send now (null: nothing new). pos/quat = drawn body pose. */
+  outgoing(now: number, pos: THREE.Vector3, quat: THREE.Quaternion): Pose | null {
+    if (now - this.lastSend < 1000 / SEND_HZ) return null;
+    const moved = pos.distanceTo(this.sentPos) > MOVED_M || quat.angleTo(this.sentQuat) > TURNED;
+    if (!moved && now - this.lastSend < HEARTBEAT_MS) return null;
+    this.sentPos.copy(pos);
+    this.sentQuat.copy(quat);
+    this.lastSend = now;
+    const r3 = (v: number) => Math.round(v * 1000) / 1000, r4 = (v: number) => Math.round(v * 10000) / 10000;
+    return { x: r3(pos.x), y: r3(pos.y), z: r3(pos.z), qx: r4(quat.x), qy: r4(quat.y), qz: r4(quat.z), qw: r4(quat.w) };
   }
+  /** Send our pose at the next update (after a respawn). */
+  kick() { this.sentPos.set(Infinity, 0, 0); this.lastSend = 0; }
 
-  private connect() {
-    const ws = new WebSocket(this.url);
-    this.ws = ws;
-    ws.onopen = () => { this.retry = 1000; };
-    ws.onmessage = (e) => {
-      let m: Record<string, unknown>;
-      try { m = JSON.parse(e.data as string); } catch { return; }
-      if (!m || typeof m !== 'object') return;
-      if (m.type === 'welcome' && typeof m.id === 'number') {
-        this.id = m.id;
-        this.connected = true;
-        this.sentPos.set(Infinity, 0, 0);   // send our pose right away
-        for (const p of Array.isArray(m.players) ? m.players : []) this.receive(p);
-        this.onChange();
-      } else if (m.type === 'state') this.receive(m);
-      else if (m.type === 'leave' && typeof m.id === 'number') this.remove(m.id);
-    };
-    ws.onclose = () => {
-      const was = this.connected;
-      this.connected = false;
-      this.ws = null;
-      for (const id of [...this.remotes.keys()]) this.remove(id, false);
-      if (was) this.onChange();
-      if (this.closed) return;
-      setTimeout(() => this.connect(), this.retry);
-      this.retry = Math.min(10000, this.retry * 2);
-    };
-  }
-
-  private receive(m: Record<string, unknown>) {
-    if (this.closed || typeof m.id !== 'number' || m.id === this.id || !finite(m, 'x', 'y', 'z', 'qx', 'qy', 'qz', 'qw')) return;
-    const s = m as unknown as Pose & { id: number; c?: number };
-    let r = this.remotes.get(s.id);
+  receive(id: string, s: Pose, paint?: number) {
+    let r = this.remotes.get(id);
     if (!r) {
-      r = { root: this.makeCar(s.id, Number.isInteger(s.c) ? s.c : undefined), frames: [], paint: s.c };
-      this.remotes.set(s.id, r);
+      r = { root: this.makeCar(id, Number.isInteger(paint) ? paint : undefined), frames: [], paint, tag: this.makeTag(id) };
+      this.remotes.set(id, r);
       this.scene.add(r.root);
-      this.onChange();
     }
     const now = performance.now();
     const f: Frame = { t: now, p: new THREE.Vector3(s.x, s.y, s.z), q: new THREE.Quaternion(s.qx, s.qy, s.qz, s.qw).normalize() };
@@ -125,7 +79,7 @@ export class Net {
     if (r.frames.length > 8) r.frames.shift();
   }
 
-  private remove(id: number, notify = true) {
+  remove(id: string) {
     const r = this.remotes.get(id);
     if (!r) return;
     r.root.removeFromParent();
@@ -133,26 +87,43 @@ export class Net {
       const m = o as THREE.Mesh;
       if (m.isMesh && m.userData.netPaint) (m.material as THREE.Material).dispose();
     });
+    r.tag?.remove();
     this.remotes.delete(id);
-    if (notify) this.onChange();
   }
+
+  clear() { for (const id of [...this.remotes.keys()]) this.remove(id); }
 
   /** Put a tinted car at our car (true) for the startup shader compile, then take it away (false). */
   warmup(on: boolean) {
     if (on) {
-      this.remotes.set(-1, { root: this.makeCar(-1), frames: [] });
-      const r = this.remotes.get(-1)!.root;
-      r.position.copy(this.visual.root.position);
-      this.scene.add(r);
-    } else this.remove(-1, false);
+      const r: Remote = { root: this.makeCar('warm'), frames: [], tag: null };
+      this.remotes.set('warm', r);
+      r.root.position.copy(this.visual.root.position);
+      this.scene.add(r.root);
+    } else this.remove('warm');
+  }
+
+  private makeTag(id: string) {
+    if (!this.tags) return null;
+    const el = document.createElement('div');
+    el.className = 'tag';
+    el.textContent = this.names.get(id) ?? 'Driver';
+    this.tags.append(el);
+    return el;
+  }
+  /** Names changed (lobby update). */
+  refreshTags() {
+    for (const [id, r] of this.remotes) if (r.tag) r.tag.textContent = this.names.get(id) ?? 'Driver';
   }
 
   /** A copy of the loaded car with its own paint colour (geometry and other materials shared). */
-  private makeCar(id: number, rgb?: number) {
+  private makeCar(id: string, rgb?: number) {
     const root = new THREE.Group();
     root.name = `player_${id}`;
     const model = this.proto.clone(true);
-    const paint = rgb !== undefined && rgb >= 0 && rgb <= 0xffffff ? new THREE.Color(rgb) : new THREE.Color().setHSL(((id * 0.618034) % 1), 0.75, 0.45, THREE.SRGBColorSpace);
+    let h = 0;
+    for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    const paint = rgb !== undefined && rgb >= 0 && rgb <= 0xffffff ? new THREE.Color(rgb) : new THREE.Color().setHSL((h % 1000) / 1000, 0.75, 0.45, THREE.SRGBColorSpace);
     // own clone of the clear-coat paint in that colour (setupCarMaterials), flagged for dispose()
     const paintMat = setupCarMaterials(model, this.visual.cfg, paint, false);
     model.traverse((o) => {
@@ -163,21 +134,10 @@ export class Net {
     return root;
   }
 
-  /** Per frame: maybe send our pose (pos/quat = drawn body pose), move the remote cars. */
-  update(now: number, pos: THREE.Vector3, quat: THREE.Quaternion) {
-    if (this.connected && this.ws?.readyState === WebSocket.OPEN && now - this.lastSend >= 1000 / SEND_HZ) {
-      const moved = pos.distanceTo(this.sentPos) > MOVED_M || quat.angleTo(this.sentQuat) > TURNED;
-      if (moved || now - this.lastSend >= HEARTBEAT_MS) {
-        const r3 = (v: number) => Math.round(v * 1000) / 1000, r4 = (v: number) => Math.round(v * 10000) / 10000;
-        this.ws.send(JSON.stringify({
-          type: 'state', ...(this.paint >= 0 ? { c: this.paint } : {}), x: r3(pos.x), y: r3(pos.y), z: r3(pos.z), qx: r4(quat.x), qy: r4(quat.y), qz: r4(quat.z), qw: r4(quat.w),
-        }));
-        this.sentPos.copy(pos);
-        this.sentQuat.copy(quat);
-        this.lastSend = now;
-      }
-    }
+  /** Per frame: move the remote cars and their name tags. */
+  update(now: number, camera: THREE.Camera) {
     const t = now - DELAY_MS;
+    const w = innerWidth, h = innerHeight;
     for (const r of this.remotes.values()) {
       const fr = r.frames, n = fr.length;
       if (!n) continue;
@@ -196,21 +156,13 @@ export class Net {
         if (k <= 1) root.quaternion.slerpQuaternions(a.q, b.q, k);
         else root.quaternion.copy(b.q);
       }
+      if (r.tag) {
+        const d = root.position.distanceTo(camera.position);
+        this.v.copy(root.position).setY(root.position.y + 1.6).project(camera);
+        const show = d < TAG_RANGE && this.v.z < 1 && Math.abs(this.v.x) < 1.1 && Math.abs(this.v.y) < 1.1;
+        r.tag.style.display = show ? '' : 'none';
+        if (show) r.tag.style.transform = `translate(${((this.v.x + 1) / 2) * w}px, ${((1 - this.v.y) / 2) * h}px) translate(-50%, -100%)`;
+      }
     }
   }
-}
-
-/** Open the server briefly: resolves with the number of players that could be seen, or null if unreachable. */
-export function probeServer(url: string, timeoutMs = 4000): Promise<{ players: number } | null> {
-  return new Promise((resolve) => {
-    let ws: WebSocket;
-    try { ws = new WebSocket(url); } catch { resolve(null); return; }
-    const done = (v: { players: number } | null) => { clearTimeout(t); ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null; try { ws.close(); } catch { /* closed */ } resolve(v); };
-    const t = setTimeout(() => done(null), timeoutMs);
-    ws.onmessage = (e) => {
-      try { const m = JSON.parse(e.data as string); if (m?.type === 'welcome') done({ players: Array.isArray(m.players) ? m.players.length : 0 }); } catch { /* ignore */ }
-    };
-    ws.onerror = () => done(null);
-    ws.onclose = () => done(null);
-  });
 }

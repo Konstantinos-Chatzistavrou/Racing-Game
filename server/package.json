@@ -1,15 +1,17 @@
 {
-  "name": "racing-sim-server",
+  "name": "opengrid-matchmaking",
   "private": true,
   "type": "module",
-  "description": "Minimal multiplayer relay for the web build: players' car poses over WebSocket",
+  "description": "Optional self-hosted PeerJS matchmaking for OpenGrid parties (the game defaults to the public PeerJS broker)",
   "scripts": {
     "start": "node server.js",
     "test": "node test.mjs"
   },
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "express": "^5.1.0",
-    "ws": "^8.18.3"
+    "peer": "^1.0.2"
   }
 }

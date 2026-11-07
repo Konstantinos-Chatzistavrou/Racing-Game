@@ -1,6 +1,6 @@
 // Drives the game in the system Chrome with WebGPU enabled (Linux needs the flags) through the
 // DevTools protocol: load, idle, full throttle, brake. Prints telemetry + fps, saves screenshots.
-// Usage: node tools/drive.mjs [url] [outdir] [straight|crash|mobile|bench|profile|night|menu|online]   (CDP_PORT=9334 to change the DevTools port)
+// Usage: node tools/drive.mjs [url] [outdir] [straight|crash|mobile|bench|profile|night|menu|race6|follow]   (parties: tools/party_test.mjs, tools/party_game_test.mjs)   (CDP_PORT=9334 to change the DevTools port)
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -96,30 +96,65 @@ try {
     const a = r.slice(5).sort((x, y) => x - y), q = (p) => a[Math.min(a.length - 1, Math.floor(p * a.length))].toFixed(1);
     console.log(`bench median ${q(0.5)} ms  p95 ${q(0.95)}  p99 ${q(0.99)}  max ${a[a.length - 1].toFixed(1)}  >40ms: ${a.filter((x) => x > 40).length}/${a.length}  | ${(await evaluate(info)).perf}`);
   }
-  if (scenario === 'menu') {
-    // Front end walk-through (run with ?menu=1): title (graphics tuning), garage (car, paint, tuning, mode), race start, pause, back.
+  if (scenario === 'menu' || scenario === 'race6') {
+    // Front end walk-through (run with ?menu=1): title -> Garage (car, paint, upgrades) -> Continue -> game modes -> race (6 cars),
+    // pause, quit to the main menu, Play -> modes -> Multiplayer lobby. race6: the race only, with the AI field reported over time.
     const click = (q) => evaluate(`(() => { const e = document.querySelector('${q}'); if (!e) return 'MISSING ${q}'; e.click(); return 'ok'; })()`);
     const st = () => evaluate(`JSON.stringify({ state: window.__game.state, tuning: window.__game.menu().tuning, screen: window.__game.menu().screen, kmh: Math.round(window.__game.car.out[102] * 3.6) })`);
+    const field = () => evaluate(`JSON.stringify({ ai: window.__game.ai.cars.map((c) => c.name.split(' ')[0] + ':' + Math.round(c.v * 3.6) + 'kmh@' + Math.round(c.s) + ' lat ' + c.lat.toFixed(1)),
+      board: [...document.querySelectorAll('#board .b')].map((e) => e.textContent), pos: document.getElementById('lappos')?.textContent })`);
     for (let i = 0; i < 90 && (await evaluate(`window.__game.menu().tuning`)); i++) await sleep(500);
     console.log('title ', await st(), await evaluate(`document.querySelector('.note')?.textContent`));
     await shot('m1_title.png');
-    await click('[data-act=start]'); await sleep(2500); await shot('m2_garage.png');
-    console.log('fullscreen', await evaluate(`JSON.stringify({ fs: !!document.fullscreenElement, inner: [innerWidth, innerHeight], extra: window.__game.menu && document.getElementById('perf')?.textContent })`));
-    await click(`[data-act=car][data-v=${process.env.MENU_CAR ?? 'vela_gtr'}]`); await sleep(500);
-    await click('[data-act=paint][data-v="#1d4ed8"]'); await click('[data-act=finish][data-v=metallic]');
-    if (!process.env.NOMODS) { await click('[data-act=mod][data-k=engine][data-v="2"]'); await click('[data-act=mod][data-k=tyres][data-v="1"]'); }
-    await sleep(2500); await shot('m3_garage_gtr.png');
-    await click('[data-act=mode][data-v=race]'); await click('[data-act=laps][data-v="1"]'); await sleep(800); await shot('m4_garage_race.png');
-    await click('[data-act=go]'); await sleep(1500); console.log('count ', await st()); await shot('m5_countdown.png');
+    if (scenario === 'menu') {
+      console.log('garage', await click('[data-act=garage-open]')); await sleep(2500); await shot('m2_garage.png');
+      console.log('no mode picker in garage:', await evaluate(`!document.querySelector('[data-act=mode]') && !document.querySelector('#server')`));
+      await click(`[data-act=car][data-v=${process.env.MENU_CAR ?? 'vela_gtr'}]`); await sleep(500);
+      await click('[data-act=paint][data-v="#1d4ed8"]'); await click('[data-act=finish][data-v=metallic]');
+      if (!process.env.NOMODS) { await click('[data-act=mod][data-k=engine][data-v="2"]'); await click('[data-act=mod][data-k=tyres][data-v="1"]'); }
+      await sleep(2500); await shot('m3_garage_gtr.png');
+      console.log('continue', await click('[data-act=play]')); await sleep(800); console.log('modes ', await st()); await shot('m4_modes.png');
+    } else { console.log('play', await click('[data-act=play]')); await sleep(800); }
+    await click('[data-act=laps][data-v="1"]'); await sleep(200);
+    await click('[data-act=start-race]'); await sleep(1500); console.log('count ', await st()); await shot('m5_countdown.png');
+    console.log('grid  ', await field());
     await sleep(3500); console.log('race  ', await st());
     await evaluate(`(window.__game.input.hold = false, 1)`);
-    await sleep(2500); await shot('m6_race.png');
+    for (let i = 0; i < (scenario === 'race6' ? 6 : 1); i++) {
+      await sleep(scenario === 'race6' ? 5000 : 2500);
+      console.log(`t+${(i + 1) * 5}s`, await field());
+      await shot(`m6_race_${i}.png`);
+    }
     await evaluate(`(window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape' })), 1)`); await sleep(600);
-    if (process.env.DBG) console.log('dbg race ', await evaluate(fs.readFileSync(process.env.DBG, 'utf8')));
     console.log('pause ', await st()); await shot('m7_pause.png');
-    await click('[data-act=garage]'); await sleep(1500); console.log('back  ', await st()); await shot('m8_garage_again.png');
-    if (process.env.DBG) console.log('dbg back ', await evaluate(fs.readFileSync(process.env.DBG, 'utf8')));
-    await click('[data-act=mode][data-v=online]'); await sleep(500); await shot('m9_online.png');
+    await click('[data-act=quit]'); await sleep(1500); console.log('quit  ', await st()); await shot('m8_title_again.png');
+    if (scenario === 'menu') {
+      await click('[data-act=play]'); await sleep(500); await click('[data-act=lobby]'); await sleep(500); await shot('m9_lobby.png');
+      console.log('lobby ', await st());
+      await click('[data-act=modes]'); await sleep(300); await click('[data-act=start-free]'); await sleep(4000);
+      console.log('free roam (expect no rivals, no board):', await evaluate(`JSON.stringify({ state: window.__game.state, ai: window.__game.ai.mode, board: !document.getElementById('board').hidden })`));
+    }
+  }
+  if (scenario === 'follow') {
+    // Ride along behind a rival (FOLLOW=<index>, default 0) for a race: the player car is placed 13 m behind it every frame,
+    // so the camera and the city streaming follow the AI line through the corners. Screenshots every 2.5 s.
+    const click = (q) => evaluate(`(() => { const e = document.querySelector('${q}'); if (!e) return 'MISSING ${q}'; e.click(); return 'ok'; })()`);
+    for (let i = 0; i < 90 && (await evaluate(`window.__game.menu().tuning`)); i++) await sleep(500);
+    await click('[data-act=play]'); await sleep(500); await click('[data-act=laps][data-v="1"]'); await click('[data-act=start-race]');
+    await sleep(5500);
+    await evaluate(`(() => { const g = window.__game, c = g.ai.cars[${Number(process.env.FOLLOW ?? 0)}];
+      g.car.body.setEnabled(false);   // no physics: the body is just a camera anchor riding behind the rival
+      const step = () => { if (g.state !== 'race') return; const f = c.pos.clone().set(0, 0, 1).applyQuaternion(c.quat); const p = c.pos.clone().addScaledVector(f, -13); p.y += 0.55;
+        g.car.body.setTranslation(p, true); g.car.body.setRotation(c.quat, true); requestAnimationFrame(step); };
+      requestAnimationFrame(step); return 1; })()`);
+    for (let i = 0; i < Number(process.env.SHOTS ?? 16); i++) {
+      await sleep(2500);
+      console.log(`t+${((i + 1) * 2.5).toFixed(1)}s`, await evaluate(`JSON.stringify(window.__game.ai.cars.map((c) => Math.round(c.v * 3.6) + '@' + Math.round(c.s)))`),
+        await evaluate(`(() => { const g = window.__game, c = g.ai.cars[${Number(process.env.FOLLOW ?? 0)}], t = g.car.body.translation();
+          return JSON.stringify({ aiY: +c.pos.y.toFixed(2), rootY: +c.root.position.y.toFixed(2), groundTall: g.ai.ground(c.pos.x, c.pos.z, c.pos.y + 50, 100)?.toFixed(2), playerY: +t.y.toFixed(2),
+            groundAtPlayer: g.ai.ground(t.x, t.z, t.y + 50, 100)?.toFixed(2) }); })()`));
+      await shot(`f_${String(i).padStart(2, '0')}.png`);
+    }
   }
   if (scenario === 'highspeed') {
     // Drive at high speed (full throttle + steering wiggle), then Esc -> Back to garage: do the wheels/lights survive? (MENU_CAR=<id>)
@@ -162,21 +197,6 @@ try {
       requestAnimationFrame(f); })`);
     console.log('wheels', r);
     await key('keyUp', 'KeyW', 'w');
-  }
-  if (scenario === 'online') {
-    // Online path: needs the relay running (cd server && npm start). Also draws the results screen.
-    const click = (q) => evaluate(`(() => { const e = document.querySelector('${q}'); if (!e) return 'MISSING ${q}'; e.click(); return 'ok'; })()`);
-    for (let i = 0; i < 90 && (await evaluate(`window.__game.menu().tuning`)); i++) await sleep(500);
-    await click('[data-act=start]'); await sleep(800);
-    await click('[data-act=paint][data-v="#1d9d55"]'); await click('[data-act=mode][data-v=online]'); await sleep(300);
-    await click('[data-act=probe]'); await sleep(1500);
-    console.log('probe ', await evaluate(`document.getElementById('servernote').textContent`));
-    await shot('o1_online_probe.png');
-    await click('[data-act=go]'); await sleep(4000);
-    console.log('online', await evaluate(`JSON.stringify({ state: window.__game.state, perf: document.getElementById('perf').textContent })`));
-    await shot('o2_online_drive.png');
-    await evaluate(`(window.__game.menu().showResults({ total: 187.234, best: 61.5, laps: [64.2, 61.5, 61.534], laps_target: 3 }), 1)`); await sleep(500);
-    await shot('o3_results.png');
   }
   if (scenario === 'wheels') {
     // Garage views from the front, rear and side (run with ?menu=1): wheel / fender fit.

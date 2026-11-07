@@ -1,0 +1,22 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>party harness</title>
+<!-- Test page for src/party.ts (no game): window.P = the Party class. Driven by tools/party_test.mjs through the Vite dev server. -->
+<script type="module">
+  import { Party } from '/src/party.ts';
+  window.P = Party;
+  window.log = [];
+  window.hooks = (p, tag) => {
+    p.hooks = {
+      changed: () => log.push([tag, 'changed', p.members.length, p.phase, p.mode, p.laps]),
+      start: (m, l) => { log.push([tag, 'start', m, l]); setTimeout(() => p.ready(), 300); },
+      go: () => log.push([tag, 'go']),
+      lobby: () => log.push([tag, 'lobby']),
+      pose: (id, ps, c) => log.push([tag, 'pose', ps.x, c]),
+      progress: (id, g) => log.push([tag, 'prog', g.d, g.fin]),
+      left: (id) => log.push([tag, 'left']),
+      closed: (r) => log.push([tag, 'closed', r]),
+    };
+  };
+  window.ready = true;
+</script>

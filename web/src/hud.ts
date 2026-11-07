@@ -155,5 +155,21 @@ export class Hud {
     if (this.texts.get(id) !== v) { this.texts.set(id, v); $(id).textContent = v; }
   }
 
-  resetLaps() { this.lapsSeen = 0; this.toastTimer = 0; $('toast').classList.remove('show'); }
+  resetLaps() { this.lapsSeen = 0; this.toastTimer = 0; $('toast').classList.remove('show'); this.board(null); }
+
+  private boardHtml = '';
+  /**
+   * Race position and the running order (null hides both: free roam). rows: names in order, with the
+   * gap to the car in front ('' for the leader), `you` marks the player.
+   */
+  board(rows: { name: string; gap: string; you: boolean }[] | null) {
+    const pos = $('lappos-row') as HTMLElement, el = $('board') as HTMLElement;
+    pos.hidden = el.hidden = !rows;
+    if (!rows) { this.boardHtml = ''; return; }
+    const me = rows.findIndex((r) => r.you) + 1;
+    this.text('lappos', `${me} / ${rows.length}`);
+    const esc = (t: string) => t.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+    const html = rows.map((r, i) => `<div class="b ${r.you ? 'you' : ''}"><i>${i + 1}</i><span>${esc(r.name)}</span><em>${r.gap}</em></div>`).join('');
+    if (html !== this.boardHtml) el.innerHTML = this.boardHtml = html;
+  }
 }

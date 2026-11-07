@@ -32,7 +32,7 @@ export class TouchControls {
         <button class="small" data-c="down">▼</button>
       </div>
       <div class="top">
-        <button class="small" data-c="garage" title="Back to Garage">← GARAGE</button>
+        <button class="small" data-c="garage" title="Back to the menu">← MENU</button>
         <button class="small" data-c="reset" title="Reset">⟲</button>
         <button class="small" data-c="camera" title="Camera">CAM</button>
         <button class="small" data-c="gearbox" title="Gearbox">AUTO</button>
