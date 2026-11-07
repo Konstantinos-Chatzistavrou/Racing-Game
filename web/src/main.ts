@@ -567,7 +567,6 @@ async function main() {
     core = new CoreCar(coreJson());
     car = new CarBody(pw, core, shape, visual.cg);
     rig.setTarget(car.body, core.info.redline);
-    Object.assign(g.__game, { core, car });
   };
 
   /** The garage car's own model (if its catalog entry has one): swapped in, physics + damage rebuilt. Serialised. */
@@ -601,7 +600,7 @@ async function main() {
       post.carPos.copy(pos);
       probe?.captureAll(pos, visual.root);
     }
-    Object.assign(g.__game, { visual, damage, core, car });
+    Object.assign(g.__game, { visual, damage });   // `car` / `core` are live getters on __game
   }).catch((e) => console.error('car swap failed', e)));
 
   async function startSession() {
