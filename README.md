@@ -103,10 +103,14 @@ Handling is matched to a Corvette C7 Z51: 60-0 mph 31.7 m (real 31.7-32.6 m), sk
 
 ## Licence
 
-The game (code, data and our own assets) is free software under the **GNU Affero General Public License v3.0 or later**
-(`LICENSE`, SPDX `AGPL-3.0-or-later`). The Affero licence covers the web: anyone who plays a modified version over a
-network must be offered its source (the title screen links to it). Third-party material keeps its own licence and is
-listed in `CREDITS.md`: car models CC BY 4.0, map data ODbL (OpenStreetMap), the fitted tyre data BSD-3-Clause
-(Project Chrono). Code from GPL-3.0 / LGPL-3.0 / Apache-2.0 / MIT / BSD projects can be included; GPL-2.0-only code can't
-(not compatible with v3).
+Two licences (details per folder in `LICENSING.md`):
 
+- **Code** (C++ core, TypeScript, shaders, scripts, server): **GNU Affero General Public License v3.0 or later**
+  (`LICENSE`, SPDX `AGPL-3.0-or-later`). The Affero licence covers the web: anyone who plays a modified version over a
+  network must be offered its source (the title screen links to it). Code from GPL-3.0 / LGPL-3.0 / Apache-2.0 / MIT /
+  BSD projects can be included; GPL-2.0-only code can't (not compatible with v3).
+- **Everything else we made** (3D models, textures, car and track data, docs): **Creative Commons
+  Attribution-NonCommercial 4.0** (`LICENSES/CC-BY-NC-4.0.txt`, SPDX `CC-BY-NC-4.0`): free to share and adapt with
+  credit, no commercial use.
+- **Third-party material** keeps its own licence, listed in `CREDITS.md`: map data ODbL (OpenStreetMap), the fitted tyre
+  data BSD-3-Clause (Project Chrono), original car models CC BY 4.0, city models and textures CC0.

@@ -183,7 +183,7 @@ export class Menu {
           <button class="small" data-act="bench" ${dis}>⏱ Benchmark</button>
           <button class="small" data-act="soak" ${dis}>🔥 Soak Test</button>
         </div>
-        <a class="source-link dim" href="https://github.com/Konstantinos-Chatzistavrou/Racing-Game" target="_blank" rel="noopener">Free software · AGPL-3.0 · source code</a>
+        <a class="source-link dim" href="https://github.com/Konstantinos-Chatzistavrou/Racing-Game" target="_blank" rel="noopener">Source code · code AGPL-3.0 · assets CC BY-NC 4.0</a>
       </div>`;
   }
 
