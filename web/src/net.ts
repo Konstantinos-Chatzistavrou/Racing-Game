@@ -15,6 +15,7 @@ import { setupCarMaterials, type CarVisual } from './scene/car';
 import { assetUrl, loadGLTF } from './scene/loaders';
 import { GROUP_CAR, carHull, type CarShape, type PhysicsWorld } from './physics/world';
 import type { Pose } from './party';
+import { drawEarly } from './scene/nyc/breach';
 
 const SEND_HZ = 20;
 const HEARTBEAT_MS = 1000;      // resend an unchanged pose this often (keeps the newcomer view fresh)
@@ -202,6 +203,7 @@ export class RemoteCars {
       if (m.isMesh && paintMat && (Array.isArray(m.material) ? m.material.includes(paintMat) : m.material === paintMat)) m.userData.netPaint = true;
     });
     root.add(model);
+    drawEarly(model);
     return root;
   }
 

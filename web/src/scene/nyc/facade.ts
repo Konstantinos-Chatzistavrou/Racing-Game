@@ -2,9 +2,7 @@
 // - True 3D Ray-Box Interior Mapping (PS5 Spider-Man style): exact ray-box intersection in wall-tangent space
 //   producing real receding 3D ceilings, floors, side walls, back walls, mid-room furniture depth, and
 //   world-space 3D exterior glass reflections with per-pane thermal warp.
-// - Destructible Ground-Floor Walls: supports punching jagged 3D holes through the bottom tier (0..4.0 m)
-//   of any building at runtime via `recordWallBreach(wx, wz, radius)` so the car can physically smash through
-//   the outer wall and enter or get wedged inside the ground floor.
+// (Wall breaches are geometry + a depth portal, breach.ts: the facade shader never changes.)
 import * as THREE from 'three/webgpu';
 import {
   attribute, uv, positionView, positionWorld, cameraPosition, normalWorld, frontFacing, uniform,
@@ -18,29 +16,6 @@ const WINDOW_EM = uniform(1.35);
 const SHOP_EM = uniform(1.25);
 const SIGN_EM = uniform(3.6);
 
-// Ring buffer of 8 active ground-floor wall breaches: vec4(worldX, worldZ, radius, seed)
-const BREACH_SLOTS = 8;
-const breachUniforms = Array.from({ length: BREACH_SLOTS }, () => uniform(new THREE.Vector4(1e6, 1e6, 0, 0)));
-let breachCursor = 0;
-
-/** Punch a jagged 3D hole in the ground-floor wall of any building near Three.js world (wx, wz). */
-export function recordWallBreach(wx: number, wz: number, radius = 2.95) {
-  for (let i = 0; i < BREACH_SLOTS; i++) {
-    const v = breachUniforms[i].value;
-    if (Math.hypot(v.x - wx, v.y - wz) < 0.9) {
-      v.z = Math.max(v.z, radius);
-      return;
-    }
-  }
-  const u = breachUniforms[breachCursor % BREACH_SLOTS];
-  breachCursor++;
-  u.value.set(wx, wz, radius, (breachCursor * 0.6180339) % 1);
-}
-
-export function clearWallBreaches() {
-  for (const u of breachUniforms) u.value.set(1e6, 1e6, 0, 0);
-  breachCursor = 0;
-}
 
 const v3 = (r: number, g: number, b: number) => vec3(r, g, b);
 const hash11 = (p: any) => fract(sin(p.mul(127.1)).mul(43758.5453));
@@ -91,7 +66,7 @@ function rayBoxRoom(uWin: any, vWin: any, rayX: any, rayY: any, rayZ: any, depth
   return { hitX, hitY, hitZ, midX, midY, inMid, onCeil, onFloor, onSide, onBack, roomAO };
 }
 
-function facadeGraph(breachable = false) {
+function facadeGraph() {
   const U = uv();
   const u = U.x, v = U.y;
   const col = attribute('color', 'vec4');
@@ -333,42 +308,15 @@ function facadeGraph(breachable = false) {
   const glassMask = mix(win, shopGlass.mul(float(1).sub(shut)), gAA);
   const refl = envReflCol.mul(fres).mul(mix(0.35, 1.15, k3)).mul(glassMask);
 
-  // ---- Ground-floor Destructible Wall Breaches (only compiled into `facadeBreached` for tiles with an active crash) ------------------
-  let breachHole: any = float(0.0);
-  let breachRim: any = float(0.0);
-  let jag: any = float(0.0);
-  if (breachable) {
-    // Stepped brick-course & concrete block fracture teeth (instead of smooth wavy sine fingers)
-    const fRow = floor(v.mul(9.5));
-    const fCol = floor(u.mul(4.5).add(mod(fRow, 2.0).mul(0.5)));
-    const brickStep = hash12(vec2(fRow, fCol)).sub(0.5).mul(0.42);
-    const fineChip = hash12(vec2(floor(u.mul(22.0)), floor(v.mul(24.0)))).sub(0.5).mul(0.18);
-    jag = brickStep.add(fineChip);
-    const inBreachHeight = step(-0.5, v).mul(step(v, 3.82));
-    const archProfile = float(1.0).sub(smoothstep(2.35, 3.82, v));
-    for (let i = 0; i < BREACH_SLOTS; i++) {
-      const B = breachUniforms[i];
-      const dXZ = length(positionWorld.xz.sub(B.xy)).add(jag);
-      const rEff = B.z.mul(archProfile);
-      const holeI = step(dXZ, rEff).mul(step(0.1, B.z)).mul(inBreachHeight);
-      const rimI = step(dXZ, rEff.add(0.42)).mul(float(1).sub(holeI)).mul(step(0.1, B.z)).mul(inBreachHeight);
-      breachHole = max(breachHole, holeI);
-      breachRim = max(breachRim, rimI);
-    }
-  }
-
   // ---- Compose + Physical Normal Map Relief ------------------------------------------------------------------------------------------
   const glassKind = mix(v3(0.012, 0.016, 0.024), tint.mul(0.85), k3);
   const stoneMix = clamp(trim, 0, 1);
   const upperWall = mix(wallCol, stoneCol, stoneMix);
   const upperAlb = mix(upperWall, glassKind, win.mul(float(1).sub(rail.mul(0.7)).sub(munt.mul(0.7))));
-  const brokenEdgeCol = breachable
-    ? mix(v3(0.075, 0.068, 0.064), tint.mul(0.42), isBrick).mul(fract(jag.mul(9.0)).mul(0.45).add(0.55))
-    : v3(0.08, 0.07, 0.06);
-  const albedo = breachable ? mix(mix(upperAlb, gAlb, gAA), brokenEdgeCol, breachRim) : mix(upperAlb, gAlb, gAA);
-  const aoG = mix(0.62, 1.0, smoothstep(0.0, 5.0, v)).mul(breachable ? float(1).sub(breachRim.mul(0.65)) : float(1));
+  const albedo = mix(upperAlb, gAlb, gAA);
+  const aoG = mix(0.62, 1.0, smoothstep(0.0, 5.0, v));
   const emUpper = emWin.mul(float(1).sub(rail.mul(0.8)).sub(munt.mul(0.8)));
-  const winMask = mix(win, clamp(shopGlass.add(sign), 0, 1), gAA).mul(breachable ? float(1).sub(breachRim) : float(1));
+  const winMask = mix(win, clamp(shopGlass.add(sign), 0, 1), gAA);
   const night = facadeNight;
   const glow = upperWall.mul(float(1).sub(smoothstep(0.0, 28.0, v)).mul(0.14).add(0.055)).mul(float(1).sub(winMask)).mul(float(1).sub(k3.mul(0.5)));
   const isLandmark = step(4.5, kind);
@@ -376,37 +324,18 @@ function facadeGraph(breachable = false) {
   const crownBand = smoothstep(0.68, 0.96, topFrac).mul(isLandmark.add(step(120.0, v).mul(0.35)));
   const crownCol = mix(v3(1.0, 0.76, 0.44), v3(0.55, 0.78, 1.0), step(0.55, fract(seed.mul(19.3))));
   const crownGlow = crownCol.mul(crownBand).mul(float(1).sub(win.mul(0.5))).mul(0.38);
-  const extEmissive = mix(emUpper, gEm, gAA).mul(breachable ? float(1).sub(breachRim) : float(1)).mul(night)
+  const extEmissive = mix(emUpper, gEm, gAA).mul(night)
     .add(glow.mul(night)).add(crownGlow.mul(night)).add(refl.mul(night.mul(0.85).add(0.25)));
   const extColor = albedo.mul(ao.mul(aoG));
   const extRough = mix(mix(0.88, 0.68, float(1).sub(isBrick)), mix(0.09, 0.035, k3), winMask);
   const extMetal = mix(float(0.0), mix(0.22, 0.45, k3), winMask);
 
   const hUpper = stoneMix.mul(0.35).sub(joint.mul(0.24)).sub(win.mul(0.45)).add(rail.add(munt).mul(0.22)).add(paneWarp.mul(win));
-  const hGround = cornice.mul(0.38).sub(shopGlass.mul(0.42)).add(shut.mul(ribs).mul(0.25)).add(sign.mul(0.18))
-    .sub(breachable ? breachRim.mul(0.65) : float(0));
+  const hGround = cornice.mul(0.38).sub(shopGlass.mul(0.42)).add(shut.mul(ribs).mul(0.25)).add(sign.mul(0.18));
   const heightField = mix(hUpper, hGround, gAA);
   const normal = bumpMap(heightField, dfade.mul(0.52));
 
-  if (!breachable) {
-    return { color: extColor, emissive: extEmissive, rough: extRough, metal: extMetal, normal, opacity: float(1.0) };
-  }
-
-  // On breached buildings, back-facing wall triangles (seen through the jagged ground-floor hole) render as
-  // dark structural concrete/brick interior walls with warm ceiling-strip bounce illumination instead of exterior windows
-  const isFront = float(frontFacing);
-  const intWallVar = float(1.0).sub(joint.mul(0.28));
-  const intColor = v3(0.055, 0.050, 0.046).mul(intWallVar);
-  const ceilBounce = smoothstep(2.4, 3.85, v).mul(step(v, 4.05)).mul(0.22);
-  const floorBounceInt = float(1.0).sub(smoothstep(0.0, 1.4, v)).mul(0.06);
-  const intEmissive = v3(0.95, 0.78, 0.54).mul(ceilBounce.add(floorBounceInt)).mul(night);
-
-  const color = mix(intColor, extColor, isFront);
-  const emissive = mix(intEmissive, extEmissive, isFront);
-  const rough = mix(float(0.92), extRough, isFront);
-  const metal = mix(float(0.04), extMetal, isFront);
-  const opacity = float(1.0).sub(breachHole);
-  return { color, emissive, rough, metal, normal, opacity };
+  return { color: extColor, emissive: extEmissive, rough: extRough, metal: extMetal, normal };
 }
 
 /** Fast LOD1 shader for distant `far.glb` skyscraper tiles (>380 m away where 3D room parallax has faded out). */
@@ -490,9 +419,9 @@ function farFacadeGraph() {
   return { color, emissive, rough, metal };
 }
 
-/** Standard opaque `FrontSide` facade material for unbreached near tiles (full GPU backface culling + Early-Z occlusion). */
+/** Standard opaque `FrontSide` facade material for near tiles (full GPU backface culling + Early-Z occlusion). */
 export function createFacadeMaterial(): THREE.Material {
-  const g = facadeGraph(false);
+  const g = facadeGraph();
   const m = new THREE.MeshStandardNodeMaterial();
   m.name = 'nyc-facade';
   m.colorNode = g.color;
@@ -500,26 +429,6 @@ export function createFacadeMaterial(): THREE.Material {
   m.roughnessNode = g.rough;
   m.metalnessNode = g.metal;
   m.normalNode = g.normal;
-  return m;
-}
-
-/**
- * Breach-enabled facade material swapped onto a tile when a building in that tile is crashed into:
- * discards pixels inside `breachHole` (`alphaTest = 0.5`) to cut a jagged 3D hole directly through the
- * visible building wall, and renders back-facing wall interiors as dark structural concrete/brick.
- */
-export function createBreachableFacadeMaterial(): THREE.Material {
-  const g = facadeGraph(true);
-  const m = new THREE.MeshStandardNodeMaterial();
-  m.name = 'nyc-facade-breached';
-  m.colorNode = g.color;
-  m.emissiveNode = g.emissive;
-  m.roughnessNode = g.rough;
-  m.metalnessNode = g.metal;
-  m.normalNode = g.normal;
-  m.opacityNode = g.opacity;
-  m.alphaTest = 0.5;
-  m.side = THREE.DoubleSide;
   return m;
 }
 

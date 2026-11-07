@@ -213,3 +213,23 @@ Measured (headless drive.mjs `poles`): lamp at 72 km/h -> ~59 km/h, 48 kJ; lamp 
 (~1 s for a 9.5 m lamp; fast hits throw the top back toward the car), can land on the player's car (energy 0.5 I w^2,
 ~13 kJ for a lamp onto a roof) and rest on it until it drives out. A knocked-down pole falls for the whole party.
 
+## Building walls (nyc/breach.ts)
+
+Buildings are solid boxes; nothing breaks on proximity any more. After each physics step, a car-to-building contact is
+judged by the energy along the wall normal: glazed storefront 110 kJ (~45 km/h for a 1450 kg car, buildings over 60 m and
+2/3 of mid-rise ones), brick/masonry 360 kJ (~80 km/h, buildings under 22 m and the rest). Below that the wall holds (Rapier
+stop + core damage). Above: v_n' = sqrt(vn^2 - 2E/m) * 0.6, sideways * 0.7, damage = energy lost (both measured breaches
+totalled the car). Only a 3.4 x 3.3 m hole opens: the box collider becomes upper floors + solid ground floor around a room
+(<= 7.5 x 10 m) + a front wall with the hole; the room is furnished by building type (corner shop, deli, apartment, office
+lobby) with fixed shelving / counters and light loose furniture; 12 brick/concrete chunks and two 430 kg ceiling slabs come
+down on and around the car (Rapier bodies, GROUP_RUBBLE): it ends up pinned. The room is built from the drawn facade plane
+(ray-cast once per breach: footprint boxes overhang recessed facades by up to metres).
+
+Drawing: the room (unlit, baked light), then a colour-less depth "portal" box in the hole (renderOrder -1) so the facade
+fails the depth test there; cars, furniture and rubble draw first (renderOrder -4, drawEarly). A camera-only collider in the
+hole (GROUP_CAMERA_ONLY, seen by GROUP_VIEW rays) keeps the chase camera in the room with the car. All loose pieces share one
+instanced mesh created at startup. Measured (headless drive.mjs `walls` / `wallperf`): 0 pipelines compiled on any crash
+(was 2 for the old breached facade + 4 for car parts that broke off: those now sit on DEBRIS_LAYER, which the reflection
+probe doesn't render); frame time after a breach = before (the old breached facade material was double-sided with discard
+on every facade within 28 m: median 33 -> 45 ms).
+

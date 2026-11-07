@@ -36,6 +36,9 @@ export interface DamageVisualConfig {
 }
 
 /** Instanced camera-facing sprites, simulated on the CPU (tens of particles: cheap), one draw call. */
+/** Layer for parts that broke off the car: the main camera renders it, the car's reflection probe doesn't. */
+export const DEBRIS_LAYER = 1;
+
 export class Particles {
   private pos: THREE.InstancedBufferAttribute;
   private col: THREE.InstancedBufferAttribute;
@@ -314,6 +317,9 @@ export class DamageVisuals {
     body.setAngvel({ x: (Math.random() - 0.5) * 8, y: (Math.random() - 0.5) * 8, z: (Math.random() - 0.5) * 8 }, true);
     this.scene.attach(node);   // keeps its world transform
     node.matrixAutoUpdate = false;
+    // Off the car it would be drawn by the reflection probe (which hides the car, so car materials are never compiled
+    // for its cube pass): a 150+ ms shader compile in the middle of the crash. Layer 1 is seen by the main camera only.
+    node.traverse((o) => o.layers.set(DEBRIS_LAYER));
     this.detached.set(name, { node, parent, local, body, age: 0 });
   }
 
@@ -356,6 +362,7 @@ export class DamageVisuals {
     for (const d of this.detached.values()) {
       if (d.body.isValid()) this.pw.world.removeRigidBody(d.body);
       d.parent.add(d.node);
+      d.node.traverse((o) => o.layers.set(0));
       d.node.matrix.copy(d.local);
       d.node.matrix.decompose(d.node.position, d.node.quaternion, d.node.scale);
       d.node.matrixAutoUpdate = true;

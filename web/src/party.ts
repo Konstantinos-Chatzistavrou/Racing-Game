@@ -35,6 +35,7 @@ type Msg =
   | { t: 'prog'; id?: string; g: Progress }
   | { t: 'gone'; id?: string }
   | { t: 'pole'; id?: string; x: number; y: number; vx: number; vz: number }
+  | { t: 'breach'; id?: string; b: { cx: number; cy: number; face: number; u: number; seed: number } }
   | { t: 'bye'; reason: string };
 
 export interface PartyHooks {
@@ -51,13 +52,15 @@ export interface PartyHooks {
   left(id: string): void;
   /** a player left the session (back to the lobby): take their car off the road */
   gone(id: string): void;
+  /** a player broke through a building wall (breach.ts spec) */
+  breach(spec: { cx: number; cy: number; face: number; u: number; seed: number }): void;
   /** a player knocked down the pole at (x, y) (game frame) driving at (vx, vz) */
   pole(x: number, y: number, vx: number, vz: number): void;
   /** the party is over for us (leader left, kicked, network gone) */
   closed(reason: string): void;
 }
 
-const noop: PartyHooks = { changed() {}, start() {}, go() {}, lobby() {}, pose() {}, progress() {}, left() {}, gone() {}, pole() {}, closed() {} };
+const noop: PartyHooks = { changed() {}, start() {}, go() {}, lobby() {}, pose() {}, progress() {}, left() {}, gone() {}, pole() {}, breach() {}, closed() {} };
 
 export function newCode() {
   let s = '';
@@ -280,6 +283,13 @@ export class Party {
     else this.sendHost(m);
   }
 
+  /** We broke through a wall: the hole (and the room behind it) appears for everyone. */
+  sendBreach(b: { cx: number; cy: number; face: number; u: number; seed: number }) {
+    const m: Msg = { t: 'breach', b: { cx: b.cx, cy: b.cy, face: b.face, u: b.u, seed: b.seed } };
+    if (this.isHost) this.broadcast({ ...m, id: this.selfId });
+    else this.sendHost(m);
+  }
+
   /** We knocked down a pole: it falls for everyone. */
   sendPole(x: number, y: number, vx: number, vz: number) {
     const m: Msg = { t: 'pole', x, y, vx, vz };
@@ -338,6 +348,11 @@ export class Party {
           this.broadcast({ t: 'prog', id: from, g: m.g }, from);
           this.hooks.progress(from, m.g);
           break;
+        case 'breach':
+          if (!this.conns.has(from) || !m.b || !finite(m.b as unknown as Record<string, unknown>, ['cx', 'cy', 'face', 'u', 'seed'])) return;
+          this.broadcast({ t: 'breach', id: from, b: m.b }, from);
+          this.hooks.breach(m.b);
+          break;
         case 'pole':
           if (!this.conns.has(from) || !finite(m as unknown as Record<string, unknown>, ['x', 'y', 'vx', 'vz'])) return;
           this.broadcast({ t: 'pole', id: from, x: m.x, y: m.y, vx: m.vx, vz: m.vz }, from);
@@ -368,6 +383,7 @@ export class Party {
       case 'pose': { const p = cleanPose(m.p); if (m.id && m.id !== this.selfId && p) this.hooks.pose(m.id, p, m.c); break; }
       case 'prog': if (m.id && m.id !== this.selfId && m.g) this.hooks.progress(m.id, m.g); break;
       case 'gone': if (m.id && m.id !== this.selfId) this.hooks.gone(m.id); break;
+      case 'breach': if (m.id !== this.selfId && m.b && finite(m.b as unknown as Record<string, unknown>, ['cx', 'cy', 'face', 'u', 'seed'])) this.hooks.breach(m.b); break;
       case 'pole': if (m.id !== this.selfId && finite(m as unknown as Record<string, unknown>, ['x', 'y', 'vx', 'vz'])) this.hooks.pole(m.x, m.y, m.vx, m.vz); break;
       case 'bye': this.end(m.reason); break;
     }

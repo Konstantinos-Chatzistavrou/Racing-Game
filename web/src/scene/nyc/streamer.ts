@@ -13,13 +13,8 @@ import type { PhysicsWorld } from '../../physics/world';
 import { gltfLoader } from '../loaders';
 import { createPlaceholderFacade, createPlaceholderGround, createPlaceholderRoof } from './placeholders';
 import { createGroundMaterials } from './groundMaterials';
-import {
-  createBreachableFacadeMaterial,
-  createFacadeMaterial,
-  createFarFacadeMaterial,
-  createRoofMaterial,
-  recordWallBreach,
-} from './facade';
+import { createFacadeMaterial, createFarFacadeMaterial, createRoofMaterial } from './facade';
+import { Breaches } from './breach';
 import { NycProps, type BuildingColliderBox } from './props';
 import { applyNycAtmosphere, type NycAtmosphere } from './atmosphere';
 import { generateProceduralNycTile, type ProceduralNycTileData } from './infiniteNyc';
@@ -28,7 +23,6 @@ import { generateProceduralNycTile, type ProceduralNycTileData } from './infinit
 export interface NycPropsLike {
   setTile(key: string, data: unknown): void;
   setTileBuildings?(key: string, boxes: BuildingColliderBox[] | undefined, z?: number): void;
-  addInteriorPillar?(wx: number, groundY: number, wz: number, yaw: number): void;
   removeTile(key: string): void;
   update(
     dt: number,
@@ -42,19 +36,12 @@ export interface NycPropsLike {
     maxDist?: number,
     onImpact?: (impulse: number, kind?: 'pole' | 'shop' | 'wall', wx?: number, wz?: number) => void,
   ): boolean;
-  breakNearestShop?(
-    carPos: THREE.Vector3,
-    carVel?: THREE.Vector3,
-    maxDist?: number,
-    onImpact?: (impulse: number, kind?: 'pole' | 'shop' | 'wall', wx?: number, wz?: number) => void,
-  ): boolean;
   primeLights?(): void;
   dispose(): void;
 }
 export interface NycMaterials {
   ground: Record<string, THREE.Material>;
   facade: THREE.Material;
-  facadeBreached: THREE.Material;
   facadeFar: THREE.Material;
   roof: THREE.Material;
   source: string;
@@ -70,10 +57,9 @@ export async function loadNycMaterials(): Promise<NycMaterials> {
   };
   const ground = { ...createPlaceholderGround(), ...tryMake<Record<string, THREE.Material>>(createGroundMaterials, () => ({}), 'ground') };
   const facade = tryMake(createFacadeMaterial, createPlaceholderFacade, 'facade');
-  const facadeBreached = tryMake(createBreachableFacadeMaterial, () => facade, 'facadeBreached');
   const facadeFar = tryMake(createFarFacadeMaterial, () => facade, 'facadeFar');
   const roof = tryMake(createRoofMaterial, createPlaceholderRoof, 'roof');
-  return { ground, facade, facadeBreached, facadeFar, roof, source: src.join(' ') };
+  return { ground, facade, facadeFar, roof, source: src.join(' ') };
 }
 
 async function createNycProps(scene: THREE.Scene, camera: THREE.Camera): Promise<NycPropsLike | null> {
@@ -104,7 +90,6 @@ interface Tile {
   nearGroup: THREE.Group | null; farGroup: THREE.Group | null;
   colliders: RAPIER.Collider[];
   buildingCols?: { box: BuildingColliderBox; col: RAPIER.Collider; breached: boolean }[];
-  hasBreach?: boolean;
   propsSet: boolean;
   forced: number;                  // meshes revealed but not drawn yet (tile must stay un-culled so their upload happens)
   gen: { near: number; far: number; col: number };   // bumped on every unload of that kind: stale async results are dropped
@@ -155,6 +140,40 @@ export class NycStreamer {
       receiveShadow: true, debug: false, budgetMs: 2.5, fogDensity: 0.0024, ...opts,
     };
     this.atm = applyNycAtmosphere(this.scene, this.renderer, { fogDensity: this.o.fogDensity });
+    this.breaches = new Breaches(this.scene, this.pw, {
+      building: (h) => { const e = this.buildingOf.get(h); return e && !e.bc.breached ? { key: e.t.key, box: e.bc.box } : null; },
+      find: (cx, cy) => {
+        for (const t of this.tiles.values()) for (const bc of t.buildingCols ?? [])
+          if (!bc.breached && Math.abs(bc.box.cx - cx) < 0.01 && Math.abs(bc.box.cy - cy) < 0.01) return { key: t.key, box: bc.box };
+        return null;
+      },
+      replace: (key, box, descs) => {
+        const t = this.tiles.get(key);
+        const bc = t?.buildingCols?.find((x) => x.box === box);
+        if (!t || !bc) return;
+        const surf = (this.pw as unknown as { surfaceOf: Map<number, number> }).surfaceOf;
+        surf.delete(bc.col.handle);
+        this.buildingOf.delete(bc.col.handle);
+        this.pw.world.removeCollider(bc.col, true);
+        const i = t.colliders.indexOf(bc.col);
+        if (i >= 0) t.colliders.splice(i, 1);
+        bc.breached = true;
+        for (const d of descs) { const c = this.pw.world.createCollider(d); t.colliders.push(c); surf.set(c.handle, this.o.surfaces.wall); }
+      },
+      burst: (wx, gy, wz, nx, nz, vx, vz, glass) => this.streetProps?.burst(wx, gy, wz, nx, nz, vx, vz, glass),
+      facadeDepth: (from, dir, max) => {
+        // the drawn facades of the tiles around the hole (once per breach; ~ms)
+        const rc = this.facadeRay ??= new THREE.Raycaster();
+        rc.set(from, dir); rc.near = 0; rc.far = max;
+        const meshes: THREE.Object3D[] = [];
+        for (const t of this.tiles.values()) {
+          if (!t.nearGroup || this.dist(t, from.x, from.z) > 260) continue;
+          t.nearGroup.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh && m.material === this.mats.facade) meshes.push(m); });
+        }
+        const hit = rc.intersectObjects(meshes, false)[0];
+        return hit ? hit.distance : null;
+      },
+    });
     if (this.o.debug) {
       const d = document.createElement('div');
       d.style.cssText = 'position:fixed;left:8px;top:8px;z-index:50;font:11px/1.35 monospace;color:#9fe;background:#0008;padding:6px 8px;white-space:pre;pointer-events:none';
@@ -358,7 +377,7 @@ export class NycStreamer {
           const grp = new THREE.Group();
           const meshes: THREE.Mesh[] = [];
           for (const [g, part] of [[pd.groundGroup, 'ground'], [pd.bldGroup, 'bld']] as const) {
-            this.prepare(g, part, Boolean(t.hasBreach));
+            this.prepare(g, part);
             g.traverse((o) => { if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh); });
             grp.add(g);
           }
@@ -402,7 +421,7 @@ export class NycStreamer {
         const meshes: THREE.Mesh[] = [];
         for (const [g, part] of [[gg, 'ground'], [bb, 'bld']] as const) {
           if (!g) continue;
-          this.prepare(g.scene, part, Boolean(t.hasBreach));
+          this.prepare(g.scene, part);
           g.scene.traverse((o) => { if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh); });
           grp.add(g.scene);
         }
@@ -420,13 +439,9 @@ export class NycStreamer {
   private retryLater(t: Tile, kind: string, now: number) { const f = this.failed.get(t.key + ':' + kind); return f !== undefined && now - f < 10000; }
 
   /** Material swap, static matrices, culling flags, hidden until revealed. */
-  private prepare(root: THREE.Object3D, part: Part, breached = false) {
+  private prepare(root: THREE.Object3D, part: Part) {
     root.updateMatrixWorld(true);
-    const facadeMat = part === 'far'
-      ? this.mats.facadeFar
-      : breached
-        ? this.mats.facadeBreached
-        : this.mats.facade;
+    const facadeMat = part === 'far' ? this.mats.facadeFar : this.mats.facade;
     root.traverse((o) => {
       o.matrixAutoUpdate = false;
       const m = o as THREE.Mesh;
@@ -446,17 +461,6 @@ export class NycStreamer {
       m.visible = false;
       m.geometry.computeBoundingSphere();
       if (!this.templates[part]) this.templates[part] = m.geometry;
-    });
-  }
-
-  private upgradeTileFacadeForBreach(t: Tile) {
-    if (t.hasBreach) return;
-    t.hasBreach = true;
-    t.nearGroup?.traverse((o) => {
-      const m = o as THREE.Mesh;
-      if (m.isMesh && m.material === this.mats.facade) {
-        m.material = this.mats.facadeBreached;
-      }
     });
   }
 
@@ -515,97 +519,20 @@ export class NycStreamer {
           q.setFromAxisAngle(Y, b.yaw);
           const hh = Math.max(0.1, (b.z1 - b.z0) / 2);
           const col = make(RAPIER.ColliderDesc.cuboid(b.hx, hh, b.hy).setTranslation(b.cx, (b.z0 + b.z1) / 2, -b.cy).setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }), S.wall);
-          t.buildingCols?.push({ box: b, col, breached: false });
+          const bc = { box: b, col, breached: false };
+          t.buildingCols?.push(bc);
+          this.buildingOf.set(col.handle, { t, bc });
         }
       } });
     }
-    this.queue.push({ tile: t, kind: 'col', gen, cost: 0.05, run: () => { t.col = 3; } });
+    this.queue.push({ tile: t, kind: 'col', gen, cost: 0.05, run: () => { t.col = 3; this.breaches.reapply(t.key); } });
   }
 
-  /**
-   * Breach a building's bottom-tier Rapier collider near Three.js world (wx, wz):
-   * - Removes the solid ground-to-roof cuboid collider so the ground floor (0..4.0 m) is physically open,
-   * - Adds an upper-floors cuboid starting at z0 = 4.0 m (above the car roof),
-   * - Spawns interior structural concrete columns (0.34 m half-width) + low masonry rubble bump colliders
-   *   inside the breached ground floor so the car can physically crash through the wall, drive inside or
-   *   all the way through the building, or get wedged/stuck on the interior structural pillars!
-   */
-  breachBuildingAt(wx: number, wz: number): boolean {
-    const gx = wx, gy = -wz;
-    const surf = (this.pw as unknown as { surfaceOf: Map<number, number> }).surfaceOf;
-    const S = this.o.surfaces;
-    const q = new THREE.Quaternion(), Y = new THREE.Vector3(0, 1, 0);
-    let anyBreached = false;
-
-    // Ensure the shader breach slot is populated even if breachBuildingAt is invoked directly
-    recordWallBreach(wx, wz, 2.95);
-
-    for (const t of this.tiles.values()) {
-      if (this.dist(t, wx, wz) < 28) {
-        this.upgradeTileFacadeForBreach(t);
-      }
-      if (!t.buildingCols?.length) continue;
-      for (const bc of t.buildingCols) {
-        if (bc.breached) continue;
-        const b = bc.box;
-        const dx = gx - b.cx, dy = gy - b.cy;
-        if (Math.abs(dx) > b.hx + 8 || Math.abs(dy) > b.hy + 8) continue;
-        const c = Math.cos(-b.yaw), s = Math.sin(-b.yaw);
-        const lx = dx * c - dy * s, ly = dx * s + dy * c;
-        const px = Math.max(-b.hx, Math.min(b.hx, lx));
-        const py = Math.max(-b.hy, Math.min(b.hy, ly));
-        if (Math.hypot(lx - px, ly - py) > 5.2) continue;
-
-        bc.breached = true;
-        anyBreached = true;
-        this.upgradeTileFacadeForBreach(t);
-
-        // Remove solid ground-to-roof collider
-        surf.delete(bc.col.handle);
-        this.pw.world.removeCollider(bc.col, true);
-        const idx = t.colliders.indexOf(bc.col);
-        if (idx >= 0) t.colliders.splice(idx, 1);
-
-        q.setFromAxisAngle(Y, b.yaw);
-        const addCol = (hx: number, hh: number, hy: number, tx: number, ty: number, tz: number, surface: number, fric = 0.55) => {
-          const col = this.pw.world.createCollider(
-            RAPIER.ColliderDesc.cuboid(hx, hh, hy)
-              .setTranslation(tx, ty, tz)
-              .setRotation({ x: q.x, y: q.y, z: q.z, w: q.w })
-              .setFriction(fric)
-              .setRestitution(0.05),
-          );
-          t.colliders.push(col);
-          surf.set(col.handle, surface);
-        };
-
-        // 1. Upper-floors collider starting at z0 = 4.0m (leaves ground floor 0..4.0m open for the car!)
-        const upperZ0 = b.z0 + 4.0;
-        if (b.z1 > upperZ0 + 0.5) {
-          const hh = (b.z1 - upperZ0) * 0.5;
-          addCol(b.hx, hh, b.hy, b.cx, (upperZ0 + b.z1) * 0.5, -b.cy, S.wall, 0.4);
-        }
-
-        // 2. Interior structural concrete columns + matching 3D visual concrete pillars strictly deep inside the building:
-        //    Car can pass between the columns (spaced ~5.8m apart) or get wedged/stuck if hitting a pillar off-center!
-        const c2 = Math.cos(b.yaw), s2 = Math.sin(b.yaw);
-        const stepX = Math.max(5.8, b.hx * 0.85);
-        const stepY = Math.max(5.8, b.hy * 0.85);
-        for (let ox = -b.hx + 3.6; ox <= b.hx - 3.6; ox += stepX) {
-          for (let oy = -b.hy + 3.6; oy <= b.hy - 3.6; oy += stepY) {
-            const pxW = b.cx + (ox * c2 - oy * s2);
-            const pyW = b.cy + (ox * s2 + oy * c2);
-            // Structural concrete column (0.34m half-width -> 68cm square pillar)
-            addCol(0.34, 2.0, 0.34, pxW, b.z0 + 2.0, -pyW, S.wall, 0.85);
-            this.props?.addInteriorPillar?.(pxW, b.z0, -pyW, b.yaw);
-          }
-        }
-        // Low masonry rubble mound near the centre of the breached bay (bumps suspension / slows car)
-        addCol(0.85, 0.13, 0.85, b.cx, b.z0 + 0.13, -b.cy, S.pavement, 0.95);
-      }
-    }
-    return anyBreached;
-  }
+  // ---- wall breaches (breach.ts): building lookup by collider / position, collider swap ---------------------------------------------------
+  private facadeRay: THREE.Raycaster | null = null;
+  private buildingOf = new Map<number, { t: Tile; bc: { box: BuildingColliderBox; col: RAPIER.Collider; breached: boolean } }>();
+  /** Ground-floor wall crashes: rooms behind holes, rubble. main.ts calls breaches.check() after each physics step. */
+  readonly breaches: Breaches;
 
   // ---- unloading ----------------------------------------------------------------------------------------------------------------------
   private disposeObject(root: THREE.Object3D) {
@@ -635,6 +562,8 @@ export class NycStreamer {
 
   private unloadCol(t: Tile) {
     const cols = t.colliders;
+    for (const bc of t.buildingCols ?? []) this.buildingOf.delete(bc.col.handle);
+    this.breaches.dropTile(t.key);
     t.colliders = []; t.buildingCols = []; t.col = 0; t.gen.col++;
     this.props?.setTileBuildings?.(t.key, undefined);
     this.queue.push({ tile: t, kind: 'col', gen: -1, cost: 0.4, run: () => {
@@ -696,12 +625,8 @@ export class NycStreamer {
     let used = 0;
     if (this.pause > 0) this.pause--; else used = this.drain(this.o.budgetMs);
     this.updateVisibility();
-    this.props?.update(dt, carPos, carVel, (impulse, kind, wx, wz) => {
-      if (kind === 'wall' && wx !== undefined && wz !== undefined) {
-        this.breachBuildingAt(wx, wz);
-      }
-      onImpact?.(impulse, kind, wx, wz);
-    });
+    this.props?.update(dt, carPos, carVel, onImpact);
+    this.breaches.update(dt, this.camera);
     const ms = performance.now() - t0;
     this.stat.streamMs += (ms - this.stat.streamMs) * 0.05;
     this.stat.commitMs += (used - this.stat.commitMs) * 0.05;
@@ -716,12 +641,11 @@ export class NycStreamer {
     return this.props?.breakNearestPole?.(carPos, carVel) ?? false;
   }
 
-  breakNearestShop(carPos: THREE.Vector3, carVel?: THREE.Vector3): boolean {
-    return this.props?.breakNearestShop?.(carPos, carVel, 60, (_imp, kind, wx, wz) => {
-      if (kind === 'wall' && wx !== undefined && wz !== undefined) {
-        this.breachBuildingAt(wx, wz);
-      }
-    }) ?? false;
+  /** Tooling: break the wall of the building nearest carPos (as if hit there). */
+  breakNearestShop(carPos: THREE.Vector3): boolean {
+    const list: { key: string; box: BuildingColliderBox }[] = [];
+    for (const t of this.tiles.values()) for (const bc of t.buildingCols ?? []) if (!bc.breached) list.push({ key: t.key, box: bc.box });
+    return this.breaches.breakNearest(carPos, list);
   }
 
   stats(): NycStats {
@@ -769,7 +693,6 @@ export class NycStreamer {
     };
     for (const mat of Object.values(this.mats.ground)) mk(this.templates.ground ?? this.templates.bld, mat);
     mk(this.templates.bld ?? this.templates.far, this.mats.facade);
-    mk(this.templates.bld ?? this.templates.far, this.mats.facadeBreached);
     mk(this.templates.far ?? this.templates.bld, this.mats.facadeFar);
     mk(this.templates.bld ?? this.templates.far, this.mats.roof);
     if (this.templates.far && this.templates.far !== this.templates.bld) { mk(this.templates.far, this.mats.roof); }
@@ -782,7 +705,6 @@ export class NycStreamer {
     mk(procTpl, this.mats.roof);
     procTpl.setAttribute('_bld', new THREE.BufferAttribute(new Float32Array([0.5, 8, 2, 0.5, 0.5, 8, 2, 0.5, 0.5, 8, 2, 0.5]), 4));
     mk(procTpl, this.mats.facade);
-    mk(procTpl, this.mats.facadeBreached);
     mk(procTpl, this.mats.facadeFar);
     procTpl.dispose();
   }

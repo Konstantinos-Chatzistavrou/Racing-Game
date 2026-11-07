@@ -1,6 +1,6 @@
 // Drives the game in the system Chrome with WebGPU enabled (Linux needs the flags) through the
 // DevTools protocol: load, idle, full throttle, brake. Prints telemetry + fps, saves screenshots.
-// Usage: node tools/drive.mjs [url] [outdir] [straight|crash|mobile|bench|profile|night|menu|race6|follow|dnf|poles]   (parties: tools/party_test.mjs, tools/party_game_test.mjs)   (CDP_PORT=9334 to change the DevTools port)
+// Usage: node tools/drive.mjs [url] [outdir] [straight|crash|mobile|bench|profile|night|menu|race6|follow|dnf|poles|walls]   (parties: tools/party_test.mjs, tools/party_game_test.mjs)   (CDP_PORT=9334 to change the DevTools port)
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -160,6 +160,99 @@ try {
     await sleep(1500);
     await evaluate(`(window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyR', key: 'r' })), 1)`); await sleep(1500);
     console.log('respawns: R after a flip', await st(), before, await evaluate(`JSON.stringify({ upY: (() => { const r = window.__game.car.body.rotation(); return +(1 - 2 * (r.x * r.x + r.z * r.z)).toFixed(2); })() })`));
+  }
+  if (scenario === 'walls') {
+    // Building walls (run headless: HEADLESS=1): square-on hits at 25 / 50 / 90 km/h on the nearest buildings with a clear run-up.
+    // Prints whether the wall broke, speed left, damage, then 3 s later (full throttle) whether the car got out; frame times
+    // before / after the first breach; screenshots outside and in.
+    const spawn = await evaluate(`JSON.stringify(window.__game.car.body.translation())`);
+    const used = [];
+    const setup = (kmh, minH = 0, maxH = 1e9) => evaluate(`(() => {
+      const g = window.__game, s0 = ${spawn}, V = g.camera.position.constructor, nyc = g.nyc;
+      g.car.place(new V(s0.x, s0.y, s0.z), 0, 0); g.core.repair(); g.damage.repair();
+      const boxes = []; for (const t of nyc.tiles.values()) for (const bc of t.buildingCols ?? []) if (!bc.breached) boxes.push(bc.box);
+      const inside = (x, z, m) => boxes.some((b) => { const dx = x - b.cx, dy = -z - b.cy, c = Math.cos(-b.yaw), s = Math.sin(-b.yaw);
+        return Math.abs(dx * c - dy * s) < b.hx + m && Math.abs(dx * s + dy * c) < b.hy + m; });
+      const poles = [], trees = []; g.streetProps.near(s0.x, -s0.z, 200, poles, trees); const obs = [...poles, ...trees];
+      const cands = boxes.filter((b) => b.z1 - b.z0 >= ${minH} && b.z1 - b.z0 <= ${maxH} && !${JSON.stringify(used)}.includes(b.cx + ',' + b.cy))
+        .sort((a, b) => Math.hypot(a.cx - s0.x, a.cy + s0.z) - Math.hypot(b.cx - s0.x, b.cy + s0.z));
+      for (const b of cands.slice(0, 40)) {
+        const X = [Math.cos(b.yaw), -Math.sin(b.yaw)], Z = [Math.sin(b.yaw), Math.cos(b.yaw)];
+        for (const [n, h, uh] of [[X, b.hx, b.hy], [[-X[0], -X[1]], b.hx, b.hy], [Z, b.hy, b.hx], [[-Z[0], -Z[1]], b.hy, b.hx]]) {
+          if (uh < 3 || h < 3) continue;
+          const fx = b.cx + n[0] * h, fz = -b.cy + n[1] * h;          // face centre (three x, z)
+          let ok = true;
+          for (let d = 1.5; d <= 20 && ok; d += 1) { const x = fx + n[0] * d, z = fz + n[1] * d; if (inside(x, z, 1.4)) ok = false;
+            if (obs.some((o) => Math.hypot(o.x - x, -o.y - z) < 2.2)) ok = false; }
+          if (!ok) continue;
+          g.car.place(new V(fx + n[0] * 16, b.z0 + 0.6, fz + n[1] * 16), Math.atan2(-n[0], -n[1]), ${kmh} / 3.6); g.input.hold = false;
+          window.__wall = b;
+          return JSON.stringify({ key: b.cx + ',' + b.cy, height: Math.round(b.z1 - b.z0), size: [Math.round(2 * b.hx), Math.round(2 * b.hy)] });
+        }
+      }
+      return 'none';
+    })()`);
+    const state = () => evaluate(`(() => { const g = window.__game, b = window.__wall, d = g.damage.last;
+      return JSON.stringify({ kmh: Math.round(Math.abs(g.car.out[102]) * 3.6), breaches: g.nyc.breaches.count, kj: d ? +d.totalKj.toFixed(0) : 0, totaled: d?.totaled ?? false }); })()`);
+    const frames = (ms) => evaluate(`new Promise((res) => { const ft = []; let p = performance.now(); const t0 = p;
+      const f = (t) => { ft.push(+(t - p).toFixed(1)); p = t; if (t - t0 < ${ms}) requestAnimationFrame(f); else res(ft); }; requestAnimationFrame(f); })`);
+    const st = (a) => { const s = a.slice().sort((x, y) => x - y); return `median ${s[Math.floor(s.length / 2)]} p95 ${s[Math.floor(s.length * 0.95)]} max ${s[s.length - 1]}`; };
+    await sleep(3000);
+    // log every pipeline compiled from here on: material | object
+    await evaluate(`(() => { const P = window.__game.renderer._pipelines, seen = new Set(P.caches.keys()), orig = P.getForRender.bind(P); window.__newPipes = [];
+      P.getForRender = (ro, pr) => { const r = orig(ro, pr); if (P.caches.size > seen.size) for (const k of P.caches.keys()) if (!seen.has(k)) { seen.add(k);
+        window.__newPipes.push((ro.material.name || ro.material.type) + ' | ' + (ro.object.name || ro.object.type) + (ro.object.isInstancedMesh ? ' (inst)' : '')); } return r; }; return 1; })()`);
+    for (const [kmh, minH, maxH, name] of (process.env.WALLS ? JSON.parse(process.env.WALLS) : [[25, 0, 1e9, 'w25'], [50, 61, 1e9, 'w50_glass'], [75, 61, 1e9, 'w75_glass'], [50, 0, 21, 'w50_brick'], [90, 0, 21, 'w90_brick']])) {
+      const r = await setup(kmh, minH, maxH);
+      if (r === 'none') { console.log(name, 'no clear wall'); continue; }
+      used.push(JSON.parse(r).key);
+      const p0 = await evaluate(`window.__game.pipelines().now`);
+      const pre = evaluate(`new Promise((res) => setTimeout(() => res(Math.round(Math.abs(window.__game.car.out[102]) * 3.6)), 750))`);
+      const before = await frames(900);
+      console.log(name, 'speed 0.75 s in (just before the wall):', await pre);
+      console.log(name, 'setup', r, '| before', st(before));
+      const after = await frames(1600);
+      console.log(name, 'hit', await state(), '| after', st(after), '| new pipelines', (await evaluate(`window.__game.pipelines().now`)) - p0);
+      console.log(name, 'pipelines compiled:', await evaluate(`JSON.stringify(window.__newPipes.splice(0))`));
+      console.log(name, 'where', await evaluate(`(() => { const g = window.__game, b = window.__wall, c = Math.cos(b.yaw), s = Math.sin(b.yaw);
+        const loc = (p) => { const dx = p.x - b.cx, dz = p.z + b.cy; return [+(dx * c - dz * s).toFixed(1), +(p.y - b.z0).toFixed(1), +(dx * s + dz * c).toFixed(1)]; };
+        // what the chase camera's wall check hits: ray from 1 m above the car toward where the camera wants to be (behind, up)
+        const t = g.car.body.translation(), r = g.car.body.rotation(), V = g.camera.position.constructor, Q = g.camera.quaternion.constructor;
+        const fwd = new V(0, 0, 1).applyQuaternion(new Q(r.x, r.y, r.z, r.w)); fwd.y = 0; fwd.normalize();
+        const head = new V(t.x, t.y + 1, t.z), want = head.clone().addScaledVector(fwd, -5).add(new V(0, 1.2, 0));
+        return JSON.stringify({ half: [+b.hx.toFixed(1), +b.hy.toFixed(1)], car: loc(t), cam: loc(g.camera.position), want: loc(want) }); })()`));
+      console.log(name, 'camera ray', await evaluate(`(() => { const g = window.__game, pw = g.nyc.pw, t = g.car.body.translation(), r = g.car.body.rotation();
+        const V = g.camera.position.constructor, Q = g.camera.quaternion.constructor;
+        const fwd = new V(0, 0, 1).applyQuaternion(new Q(r.x, r.y, r.z, r.w)); fwd.y = 0; fwd.normalize();
+        const head = new V(t.x, t.y + 1, t.z), want = head.clone().addScaledVector(fwd, -5).add(new V(0, 1.2, 0));
+        const hit = pw.raycast(head, want, g.car.body, true, ((1 << 16) | (0xfffd & ~0x4 & ~0x8)));
+        if (!hit) return 'clear';
+        const c = hit.collider, s = c.shape, tr = c.translation();
+        return JSON.stringify({ toi: +hit.toi.toFixed(2), type: s.type, half: s.halfExtents ? [s.halfExtents.x, s.halfExtents.y, s.halfExtents.z].map((x) => +x.toFixed(2)) : s.radius, at: [tr.x, tr.y, tr.z].map((x) => +x.toFixed(1)),
+          groups: (c.collisionGroups() >>> 0).toString(16), body: c.parent() ? (c.parent().isKinematic() ? 'kin' : c.parent().isDynamic() ? 'dyn' : 'fixed') : 'static' }); })()`));
+      await shot(`${name}_a.png`);
+      await evaluate(`(window.__game.input.hold = false, window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyW', key: 'w' })), 1)`);
+      await sleep(3000);
+      await evaluate(`(window.dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyW', key: 'w' })), 1)`);
+      console.log(name, '+3s throttle', await state(), await evaluate(`JSON.stringify(window.__game.car.body.translation())`));
+      await shot(`${name}_b.png`);
+    }
+  }
+  if (scenario === 'wallperf') {
+    // Frame times around a forced storefront breach (nyc.breakNearestShop), then a profile of the worst frames' cause:
+    // per-frame ms for 1 s before and 3 s after, plus pipelines compiled.
+    await sleep(4000);
+    const frames = (ms) => evaluate(`new Promise((res) => { const ft = []; let p = performance.now(); const t0 = p;
+      const f = (t) => { ft.push(+(t - p).toFixed(1)); p = t; if (t - t0 < ${ms}) requestAnimationFrame(f); else res(ft); }; requestAnimationFrame(f); })`);
+    const pipes = () => evaluate(`window.__game.pipelines().now`);
+    const before = await frames(1000), p0 = await pipes();
+    const t0 = Date.now();
+    const r = await evaluate(`(() => { const g = window.__game, t0 = performance.now(); const ok = g.nyc.breakNearestShop(g.car.body.translation(), { x: 0, y: 0, z: -12 }); return JSON.stringify({ ok, syncMs: +(performance.now() - t0).toFixed(1) }); })()`);
+    const after = await frames(3000), p1 = await pipes();
+    const st = (a) => { const s = a.slice().sort((x, y) => x - y); return `median ${s[Math.floor(s.length / 2)]} max ${s[s.length - 1]} >50ms ${a.filter((x) => x > 50).length}`; };
+    console.log('breach call', r, 'pipelines', p0, '->', p1);
+    console.log('before', st(before)); console.log('after ', st(after)); console.log('after first 30 frames', JSON.stringify(after.slice(0, 30)));
+    await shot('w_breach.png');
   }
   if (scenario === 'poles') {
     // Solid street furniture (run headless: HEADLESS=1): a lamp post at 72 km/h (shears, car keeps ~64 km/h, pole topples),

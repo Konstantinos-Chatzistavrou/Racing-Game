@@ -55,6 +55,10 @@ windows), both with the Vite dev server running.
 you're slow and shear when you're fast enough, taking real speed off the car and denting it; a sheared pole topples
 slowly under its own weight and can land on your car.
 
+**Buildings are solid**: a storefront only gives way to a straight hit at ~45 km/h or more, a brick wall at ~80; anything
+less is a hard crash. Breaking through costs most of your speed, wrecks the car, opens a hole into a furnished shop, deli,
+apartment or lobby, and brings the ceiling down on top of you.
+
 **Driving** (title screen): **Full Realism** (default) or **Respawns**. In Full Realism there is no reset in a race
 (AI or party): a wrecked car, 5 s on its roof, or 30 s stuck is a DNF, and you spectate the remaining cars (◀ ▶ or
 A / D to switch, Results to end). Respawns: R puts you back on the road, repaired. Free roam always allows R.

@@ -16,7 +16,6 @@ import { attribute, instancedBufferAttribute, instanceIndex, hash, uv, float, ve
   positionWorld, cameraProjectionMatrix, cameraViewMatrix, positionGeometry, sin, cos, bumpMap } from 'three/tsl';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { InstanceSet, NycSigns, nycTime, writeMatrix, SIGN_LIGHT } from './signage';
-import { recordWallBreach } from './facade';
 
 export interface PropsData {
   /** ground height of the tile (m); props are placed at z + this. Optional, default 0. */
@@ -278,34 +277,6 @@ function wasteGeo() {
   return k.build();
 }
 
-/**
- * Interior Structural Concrete Column (`interiorPillarGeo`):
- * Placed strictly INSIDE a breached building's ground floor at the exact coordinates of the Rapier
- * interior concrete pillar colliders (`0.68m x 3.85m x 0.68m`) so the player sees the structural columns
- * inside the broken building wall that the car can drive between or get wedged against — without ever
- * spawning a box on the outside of the building!
- */
-function shatteredBayGeo() {
-  const k = new Kit();
-  const concrete: RGB = [0.16, 0.155, 0.148];
-  const baseDark: RGB = [0.09, 0.085, 0.08];
-  const brickBroken: RGB = [0.24, 0.11, 0.08];
-  const dustyFloor: RGB = [0.052, 0.049, 0.045];
-  // 3cm-flat matte dusty concrete interior floor pad strictly inside the building around each interior pillar (zero box walls!)
-  k.box(5.2, 0.03, 5.2, 0, 0.165, 0, dustyFloor, 0);
-  // Structural concrete column shaft (matches the 0.34m half-width Rapier pillar collider 1:1)
-  k.box(0.66, 3.85, 0.66, 0, 1.925, 0, concrete, 0);
-  // Column base plinth & flared capital
-  k.box(0.82, 0.28, 0.82, 0, 0.14, 0, baseDark, 0);
-  k.box(0.92, 0.24, 0.92, 0, 3.75, 0, baseDark, 0);
-  // Overhead ceiling fluorescent light bar attached to the column capital inside the building
-  k.box(1.85, 0.06, 0.24, 0, 3.68, 0, [1.0, 0.86, 0.64], 0.95);
-  // Low masonry rubble scatter around the pillar base
-  k.box(0.42, 0.16, 0.34, 0.45, 0.22, 0.28, brickBroken, 0);
-  k.box(0.36, 0.14, 0.38, -0.42, 0.21, -0.32, concrete, 0);
-  return k.build();
-}
-
 /** 3D brick & concrete masonry wall chunk for ground-floor wall demolition. */
 function wallDebrisGeo() {
   const k = new Kit();
@@ -500,10 +471,6 @@ export class NycProps {
   private sets: Record<string, InstanceSet> = {};
   private pools: THREE.InstancedMesh;
   private steamSet: InstanceSet;
-  private shatteredMesh: THREE.InstancedMesh;
-  private shatteredCount = 0;
-  private shatteredSet = new Set<string>();
-  private pillarSet = new Set<string>();
   private shardMesh: THREE.InstancedMesh;
   private shards: Particle[] = [];
   private shardCursor = 0;
@@ -578,13 +545,6 @@ export class NycProps {
     this.root.add(this.steamSet.mesh); this.meshes.push(this.steamSet.mesh);
 
     // Breached 3D ground-floor interior rooms (persistent smashed-through building ground floors)
-    this.shatteredMesh = new THREE.InstancedMesh(shatteredBayGeo(), litMaterial(2.2, 0.65, 0.15), 160);
-    this.shatteredMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    this.shatteredMesh.instanceMatrix.array.fill(0);
-    this.shatteredMesh.count = 1;
-    this.shatteredMesh.frustumCulled = false;
-    this.shatteredMesh.name = 'nyc_shattered_shops';
-    this.root.add(this.shatteredMesh); this.meshes.push(this.shatteredMesh);
 
     // 3D spinning glass shards (for broken storefronts & bus shelters)
     const SHARD_CAP = 540;
@@ -876,6 +836,13 @@ export class NycProps {
     }
   }
 
+  /** A wall breaking (breach.ts): brick, dust and (storefronts) glass out of the hole at (wx, groundY, wz), outward (nx, nz). */
+  burst(wx: number, groundY: number, wz: number, nx: number, nz: number, vx: number, vz: number, glass: boolean) {
+    if (glass) this.emitGlassShards(wx, groundY + 1.4, wz, nx, nz, vx, vz, groundY, 26);
+    this.emitWallDebris(wx, groundY + 1.5, wz, nx, nz, vx, vz, groundY, 18);
+    this.emitSparks(wx, groundY + 2.4, wz, nx * 3, nz * 3, 10);
+  }
+
   /** Unbroken breakables and trees within r m of (cx, cy) (game frame: three x, -z). */
   near(cx: number, cy: number, r: number, poles: BreakablePole[], trees: { x: number; y: number; z: number; scale: number }[]) {
     poles.length = 0; trees.length = 0;
@@ -980,55 +947,7 @@ export class NycProps {
     onImpact?.(p.kind === 'hydrant' || p.kind === 'waste' ? 85 : 155, 'pole', tx, tz);
   }
 
-  /**
-   * Place a 3D structural concrete column (`0.66m x 3.85m x 0.66m`) strictly inside a breached building
-   * at the exact Three.js coordinates `(wx, groundY, wz)` of a Rapier interior pillar collider.
-   */
-  addInteriorPillar(wx: number, groundY: number, wz: number, yaw: number) {
-    const key = `${Math.round(wx * 2)}_${Math.round(wz * 2)}`;
-    if (this.pillarSet.has(key)) return;
-    this.pillarSet.add(key);
-    const slot = this.shatteredCount % 160;
-    this.shatteredCount++;
-    writeMatrix(this.shatteredMesh.instanceMatrix.array as Float32Array, slot * 16, wx, -wz, groundY, yaw, 1, 1, 1);
-    this.shatteredMesh.count = Math.min(160, Math.max(1, this.shatteredCount));
-    this.shatteredMesh.instanceMatrix.needsUpdate = true;
-  }
 
-  /**
-   * Breach a ground-floor building wall & storefront bay at world Three.js coordinates (wx, groundY, wz)
-   * with outward normal (nx, nz):
-   * 1. Punches a jagged 3D hole directly through the visible building's ground-floor facade mesh (`recordWallBreach`),
-   *    without spawning any box on the outside of the building,
-   * 2. Explodes 52 spinning 3D glass prism shards + 36 tumbling brick/concrete wall chunks + 24 electric sparks,
-   * 3. Signals `onImpact(210, 'wall', wx, wz)` so `NycStreamer` swaps the tile to `facadeBreached`, opens the
-   *    ground-floor physics collider, places interior concrete pillars inside the building, and plays the demolition sound.
-   */
-  shatterStorefrontAt(
-    wx: number,
-    groundY: number,
-    wz: number,
-    nx: number,
-    nz: number,
-    vx = 0,
-    vz = 0,
-    onImpact?: (impulse: number, kind?: 'pole' | 'shop' | 'wall', wx?: number, wz?: number) => void,
-  ): boolean {
-    const bayKey = `${Math.round(wx / 3.8)}_${Math.round(wz / 3.8)}`;
-    if (this.shatteredSet.has(bayKey)) return false;
-    this.shatteredSet.add(bayKey);
-    this.brokenShopsCount++;
-
-    // Car-sized (~5.6m wide) stepped-brick breach along the wall + inward penetration so recessed polygon walls are cleanly pierced
-    recordWallBreach(wx, wz, 2.85);
-    recordWallBreach(wx - nx * 1.35, wz - nz * 1.35, 2.75);
-
-    this.emitGlassShards(wx, groundY + 1.5, wz, nx, nz, vx, vz, groundY, 52);
-    this.emitWallDebris(wx, groundY + 1.6, wz, nx, nz, vx, vz, groundY, 36);
-    this.emitSparks(wx, groundY + 2.8, wz, nx * 4, nz * 4, 24);
-    onImpact?.(210, 'wall', wx, wz);
-    return true;
-  }
 
   /** Force-break the nearest metal pole within `maxDist` of `carPos` (Three.js coords) — also exposed for automated verification. */
   breakNearestPole(
@@ -1051,43 +970,6 @@ export class NycProps {
     return true;
   }
 
-  /** Force-breach the nearest ground-floor building wall & storefront within `maxDist` of `carPos` (Three.js coords). */
-  breakNearestShop(
-    carPos: THREE.Vector3,
-    carVel?: THREE.Vector3,
-    maxDist = 60,
-    onImpact?: (impulse: number, kind?: 'pole' | 'shop' | 'wall', wx?: number, wz?: number) => void,
-  ): boolean {
-    const cx = carPos.x, cy = -carPos.z;
-    let bestHit: { wx: number; wz: number; nx: number; nz: number; z: number; d: number } | null = null;
-    for (const tb of this.tileBuildings.values()) {
-      for (const b of tb.boxes) {
-        const dx = cx - b.cx, dy = cy - b.cy;
-        const c = Math.cos(-b.yaw), s = Math.sin(-b.yaw);
-        const lx = dx * c - dy * s, ly = dx * s + dy * c;
-        const px = Math.max(-b.hx, Math.min(b.hx, lx));
-        const py = Math.max(-b.hy, Math.min(b.hy, ly));
-        const dist = Math.hypot(lx - px, ly - py);
-        if (dist < maxDist && (!bestHit || dist < bestHit.d)) {
-          const dxWall = b.hx - Math.abs(px);
-          const dyWall = b.hy - Math.abs(py);
-          const onX = dxWall < dyWall;
-          const lnx = onX ? (px >= 0 ? 1 : -1) : 0;
-          const lny = onX ? 0 : (py >= 0 ? 1 : -1);
-          const wallLx = onX ? lnx * b.hx : px;
-          const wallLy = onX ? py : lny * b.hy;
-          const c2 = Math.cos(b.yaw), s2 = Math.sin(b.yaw);
-          const wx = b.cx + (wallLx * c2 - wallLy * s2);
-          const wy = b.cy + (wallLx * s2 + wallLy * c2);
-          const wnx = lnx * c2 - lny * s2;
-          const wny = lnx * s2 + lny * c2;
-          bestHit = { wx, wz: -wy, nx: wnx, nz: -wny, z: tb.z, d: dist };
-        }
-      }
-    }
-    if (!bestHit) return false;
-    return this.shatterStorefrontAt(bestHit.wx, bestHit.z, bestHit.wz, bestHit.nx, bestHit.nz, carVel?.x ?? 10, carVel?.z ?? -10, onImpact);
-  }
 
   private checkCollisions(
     carPos: THREE.Vector3,
@@ -1110,34 +992,6 @@ export class NycProps {
             const pdx = p.x - cx, pdy = p.y - cy;
             if (pdx * pdx + pdy * pdy < (carR + p.radius) * (carR + p.radius)) {
               this.triggerPoleBreak(p, carVel.x, carVel.z, onImpact);
-            }
-          }
-        }
-        const tb = this.tileBuildings.get(key);
-        if (tb && speed > 2.4) {
-          for (const b of tb.boxes) {
-            const bdx = cx - b.cx, bdy = cy - b.cy;
-            if (Math.abs(bdx) > b.hx + 18 || Math.abs(bdy) > b.hy + 18) continue;
-            const c = Math.cos(-b.yaw), s = Math.sin(-b.yaw);
-            const lx = bdx * c - bdy * s, ly = bdy * c + bdx * s;
-            const px = Math.max(-b.hx, Math.min(b.hx, lx));
-            const py = Math.max(-b.hy, Math.min(b.hy, ly));
-            const distSq = (lx - px) * (lx - px) + (ly - py) * (ly - py);
-            const dxWall = b.hx - Math.abs(px);
-            const dyWall = b.hy - Math.abs(py);
-            // Breach either when impacting from outside (`distSq < 3.4^2`) or smashing out through an unbreached wall from inside
-            if ((distSq > 0 && distSq < 3.4 * 3.4) || (distSq === 0 && Math.min(dxWall, dyWall) < 2.2)) {
-              const onX = dxWall < dyWall;
-              const lnx = onX ? (px >= 0 ? 1 : -1) : 0;
-              const lny = onX ? 0 : (py >= 0 ? 1 : -1);
-              const wallLx = onX ? lnx * b.hx : px;
-              const wallLy = onX ? py : lny * b.hy;
-              const c2 = Math.cos(b.yaw), s2 = Math.sin(b.yaw);
-              const wx = b.cx + (wallLx * c2 - wallLy * s2);
-              const wy = b.cy + (wallLx * s2 + wallLy * c2);
-              const wnx = lnx * c2 - lny * s2;
-              const wny = lnx * s2 + lny * c2;
-              this.shatterStorefrontAt(wx, tb.z, -wy, wnx, -wny, carVel.x, carVel.z, onImpact);
             }
           }
         }
@@ -1445,7 +1299,6 @@ export class NycProps {
     for (const s of Object.values(this.sets)) { s.mesh.removeFromParent(); s.dispose(); }
     this.steamSet.mesh.removeFromParent(); this.steamSet.dispose();
     this.pools.removeFromParent(); this.pools.geometry.dispose(); (this.pools.material as THREE.Material).dispose();
-    this.shatteredMesh.removeFromParent(); this.shatteredMesh.geometry.dispose(); (this.shatteredMesh.material as THREE.Material).dispose();
     this.shardMesh.removeFromParent(); this.shardMesh.geometry.dispose(); (this.shardMesh.material as THREE.Material).dispose();
     this.debrisMesh.removeFromParent(); this.debrisMesh.geometry.dispose(); (this.debrisMesh.material as THREE.Material).dispose();
     this.sparkMesh.removeFromParent(); this.sparkMesh.geometry.dispose(); (this.sparkMesh.material as THREE.Material).dispose();

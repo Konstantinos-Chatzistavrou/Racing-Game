@@ -20,6 +20,7 @@ import { materialsOf } from './scene/city';
 import { mergeStaticMeshes } from './scene/merge';
 import { createContactShadow, setupCarMaterials, type CarVisualConfig } from './scene/car';
 import { assetUrl, loadGLTF } from './scene/loaders';
+import { drawEarly } from './scene/nyc/breach';
 
 interface RouteSample { x: number; y: number; z: number; width_left: number; width_right: number }
 
@@ -225,6 +226,7 @@ export class AiTraffic {
       const root = new THREE.Group();
       root.name = `ai_${i}`;
       root.add(model);
+      drawEarly(model);
       let shadow: THREE.Object3D | null = null;
       if (!black) root.add(shadow = createContactShadow(cb.size_m[0] * 1.22, cb.size_m[2] * 1.16, cb.centre_in_model_m[2]));
       scene.add(root);

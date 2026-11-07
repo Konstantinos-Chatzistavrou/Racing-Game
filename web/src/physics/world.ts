@@ -13,8 +13,13 @@ export const GROUP_CAR = (0x0001 << 16) | 0xfffd;
 export const GROUP_DEBRIS = (0x0002 << 16) | 0xfffe;
 /** Street poles and tree trunks (nyc/obstacles.ts): hit by cars and debris, ignored by GROUP_VIEW rays. */
 export const GROUP_PROP = (0x0004 << 16) | 0xffff;
-/** Rays that should see the city but not poles / trees (chase camera, AI ground probe). */
-export const GROUP_VIEW = (0x0001 << 16) | (0xfffd & ~0x0004);   // same tick as the Godot build (physics_ticks_per_second = 240)
+/**
+ * Rays that should see the city but not poles, trees, rubble or debris (chase camera, AI ground probe). Own membership
+ * bit (0x20) so a GROUP_CAMERA_ONLY collider (the hole of a wall breach) can block them and nothing else.
+ */
+export const GROUP_VIEW = (0x0020 << 16) | (0xffff & ~0x0002 & ~0x0004 & ~0x0008);
+/** Seen only by GROUP_VIEW rays: keeps the chase camera inside a breached room while the car is in it. */
+export const GROUP_CAMERA_ONLY = (0x0010 << 16) | 0x0020;   // same tick as the Godot build (physics_ticks_per_second = 240)
 
 export async function loadRapier() { await RAPIER.init(); }
 

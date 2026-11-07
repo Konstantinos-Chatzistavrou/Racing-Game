@@ -15,12 +15,13 @@ import { CarBody, DT, PhysicsWorld, loadRapier, type CarShape } from './physics/
 import { CityLighting, loadCity } from './scene/city';
 import { NycStreamer, nycCityShim } from './scene/nyc';
 import { StreetObstacles, type PoleHit } from './scene/nyc/obstacles';
+import { drawEarly, type BreachSpec, type WallHit } from './scene/nyc/breach';
 import { CarVisual, type CarVisualConfig } from './scene/car';
 import { initLoaders } from './scene/loaders';
 import { CameraRig } from './camera';
 import { Input } from './input';
 import { Hud } from './hud';
-import { DamageVisuals } from './scene/damage';
+import { DamageVisuals, DEBRIS_LAYER } from './scene/damage';
 import { GameAudio } from './audio';
 import { TouchControls, wantsTouch } from './touch';
 import type RAPIER from '@dimforge/rapier3d-compat';
@@ -114,6 +115,7 @@ async function main() {
   scene.add(moon);
 
   const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 260);
+  camera.layers.enable(DEBRIS_LAYER);   // parts broken off the car (damage.ts): main view only, not the reflection probe
   addEventListener('resize', () => {
     renderer.setSize(innerWidth, innerHeight);
     camera.aspect = innerWidth / innerHeight;
@@ -198,6 +200,7 @@ async function main() {
   const loadedCar = await carLoadP;
   let visualCfg = loadedCar.cfg;
   let visual = loadedCar.vis;
+  drawEarly(visual.model);   // cars stay visible inside a wall breach (breach.ts portal)
   scene.add(visual.root);
   visual.setPaint(paintOf(sel, catalog), sel.finish);
   // Live car reflection probe (src/fx/carProbe.ts): renders one 128 px cube face every Nth drawn frame so streetlamps,
@@ -385,6 +388,7 @@ async function main() {
     post.warmup();
   };
   city.props.warmup(true);
+  nyc?.breaches.warmup(true, pos);   // room / rubble / portal materials compiled now, not at the first crash
   damage.warmup(true);
   visual.update(pos, quat, car.out);
   if (ai.cars.length) {
@@ -415,6 +419,7 @@ async function main() {
   }
   ai.setMode('off');
   city.props.warmup(false);
+  nyc?.breaches.warmup(false);
   nyc?.endWarm();
   damage.warmup(false);
   city.update(camera, true);
@@ -663,6 +668,7 @@ async function main() {
       progress: (id, gp) => { remoteProg.set(id, gp); if (state === 'results') menu.updateResults(standings()); },
       left: (id) => { remote?.remove(id); remoteProg.delete(id); if (state === 'spectate') specRetarget(); },
       gone: (id) => { remote?.remove(id); if (state === 'spectate') specRetarget(); },
+      breach: (spec: BreachSpec) => { if (driving()) nyc?.breaches.open(spec); },
       pole: (x, y, vx, vz) => {
         const pl = streetProps?.poleAt(x, y);
         if (pl && driving()) poleHit({ pole: pl, point: { x: pl.x, y: pl.z, z: -pl.y }, impulse: 0, vx, vz }, false);
@@ -817,6 +823,7 @@ async function main() {
       scene.remove(visual.root);
       damage.dispose();
       visualPath = path; visualCfg = cfg; visual = next; shape = shapeOf(cfg);
+      drawEarly(visual.model);
       carSwapped = true;
       visual.renderDt = capInterval ? capInterval / 1000 : 1 / 60;
       syncHeadlights();
@@ -1038,6 +1045,12 @@ async function main() {
     audio.impact(Math.max(15, h.impulse / 400), false, 'pole');
     party?.sendPole(h.pole.x, h.pole.y, h.vx, h.vz);
   };
+  /** We broke through a building wall: the front takes the energy the car lost; the party sees the hole. */
+  const wallHit = (w: WallHit) => {
+    core.contact(w.point, w.impulse, ++contactId);
+    audio.impact(Math.max(60, (w.impulse * w.impulse) / (2 * core.info.mass) / 1000), w.storefront, 'wall');
+    party?.sendBreach(w.spec);
+  };
   // A falling pole landing on our car: dent where it lands.
   if (streetProps) {
     // the core's damage reads an impulse on our car: the one that carries this energy (E = J^2 / 2m)
@@ -1095,10 +1108,11 @@ async function main() {
       if (inShowroom) { car.body.setLinvel({ x: 0, y: Math.min(0, car.body.linvel().y), z: 0 }, true); car.body.setAngvel({ x: 0, y: 0, z: 0 }, true); settledShowroom++; }   // parked for the showroom
       ai.tick(DT, car.body.translation());
       remote?.tick(now - (acc - DT) * 1000, DT);   // other players' bodies at this tick's time
-      if (remote?.colliders.size || obstacles) { const lv = car.body.linvel(), av = car.body.angvel(); preV.set(lv.x, lv.y, lv.z); preW.set(av.x, av.y, av.z); }
+      if (remote?.colliders.size || obstacles || nyc) { const lv = car.body.linvel(), av = car.body.angvel(); preV.set(lv.x, lv.y, lv.z); preW.set(av.x, av.y, av.z); }
       const t0 = performance.now();
       pw.world.step();
       if (obstacles) { const h = obstacles.afterStep(car.collider, car.body, core.info.mass, preV, preW); if (h) poleHit(h, true); }
+      if (nyc && driving()) { const w = nyc.breaches.check(car.collider, car.body, core.info.mass, preV, preW); if (w) wallHit(w); }
       if (remote?.colliders.size) halveRemoteHits(now - (acc - DT) * 1000);
       stepMs += (performance.now() - t0 - stepMs) * 0.01;   // Rapier cost per 240 Hz step, smoothed
       readBody(physPos, physQuat);
