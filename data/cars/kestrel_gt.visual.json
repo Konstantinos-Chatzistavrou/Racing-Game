@@ -5,7 +5,7 @@
   "model": "res://assets/cars/v4/kestrel_gt_hero.glb",
   "notes": "Generation 4 (docs/car_model_v4.md): de-branded, re-shaped derivative of '2019 Aston Martin Vantage DTM' by Dave Love SketchFab (CC BY 4.0, CREDITS.md). Model space +X left, +Y up, +Z forward, origin on the ground at the body length centre. Front axle z 1.200, rear -1.450 (wheelbase 2.650), hubs y 0.321, model track 1.709.",
   "cg_in_model_m": [
-    0.0,
+    0,
     0.51,
     -0.178
   ],
@@ -15,7 +15,7 @@
     "rl": "wheel_RL",
     "rr": "wheel_RR"
   },
-  "wheel_visual_offset_m": -0.051,
+  "wheel_visual_offset_m": 0.023,
   "collision_box": {
     "size_m": [
       1.96,
@@ -23,9 +23,9 @@
       4.44
     ],
     "centre_in_model_m": [
-      0.0,
+      0,
       0.72,
-      0.0
+      0
     ],
     "end_lift_m": 0.13,
     "end_lift_start_m": 1.6,
@@ -99,10 +99,10 @@
     "taillight_bar"
   ],
   "engine_smoke_in_model_m": [
-    0.0,
+    0,
     0.78,
     1.65
   ],
   "lod_model": "res://assets/cars/v3/vela_gt_traffic.glb",
-  "lod_distance_m": 30.0
+  "lod_distance_m": 30
 }
