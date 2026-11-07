@@ -64,7 +64,7 @@ export class PhysicsWorld {
    * with count (groups = GROUP_CAR): a bumper that broke off and lies in front of a wheel is not
    * road (wheel rays used to land on debris and kick the car sideways).
    */
-  raycast(from: THREE.Vector3, to: THREE.Vector3, exclude?: RAPIER.RigidBody) {
+  raycast(from: THREE.Vector3, to: THREE.Vector3, exclude?: RAPIER.RigidBody, solid = true) {
     const d = this.rayDir.subVectors(to, from);
     const len = d.length();
     if (len < 1e-6) return null;
@@ -72,7 +72,7 @@ export class PhysicsWorld {
     let ray = this.ray;
     if (!ray) ray = this.ray = new RAPIER.Ray(from, d);
     else { ray.origin = from; ray.dir = d; }
-    const hit = this.world.castRayAndGetNormal(ray, len, true, undefined, GROUP_CAR, undefined, exclude);
+    const hit = this.world.castRayAndGetNormal(ray, len, solid, undefined, GROUP_CAR, undefined, exclude);
     if (!hit) return null;
     const out = this.rayHit;
     out.toi = hit.timeOfImpact;
@@ -83,6 +83,9 @@ export class PhysicsWorld {
 }
 
 export interface CarShape { boxSize: [number, number, number]; boxCentre: [number, number, number]; endLift: number; endLiftStart: number }
+
+const PARK_RAW: RawInput = { steer: 0, throttle: 0, brake: 0.5, clutch: 0, handbrake: 1, shiftUp: false, shiftDown: false, device: 0 };
+const PARK_ASSISTS: AssistToggles = { abs: true, tc: true, esc: true, autoGearbox: true };
 
 /** One car: core vehicle + Rapier body. Origin of the body = centre of gravity. */
 export class CarBody {
@@ -119,20 +122,7 @@ export class CarBody {
     this.collider = pw.world.createCollider(hull, this.body);
   }
 
-  place(pos: THREE.Vector3, yaw: number, speed = 0) {
-    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
-    this.body.setTranslation(pos, true);
-    this.body.setRotation(q, true);
-    const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(q).multiplyScalar(speed);
-    this.body.setLinvel(fwd, true);
-    this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
-    // gear: 2nd when launched rolling, else 1st (also clears a pedal-engaged reverse on respawn)
-    this.core.resetMotion(speed, speed > 0 ? 3 : 2);
-    this.hasPrev = false;
-  }
-
-  /** One physics tick: rays -> contacts -> core forces -> applied to the body (world steps after). */
-  tick(raw: RawInput, assists: AssistToggles) {
+  private raycastWheels() {
     const t = this.body.translation(), r = this.body.rotation(), v = this.body.linvel(), w = this.body.angvel();
     const s = this.state;
     s[0] = t.x; s[1] = t.y; s[2] = t.z; s[3] = r.x; s[4] = r.y; s[5] = r.z; s[6] = r.w;
@@ -142,15 +132,67 @@ export class CarBody {
     for (let i = 0; i < 4; i++) {
       this.a.set(rays[6 * i], rays[6 * i + 1], rays[6 * i + 2]);
       this.b.set(rays[6 * i + 3], rays[6 * i + 4], rays[6 * i + 5]);
-      const hit = this.pw.raycast(this.a, this.b, this.body);
+      const hit = this.pw.raycast(this.a, this.b, this.body, false);
       const o = 8 * i;
       if (!hit) { c[o] = 0; continue; }
       const dir = this.b.sub(this.a).normalize();
+      const cosN = -(dir.x * hit.normal.x + dir.y * hit.normal.y + dir.z * hit.normal.z);
+      if (cosN < 0.35 || hit.toi < 0.04) { c[o] = 0; continue; }
       c[o] = 1;
       c[o + 1] = this.a.x + dir.x * hit.toi; c[o + 2] = this.a.y + dir.y * hit.toi; c[o + 3] = this.a.z + dir.z * hit.toi;
       c[o + 4] = hit.normal.x; c[o + 5] = hit.normal.y; c[o + 6] = hit.normal.z;
       c[o + 7] = this.pw.surface(hit.collider);
     }
+    return c;
+  }
+
+  /** Populate `this.out` at the body's exact current pose without integrating forces or crash deltas. */
+  syncOut(speed = 0) {
+    const raw = speed > 0 ? { ...PARK_RAW, brake: 0, handbrake: 0 } : PARK_RAW;
+    this.out = this.core.step(this.raycastWheels(), raw, PARK_ASSISTS, 1e-5);
+    this.prevF.set(0, 0, 0);
+    this.hasPrev = false;
+  }
+
+  /** Settle a stationary car onto static suspension equilibrium so wheels rest cleanly on the road from Frame 0. */
+  settle(steps = 96) {
+    const m = this.core.info.mass;
+    const t = this.body.translation();
+    let y = t.y, vy = 0;
+    for (let i = 0; i < steps; i++) {
+      this.body.setTranslation({ x: t.x, y, z: t.z }, true);
+      this.body.setLinvel({ x: 0, y: vy, z: 0 }, true);
+      this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      const out = this.core.step(this.raycastWheels(), PARK_RAW, PARK_ASSISTS, DT);
+      const ay = out[OUT.force + 1] / m - 9.81;
+      vy = (vy + ay * DT) * 0.9;
+      y += vy * DT;
+    }
+    this.body.setTranslation({ x: t.x, y, z: t.z }, true);
+    this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    this.body.resetForces(false);
+    this.body.resetTorques(false);
+    this.core.resetMotion(0, 2);
+    this.syncOut(0);
+  }
+
+  place(pos: THREE.Vector3, yaw: number, speed = 0) {
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+    this.body.setTranslation(pos, true);
+    this.body.setRotation(q, true);
+    const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(q).multiplyScalar(speed);
+    this.body.setLinvel(fwd, true);
+    this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    // gear: 2nd when launched rolling, else 1st (also clears a pedal-engaged reverse on respawn)
+    this.core.resetMotion(speed, speed > 0 ? 3 : 2);
+    this.syncOut(speed);
+  }
+
+  /** One physics tick: rays -> contacts -> core forces -> applied to the body (world steps after). */
+  tick(raw: RawInput, assists: AssistToggles) {
+    const v = this.body.linvel();
+    const c = this.raycastWheels();
     this.feedCrash(v);
     const out = this.core.step(c, raw, assists, DT);
     this.body.resetForces(false);

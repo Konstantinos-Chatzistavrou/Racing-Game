@@ -192,9 +192,12 @@ async function main() {
   let visual = loadedCar.vis;
   scene.add(visual.root);
   visual.setPaint(paintOf(sel, catalog), sel.finish);
-  // Live car reflection probe (src/fx/carProbe.ts): ?probe=N renders one 128 px cube face every Nth drawn frame; 0 = static city capture only.
-  const probe = webgpu && num('probe', 0) > 0 ? new CarProbe(renderer, scene, pmrem, num('probesize', 128), num('probe', 0)) : null;
-  probe?.attach(visual.model, num('probei', 1));
+  // Live car reflection probe (src/fx/carProbe.ts): renders one 128 px cube face every Nth drawn frame so streetlamps,
+  // neon signs, and skyscrapers glide across clearcoat paint & glass in real time (?probe=0 disables).
+  const probeEvery = num('probe', isTouch ? 0 : 4);
+  const probeIntensity = num('probei', 1.25);
+  const probe = webgpu && probeEvery > 0 ? new CarProbe(renderer, scene, pmrem, num('probesize', 128), probeEvery) : null;
+  probe?.attach(visual.model, probeIntensity);
   let net: Net | null = null;   // only while an Online session runs
   let shape = shapeOf(visualCfg);
   visual.renderDt = capInterval ? capInterval / 1000 : 1 / 60;
@@ -213,8 +216,9 @@ async function main() {
     const p = new THREE.Vector3(s0.x, s0.z + 3, -s0.y);
     const hit = pw.raycast(p, p.clone().add(new THREE.Vector3(0, -20, 0)));
     if (hit) p.y -= hit.toi;
-    p.y += core.info.cgHeight + 0.05;
+    p.y += core.info.cgHeight + 0.02;
     car.place(p, Math.atan2(Math.cos(s0.heading), -Math.sin(s0.heading)));
+    car.settle();
   };
   spawn();
 
@@ -249,14 +253,30 @@ async function main() {
     syncHeadlights();
     if (city) city.props.drawScale = driving() ? DRAW_SCALE[post.preset] : Math.min(0.45, DRAW_SCALE[post.preset]);
   };
-  // In the showroom (title/garage/busy) the beams only bloom into a white veil over the car: nearly off there, full once driving.
-  const syncHeadlights = () => { visual.dim = driving() ? 1 : 0.06; visual.applyHeadlights(); };
+  // In the showroom (title/garage/busy) the nose spots are nearly off so they never bloom into a white veil over the bumper.
+  const syncHeadlights = () => { visual.dim = driving() ? 1 : 0.008; visual.applyHeadlights(); };
   // brake 0.5, not 1: a full brake while stopped engages the pedal reverse
   const IDLE: RawInput = { steer: 0, throttle: 0, brake: 0.5, clutch: 0, handbrake: 1, shiftUp: false, shiftDown: false, device: 0 };
   let lapTimes: number[] = [], raceFinishedAt = -1;
+  const prevPos = new THREE.Vector3(), prevQuat = new THREE.Quaternion();
+  const physPos = new THREE.Vector3(), physQuat = new THREE.Quaternion();
+  const readBody = (p: THREE.Vector3, q: THREE.Quaternion) => {
+    const t = car.body.translation(), r = car.body.rotation();
+    p.set(t.x, t.y, t.z);
+    q.set(r.x, r.y, r.z, r.w);
+  };
+  const syncPose = () => {
+    readBody(physPos, physQuat);
+    prevPos.copy(physPos);
+    prevQuat.copy(physQuat);
+    pos.copy(physPos);
+    quat.copy(physQuat);
+    visual.update(pos, quat, car.out, physPos, physQuat);
+  };
   /** Fresh car on the start line, repaired, traffic back at its grid slots, lap counter at zero. */
   const resetCar = () => {
     spawn(); core.repair(); damage.repair(); input.hold = true; settledShowroom = 0;
+    syncPose();
     race = new CoreRace(routeJson, sel.mode === 'race' ? sel.laps : 0);
     raceCar = race.addCar(car.body.translation());
     raceT0 = ticks * DT;
@@ -285,10 +305,10 @@ async function main() {
   input.onHud = () => { if (driving()) hud.toggle(); };
   input.onGarage = () => { if (driving()) toGarage(); };
 
-  // Showroom lights for the title/garage views: a soft, short-range key spot that reaches the car
-  // (~7 m) without spilling onto the building facade above it. Intensity changes only (never visibility).
-  const showKey = new THREE.SpotLight(0xfff1e0, 0, 11, 0.38, 0.9, 2);
-  const showRim = new THREE.PointLight(0x6f8cff, 0, 10, 2);
+  // Showroom studio rig for title/garage views: elevated off-axis warm softbox key + opposite cool rim kicker.
+  // Intensity changes only (never visibility) so lit material shaders never recompile.
+  const showKey = new THREE.SpotLight(0xfff4e8, 0, 16, 0.62, 0.95, 2);
+  const showRim = new THREE.PointLight(0x98b8ff, 0, 14, 2);
   scene.add(showKey, showKey.target, showRim);
   // --- post-processing ------------------------------------------------------------------------
   const DRAW_SCALE: Record<PresetName, number> = { max: 1, ultra: 0.9, high: 0.9, medium: 0.78, low: 0.62 };
@@ -540,31 +560,6 @@ async function main() {
   document.getElementById('hud-reset')?.addEventListener('click', () => input.onReset());
   document.getElementById('hud-cam')?.addEventListener('click', () => { if (driving()) rig.toggle(); });
 
-  /** The garage car's own model (if its catalog entry has one): swapped in, damage visuals rebuilt. Serialised. */
-  let visualQueue: Promise<void> = Promise.resolve();
-  let carSwapped = false;
-  const showCar = () => (visualQueue = visualQueue.then(async () => {
-    const path = visualPathOf(sel.car);
-    if (path === visualPath) return;
-    const cfg = path === DEFAULT_VISUAL ? defaultCfg : await fetchVisualCfg(path);
-    const next = await CarVisual.load(cfg, visual.headlights);
-    probe?.attach(next.model, num('probei', 1));
-    scene.remove(visual.root);
-    damage.dispose();
-    visualPath = path; visualCfg = cfg; visual = next; shape = shapeOf(cfg);
-    carSwapped = true;
-    visual.renderDt = capInterval ? capInterval / 1000 : 1 / 60;
-    syncHeadlights();
-    scene.add(visual.root);
-    visual.setPaint(paintOf(sel, catalog), sel.finish);
-    damage = new DamageVisuals(visual, visualCfg, pw, scene);
-    wireDamage();
-    headShadows = visual.headlights.filter((s) => s.castShadow).map((s) => s.shadow);
-    for (const sh of headShadows) sh.autoUpdate = false;
-    visual.update(pos, quat, car.out, prevPos, prevQuat);
-    Object.assign(g.__game, { visual, damage });
-  }).catch((e) => console.error('car swap failed', e)));
-
   /** A different car or tuning replaces the physics body (and, via showCar, the model). */
   const rebuildPlayer = () => {
     builtKey = carKey();
@@ -572,7 +567,42 @@ async function main() {
     core = new CoreCar(coreJson());
     car = new CarBody(pw, core, shape, visual.cg);
     rig.setTarget(car.body, core.info.redline);
+    Object.assign(g.__game, { core, car });
   };
+
+  /** The garage car's own model (if its catalog entry has one): swapped in, physics + damage rebuilt. Serialised. */
+  let visualQueue: Promise<void> = Promise.resolve();
+  let carSwapped = false;
+  const showCar = () => (visualQueue = visualQueue.then(async () => {
+    const path = visualPathOf(sel.car);
+    const needModel = path !== visualPath;
+    if (needModel) {
+      const cfg = path === DEFAULT_VISUAL ? defaultCfg : await fetchVisualCfg(path);
+      const next = await CarVisual.load(cfg, visual.headlights);
+      probe?.attach(next.model, probeIntensity);
+      scene.remove(visual.root);
+      damage.dispose();
+      visualPath = path; visualCfg = cfg; visual = next; shape = shapeOf(cfg);
+      carSwapped = true;
+      visual.renderDt = capInterval ? capInterval / 1000 : 1 / 60;
+      syncHeadlights();
+      scene.add(visual.root);
+      damage = new DamageVisuals(visual, visualCfg, pw, scene);
+      wireDamage();
+      headShadows = visual.headlights.filter((s) => s.castShadow).map((s) => s.shadow);
+      for (const sh of headShadows) sh.autoUpdate = false;
+    }
+    visual.setPaint(paintOf(sel, catalog), sel.finish);
+    if (needModel || carKey() !== builtKey) {
+      rebuildPlayer();
+      spawn();
+      settledShowroom = 0;
+      syncPose();
+      post.carPos.copy(pos);
+      probe?.captureAll(pos, visual.root);
+    }
+    Object.assign(g.__game, { visual, damage, core, car });
+  }).catch((e) => console.error('car swap failed', e)));
 
   async function startSession() {
     setState('busy');
@@ -693,10 +723,15 @@ async function main() {
     tmpR.subVectors(tmpT, tmpP).cross(tmpD.set(0, 1, 0)).setY(0).normalize();   // camera right
     camera.lookAt(tmpD.copy(tmpT).addScaledVector(tmpR, -orbit.shift));
     if (camera.fov !== 42) { camera.fov = 42; camera.updateProjectionMatrix(); }
-    showKey.position.copy(camera.position).add(tmpD.set(0, 1.1, 0));
+    // Off-axis studio key light (38 deg around orbit + overhead) sweeps clean clearcoat ribbons across body creases
+    const keyAz = orbit.az + 0.66;
+    showKey.position.set(carPos.x + Math.sin(keyAz) * 4.8, carPos.y + 3.6, carPos.z + Math.cos(keyAz) * 4.8);
     showKey.target.position.copy(tmpT);
-    showKey.intensity = 65;
-    showRim.intensity = 0;
+    showKey.intensity = 95;
+    // Opposite rear-quarter cool rim kicker carves crisp shoulder, roofline, wing, and spoke highlights
+    const rimAz = orbit.az + 2.58;
+    showRim.position.set(carPos.x + Math.sin(rimAz) * 4.3, carPos.y + 2.4, carPos.z + Math.cos(rimAz) * 4.3);
+    showRim.intensity = 42;
   };
 
   if (import.meta.env.DEV) {
@@ -705,20 +740,9 @@ async function main() {
     setInterval(() => report(`${document.getElementById('perf')!.textContent!.replace('\n', ' | ')} | ${Math.round(Math.abs(car.out[OUT.speed]) * 3.6)} km/h`), 2000);
   }
 
-  // Render interpolation: the car is drawn between the last two physics states (alpha = leftover
-  // time / tick). Without it the drawn position snaps to whole 240 Hz ticks and the number of ticks
-  // per frame varies, which reads as judder at 30 fps (up to ~17 cm per frame at 140 km/h).
-  const prevPos = new THREE.Vector3(), prevQuat = new THREE.Quaternion();
-  const physPos = new THREE.Vector3(), physQuat = new THREE.Quaternion();
   const carAcc = new THREE.Vector3(), lastVel = new THREE.Vector3(), stepAcc = new THREE.Vector3();
-  const readBody = (p: THREE.Vector3, q: THREE.Quaternion) => {
-    const t = car.body.translation(), r = car.body.rotation();
-    p.set(t.x, t.y, t.z);
-    q.set(r.x, r.y, r.z, r.w);
-  };
-  readBody(physPos, physQuat);
-  prevPos.copy(physPos);
-  prevQuat.copy(physQuat);
+  syncPose();
+  post.carPos.copy(pos);
 
   // Boot into the title (or, for the test tools with ?menu=0, straight into a free run).
   document.getElementById('loading')?.remove();
@@ -777,12 +801,15 @@ async function main() {
     const alpha = Math.min(1, acc / DT);
     pos.lerpVectors(prevPos, physPos, alpha);
     quat.slerpQuaternions(prevQuat, physQuat, alpha);
-    if (!inShowroom || settledShowroom <= 24) {
+    post.carPos.copy(pos);
+    {
       const lv = car.body.linvel();
       visual.velocity.set(lv.x, lv.y, lv.z);
       visual.update(pos, quat, car.out, prevPos, prevQuat);   // car.out was computed from the pose BEFORE the last step
-      ai.update(alpha, camera);
-      damage.update(live ? frame : 0, () => core.damage());
+      if (!inShowroom || settledShowroom <= 24) {
+        ai.update(alpha, camera);
+        damage.update(live ? frame : 0, () => core.damage());
+      }
     }
     if (driving()) audio.update(car.out, car.out[OUT.speed]);
     net?.update(now, pos, quat);
@@ -811,7 +838,7 @@ async function main() {
       const hasCasters = ai.cars.length > 0 || net !== null || damage.debrisCount > 0;
       if (hasCasters && ++frameNo % (params.has('se') ? num('se', 2) : PRESETS[post.preset].shadowEvery) === 0) for (const sh of headShadows) sh.needsUpdate = true;
       post.render();
-      probe?.update(pos, visual.root);
+      if (post.preset !== 'low' && post.preset !== 'medium') probe?.update(pos, visual.root);
       hud.rendered(now);
       if (adaptive && state === 'race' && !bench.active && car.out[OUT.speed] > 5 && frame < 0.095) {
         driveWinTime += frame;

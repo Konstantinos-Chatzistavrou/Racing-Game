@@ -1,9 +1,7 @@
-// Car visuals: glTF model, wheels driven by the core's suspension output, headlights.
-// The model (generation 3, docs/car_model_v3.md) is meshopt + KTX2 compressed: loaded through the
-// shared loaders.ts. Its materials come from the file (clear-coat paint with a metal-flake normal
-// map, alpha glass, emissive lights); setupCarMaterials only adapts them for the game.
+// Car visuals: glTF model, wheels driven by the core's suspension output, headlights, brake lights,
+// soft ground contact shadow, and realistic radial spoke motion blur.
 import * as THREE from 'three/webgpu';
-import { float, smoothstep, uniform, uv } from 'three/tsl';
+import { float, smoothstep, texture, uniform, uv, vec4 } from 'three/tsl';
 import { OUT } from '../physics/core';
 import { materialsOf } from './city';
 import { assetUrl, loadGLTF } from './loaders';
@@ -25,9 +23,8 @@ export interface CarVisualConfig extends DamageVisualConfig {
 }
 
 /**
- * Orange peel: the faint waviness of a sprayed clear coat. A tileable 256x256 fractal value-noise
- * height field turned into a normal map, used as the clear coat's own normal (the base metal keeps
- * the model's flake normal map). Built once, shared by every car.
+ * Subtle sprayed clear-coat waviness normal map (256x256 tileable fractal value noise).
+ * Kept fine so reflections look like mirror-polished factory lacquer rather than pebbled plastic.
  */
 let peelTex: THREE.DataTexture | null = null;
 function orangePeel() {
@@ -49,12 +46,12 @@ function orangePeel() {
   for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
     const dx = h[y * N + ((x + 1) % N)] - h[y * N + ((x + N - 1) % N)];
     const dy = h[((y + 1) % N) * N + x] - h[((y + N - 1) % N) * N + x];
-    const nx = -dx * 6, ny = -dy * 6, l = Math.hypot(nx, ny, 1), i = (y * N + x) * 4;
+    const nx = -dx * 4.5, ny = -dy * 4.5, l = Math.hypot(nx, ny, 1), i = (y * N + x) * 4;
     px[i] = (nx / l * 0.5 + 0.5) * 255; px[i + 1] = (ny / l * 0.5 + 0.5) * 255; px[i + 2] = (1 / l * 0.5 + 0.5) * 255; px[i + 3] = 255;
   }
   peelTex = new THREE.DataTexture(px, N, N, THREE.RGBAFormat);
   peelTex.wrapS = peelTex.wrapT = THREE.RepeatWrapping;
-  peelTex.repeat.set(24, 24);
+  peelTex.repeat.set(28, 28);
   peelTex.generateMipmaps = true;
   peelTex.minFilter = THREE.LinearMipmapLinearFilter;
   peelTex.magFilter = THREE.LinearFilter;
@@ -63,42 +60,265 @@ function orangePeel() {
   return peelTex;
 }
 
+/**
+ * Fine metallic basecoat micro-flake normal map for cars whose GLB paint has no embedded flake map.
+ * Gives metallic/pearl/candy finishes authentic sparkling micro-facets beneath the smooth clear coat.
+ */
+let flakeTex: THREE.DataTexture | null = null;
+function metallicFlake() {
+  if (flakeTex) return flakeTex;
+  const N = 256, px = new Uint8Array(N * N * 4);
+  let seed = 987654321;
+  const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  // Tileable 2x2 micro-grain cells so adjacent pixels form crisp tiny metallic platelets
+  const G = 128, gx = new Float32Array(G * G), gy = new Float32Array(G * G);
+  for (let i = 0; i < G * G; i++) {
+    const ang = rnd() * Math.PI * 2, tilt = 0.08 * Math.sqrt(rnd());
+    gx[i] = Math.cos(ang) * tilt;
+    gy[i] = Math.sin(ang) * tilt;
+  }
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const cx = Math.floor((x / N) * G) % G, cy = Math.floor((y / N) * G) % G;
+    const nx = gx[cy * G + cx], ny = gy[cy * G + cx], nz = Math.sqrt(Math.max(0.1, 1 - nx * nx - ny * ny));
+    const i = (y * N + x) * 4;
+    px[i] = (nx * 0.5 + 0.5) * 255;
+    px[i + 1] = (ny * 0.5 + 0.5) * 255;
+    px[i + 2] = (nz * 0.5 + 0.5) * 255;
+    px[i + 3] = 255;
+  }
+  flakeTex = new THREE.DataTexture(px, N, N, THREE.RGBAFormat);
+  flakeTex.wrapS = flakeTex.wrapT = THREE.RepeatWrapping;
+  flakeTex.repeat.set(56, 56);
+  flakeTex.generateMipmaps = true;
+  flakeTex.minFilter = THREE.LinearMipmapLinearFilter;
+  flakeTex.magFilter = THREE.LinearFilter;
+  flakeTex.anisotropy = 4;
+  flakeTex.needsUpdate = true;
+  return flakeTex;
+}
+
+/**
+ * Soft under-chassis + 4-tire contact ambient-occlusion shadow map (256x256).
+ * Grounds every car onto wet asphalt and showroom floors without dynamic shadow-map cost.
+ */
+let shadowTex: THREE.DataTexture | null = null;
+function contactShadowTex() {
+  if (shadowTex) return shadowTex;
+  const N = 256, px = new Uint8Array(N * N * 4);
+  for (let y = 0; y < N; y++) {
+    const v = (y / (N - 1)) * 2 - 1; // -1 rear .. +1 front
+    for (let x = 0; x < N; x++) {
+      const u = (x / (N - 1)) * 2 - 1; // -1 right .. +1 left
+      // Rounded-box signed distance for the underbody footprint (u in [-0.70, 0.70], v in [-0.76, 0.76])
+      const qx = Math.max(0, Math.abs(u) - 0.56), qy = Math.max(0, Math.abs(v) - 0.62);
+      const dist = Math.hypot(qx, qy);
+      const bodyAo = Math.max(0, 1 - dist / 0.34);
+      const bodySoft = bodyAo * bodyAo * (3 - 2 * bodyAo) * 0.86;
+      // Extra concentrated contact patches directly beneath the 4 tires
+      let tyreAo = 0;
+      for (const tu of [-0.66, 0.66]) {
+        for (const tv of [-0.52, 0.50]) {
+          const d = Math.hypot((u - tu) / 0.19, (v - tv) / 0.22);
+          const w = Math.max(0, 1 - d);
+          tyreAo = Math.max(tyreAo, w * w * 0.94);
+        }
+      }
+      const alpha = Math.min(1, Math.max(bodySoft, tyreAo));
+      const i = (y * N + x) * 4;
+      px[i] = 0; px[i + 1] = 0; px[i + 2] = 0; px[i + 3] = Math.round(alpha * 255);
+    }
+  }
+  shadowTex = new THREE.DataTexture(px, N, N, THREE.RGBAFormat);
+  shadowTex.generateMipmaps = true;
+  shadowTex.minFilter = THREE.LinearMipmapLinearFilter;
+  shadowTex.magFilter = THREE.LinearFilter;
+  shadowTex.needsUpdate = true;
+  return shadowTex;
+}
+
+/**
+ * Radial motion-blurred forged-alloy spoke texture (256x256 RGBA) for high-speed wheels.
+ * Keeps semi-transparent swept gaps between blurred spoke arcs so brake calipers & rotors remain subtly visible.
+ */
+let blurSpokeTex: THREE.DataTexture | null = null;
+function spokeBlurTex() {
+  if (blurSpokeTex) return blurSpokeTex;
+  const N = 256, px = new Uint8Array(N * N * 4);
+  for (let y = 0; y < N; y++) {
+    const dy = (y / (N - 1)) * 2 - 1;
+    for (let x = 0; x < N; x++) {
+      const dx = (x / (N - 1)) * 2 - 1;
+      const r = Math.hypot(dx, dy);
+      const ang = Math.atan2(dy, dx);
+      // 5 twin-spoke radial blur harmonics + concentric machined rings
+      const s5 = 0.5 + 0.5 * Math.cos(ang * 5);
+      const s10 = 0.5 + 0.5 * Math.cos(ang * 10 + 0.4);
+      const spokeBand = 0.52 + 0.30 * s5 + 0.18 * s10;
+      const ring = 0.88 + 0.12 * Math.sin(r * 38);
+      const hub = r < 0.28 ? 0.95 : 0;
+      const innerFade = THREE.MathUtils.smoothstep(r, 0.16, 0.26);
+      const outerFade = 1 - THREE.MathUtils.smoothstep(r, 0.84, 0.98);
+      const alpha = Math.max(hub * (1 - THREE.MathUtils.smoothstep(r, 0.22, 0.30)), innerFade * outerFade * (0.38 + 0.42 * spokeBand));
+      const lum = Math.round(THREE.MathUtils.clamp((0.26 + 0.28 * spokeBand) * ring, 0, 1) * 255);
+      const i = (y * N + x) * 4;
+      px[i] = lum;
+      px[i + 1] = Math.min(255, Math.round(lum * 1.02));
+      px[i + 2] = Math.min(255, Math.round(lum * 1.06));
+      px[i + 3] = Math.round(THREE.MathUtils.clamp(alpha, 0, 1) * 255);
+    }
+  }
+  blurSpokeTex = new THREE.DataTexture(px, N, N, THREE.RGBAFormat);
+  blurSpokeTex.colorSpace = THREE.SRGBColorSpace;
+  blurSpokeTex.generateMipmaps = true;
+  blurSpokeTex.minFilter = THREE.LinearMipmapLinearFilter;
+  blurSpokeTex.magFilter = THREE.LinearFilter;
+  blurSpokeTex.needsUpdate = true;
+  return blurSpokeTex;
+}
+
+/** Grounded under-car contact shadow plane (shared by player, AI traffic, and remote cars). */
+export function createContactShadow(width = 2.35, length = 4.95, centerZ = -0.05, strengthNode?: THREE.Node<'float'>) {
+  const geo = new THREE.PlaneGeometry(width, length);
+  geo.rotateX(-Math.PI / 2);
+  const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+  const tex = texture(contactShadowTex(), uv());
+  const op = strengthNode ? tex.a.mul(strengthNode) : tex.a.mul(0.88);
+  m.colorNode = vec4(0, 0, 0, 1);
+  m.opacityNode = op;
+  const mesh = new THREE.Mesh(geo, m);
+  mesh.name = 'wheel_contact_shadow'; // 'wheel_' prefix: ignored by DamageVisuals denting
+  mesh.position.set(0, 0.015, centerZ);
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
+  mesh.renderOrder = -1;
+  return mesh;
+}
+
+/** Deep-clone a cached GLTF scene along with its material table (preserving intra-model material sharing). */
+function cloneCarScene(src: THREE.Object3D): THREE.Object3D {
+  const root = src.clone(true);
+  const clonedMats = new Map<THREE.Material, THREE.Material>();
+  const mapMat = (m: THREE.Material) => {
+    let c = clonedMats.get(m);
+    if (!c) { c = m.clone(); clonedMats.set(m, c); }
+    return c;
+  };
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    mesh.material = Array.isArray(mesh.material) ? mesh.material.map(mapMat) : mapMat(mesh.material);
+  });
+  return root;
+}
+
 const Y = new THREE.Vector3(0, 1, 0), X = new THREE.Vector3(1, 0, 0), ONE = new THREE.Vector3(1, 1, 1);
 
 /**
- * Game-side material tweaks shared by the player, AI and remote cars:
- *  - paint: keep the file's MeshPhysicalMaterial (clear coat + flake normal map) and set the colour;
- *    older models without clear coat get a fresh physical material;
- *  - glass: alpha-blended (transmission would cost a second scene pass on the iGPU), no depth
- *    write so the interior behind it never vanishes through sorting;
- *  - shadows on, fake light-beam meshes (old model) hidden.
- * Returns the paint material (callers recolour it).
+ * Game-side material setup shared by the player, AI and remote cars:
+ *  - paint: dual-layer automotive clear coat + metallic micro-flake normal + fine lacquer orange peel;
+ *  - glass: smoked automotive laminated physical glass with sharp Fresnel clear-coat sky/neon reflections;
+ *  - carbon, mirrors, rims, rotors, and tyres tuned for physically plausible night/studio response.
  */
 export function setupCarMaterials(model: THREE.Object3D, cfg: CarVisualConfig, paint: THREE.ColorRepresentation | null, shadows = true) {
   let paintMat: THREE.MeshPhysicalMaterial | null = null;
+  let glassMat: THREE.MeshPhysicalMaterial | null = null;
+  let carbonMat: THREE.MeshPhysicalMaterial | null = null;
   const color = paint === null ? new THREE.Color().setRGB(...cfg.default_paint, THREE.SRGBColorSpace) : new THREE.Color(paint);
   model.traverse((o) => {
     const m = o as THREE.Mesh;
-    if (!m.isMesh) return;
+    if (!m.isMesh || m.name === 'wheel_contact_shadow') return;
     m.castShadow = true;
     m.receiveShadow = shadows;
     const mats = materialsOf(m);
     mats.forEach((mat, i) => {
+      const assign = (next: THREE.Material) => {
+        if (Array.isArray(m.material)) m.material[i] = next; else m.material = next;
+      };
       if (mat.name === cfg.paint_material) {
         if (!paintMat) {
           const src = mat as unknown as THREE.MeshPhysicalMaterial;
-          paintMat = src.isMeshPhysicalMaterial ? src.clone() : new THREE.MeshPhysicalMaterial({ name: mat.name, metalness: 0.35, roughness: 0.32 });
+          paintMat = src.isMeshPhysicalMaterial ? src.clone() : new THREE.MeshPhysicalMaterial({ name: mat.name, metalness: 0.45, roughness: 0.22 });
+          if (!paintMat.normalMap) {
+            paintMat.normalMap = metallicFlake();
+            paintMat.normalScale.set(0.05, 0.05);
+          }
           paintMat.clearcoat = 1;
-          paintMat.clearcoatRoughness = 0.04;
+          paintMat.clearcoatRoughness = 0.024;
           paintMat.clearcoatNormalMap = orangePeel();
-          paintMat.clearcoatNormalScale.set(0.12, 0.12);
+          paintMat.clearcoatNormalScale.set(0.055, 0.055);
+          paintMat.ior = 1.52;
+          paintMat.specularIntensity = 1.0;
           paintMat.iridescenceIOR = 1.7;
           paintMat.iridescenceThicknessRange = [200, 520];
+          paintMat.envMapIntensity = 1.45;
           paintMat.color.copy(color);
         }
-        if (Array.isArray(m.material)) m.material[i] = paintMat; else m.material = paintMat;
+        assign(paintMat);
+        return;
       }
-      if (mat.name === 'glass') { mat.transparent = true; mat.opacity = Math.min(mat.opacity, 0.35); mat.roughness = 0.02; mat.depthWrite = false; }
+      if (mat.name === 'glass') {
+        if (!glassMat) {
+          glassMat = new THREE.MeshPhysicalMaterial({
+            name: 'glass',
+            color: new THREE.Color(0x06080c),
+            transparent: true,
+            opacity: 0.64,
+            roughness: 0.015,
+            metalness: 0.04,
+            ior: 1.52,
+            specularIntensity: 1.0,
+            clearcoat: 1.0,
+            clearcoatRoughness: 0.01,
+            envMapIntensity: 1.9,
+            depthWrite: false,
+          });
+        }
+        assign(glassMat);
+        return;
+      }
+      if (mat.name === 'carbon') {
+        if (!carbonMat) {
+          const std = mat as THREE.MeshStandardMaterial;
+          carbonMat = new THREE.MeshPhysicalMaterial({
+            name: 'carbon',
+            color: std.color ? std.color.clone() : new THREE.Color(0x101215),
+            map: std.map ?? null,
+            normalMap: std.normalMap ?? null,
+            normalScale: std.normalScale ? std.normalScale.clone() : new THREE.Vector2(0.4, 0.4),
+            roughnessMap: std.roughnessMap ?? null,
+            aoMap: std.aoMap ?? null,
+            metalness: 0.24,
+            roughness: 0.28,
+            clearcoat: 0.82,
+            clearcoatRoughness: 0.06,
+            envMapIntensity: 1.35,
+          });
+        }
+        assign(carbonMat);
+        return;
+      }
+      if (/^mirror_glass$|^mirror\./i.test(mat.name)) {
+        const std = mat as THREE.MeshStandardMaterial;
+        std.color?.setHex(0xf2f6ff);
+        std.metalness = 1.0;
+        std.roughness = 0.015;
+        std.envMapIntensity = 1.8;
+      } else if (/^tyre/i.test(mat.name)) {
+        const std = mat as THREE.MeshStandardMaterial;
+        if (std.color && std.color.r < 0.025) std.color.setRGB(0.036, 0.038, 0.042);
+        std.metalness = 0.0;
+        std.roughness = Math.min(Math.max(std.roughness ?? 0.78, 0.68), 0.82);
+      } else if (/^rim/i.test(mat.name)) {
+        const std = mat as THREE.MeshStandardMaterial;
+        std.metalness = Math.max(std.metalness ?? 0.9, 0.88);
+        std.roughness = Math.min(std.roughness ?? 0.22, 0.24);
+        std.envMapIntensity = 1.5;
+      } else if (mat.name === 'disc') {
+        const std = mat as THREE.MeshStandardMaterial;
+        std.metalness = 0.92;
+        std.roughness = 0.26;
+        std.envMapIntensity = 1.35;
+      }
       if (mat.name === 'light_beam') m.visible = false;   // fake beams: replaced by real spot lights
     });
   });
@@ -107,14 +327,17 @@ export function setupCarMaterials(model: THREE.Object3D, cfg: CarVisualConfig, p
 
 export class CarVisual {
   readonly root = new THREE.Group();          // placed at the physics body (CG)
-  private wheels: { node: THREE.Object3D; rest: THREE.Quaternion; caliper?: THREE.Object3D; spin: number }[] = [];
+  private wheels: { node: THREE.Object3D; rest: THREE.Quaternion; restPos: THREE.Vector3; radius: number; caliper?: THREE.Object3D; caliperRest?: THREE.Quaternion; spin: number }[] = [];
   /** seconds between DRAWN frames (main.ts sets it from the cap): decides when the spokes alias and the blur disc takes over */
-  renderDt = 1 / 30;
+  renderDt = 1 / 60;
   private blurMat: THREE.MeshStandardNodeMaterial | null = null;
   /** blur disc strength (0..1): a shader uniform, because a plain material.opacity change is not picked up after the first compile */
   private blurOp = uniform(0);
+  private shadowOp = uniform(0.92);
+  private contactShadow: THREE.Mesh;
+  private tailMats: THREE.MeshStandardMaterial[] = [];
   private lastUpdate = 0;
-  /** headlight strength factor: 1 driving, ~0.06 in the showroom (title/garage), where the beams only bloom into a white veil */
+  /** headlight strength factor: 1 driving, ~0.015 in the showroom (title/garage), where bright nose spots otherwise bloom into a fireball */
   dim = 1;
   private qa = new THREE.Quaternion();
   private qb = new THREE.Quaternion();
@@ -138,17 +361,41 @@ export class CarVisual {
     for (const name of [n.fl, n.fr, n.rl, n.rr]) {
       const node = model.getObjectByName(name)!;
       const caliper = model.getObjectByName(name.replace('wheel', 'caliper'));
-      this.wheels.push({ node, rest: node.quaternion.clone(), caliper, spin: 0 });
-      this.addBlurDisc(node);
+      const radius = this.addBlurDisc(node);
+      this.wheels.push({
+        node,
+        rest: node.quaternion.clone(),
+        restPos: node.position.clone(),
+        radius,
+        caliper,
+        caliperRest: caliper?.quaternion.clone(),
+        spin: 0,
+      });
     }
     this.paint = setupCarMaterials(model, cfg, null);
+    // Collect rear taillight materials so braking dynamically boosts tail glow
+    const seenTail = new Set<THREE.Material>();
+    for (const nm of cfg.rear_lights ?? []) {
+      model.getObjectByName(nm)?.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (!m.isMesh) return;
+        for (const mat of materialsOf(m) as THREE.MeshStandardMaterial[]) {
+          if (mat.emissive && (mat.emissive.r > 0.05 || /tail/i.test(mat.name)) && !seenTail.has(mat)) {
+            seenTail.add(mat);
+            this.tailMats.push(mat);
+          }
+        }
+      });
+    }
+    // Soft ground contact shadow beneath chassis + 4 tires
+    const cb = cfg.collision_box;
+    this.contactShadow = createContactShadow(cb.size_m[0] * 1.24, cb.size_m[2] * 1.18, cb.centre_in_model_m[2], this.shadowOp as unknown as THREE.Node<'float'>);
+    model.add(this.contactShadow);
+
     // The player's own car never needs to be in its headlight shadow map (the spots sit at its nose and shine away
-    // from it; screenshot-identical): skipping its triangles + dent shader saves the biggest part of every
-    // shadow-update frame. Other cars (AI, remote) still cast.
+    // from it): skipping its triangles + dent shader saves the biggest part of every shadow-update frame.
     model.traverse((o) => { if ((o as THREE.Mesh).isMesh) o.castShadow = false; });
-    // Headlights: two shadow-casting spots (the only dynamic shadows in the scene). A garage car swap passes the
-    // previous car's spots in: removing a shadow-casting light destroys its shadow map mid-frame (WebGPU validation
-    // error) and changes the light count (shader recompile), so the same two lights move to the new body.
+
     for (const [i, hp] of cfg.headlights.entries()) {
       const s = shared?.[i] ?? new THREE.SpotLight(0xfff3e0, this.headlightIntensity, 70, 0.42, 0.45, 2);
       s.position.set(hp[0], hp[1], hp[2]).sub(this.cg);
@@ -165,38 +412,42 @@ export class CarVisual {
   }
 
   /**
-   * Wheel motion blur. A wheel at 150 km/h turns ~20 times a second; drawn 30 times a second the spokes land on unrelated angles each
-   * frame and strobe backwards and forwards (the "walking legs" look). Like racing games, a translucent soft disc is laid over the rim
-   * face and fades in as the rotation per DRAWN frame passes ~20 degrees (update()); the tyre stays crisp. One shared material, always
-   * visible (opacity 0 at rest): a mesh that first becomes visible mid-drive would compile its pipeline then (a hitch).
+   * Radial spoke motion-blur ring placed slightly inboard of the outer rim lip so the 3D tyre sidewall,
+   * outer rim lip, and inner brake caliper/rotor stay sharp while alloy spokes blur naturally at speed.
+   * Returns measured outer tyre radius (m).
    */
-  private addBlurDisc(node: THREE.Object3D) {
-    const box = new THREE.Box3(), all = new THREE.Box3(), tmp = new THREE.Box3();
-    node.children.forEach((c) => {
+  private addBlurDisc(node: THREE.Object3D): number {
+    const rimBox = new THREE.Box3(), all = new THREE.Box3(), tmp = new THREE.Box3();
+    node.traverse((c) => {
       const m = c as THREE.Mesh;
-      if (!m.isMesh) return;
+      if (!m.isMesh || m.name.startsWith('wheel_blur_')) return;
       if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
-      m.updateMatrix();   // glTF nodes: position/rotation are set but `matrix` is only composed on the first render
+      m.updateMatrix();
       tmp.copy(m.geometry.boundingBox!).applyMatrix4(m.matrix);
       all.union(tmp);
-      if (/rim|hub/i.test(m.name)) box.union(tmp);
+      if (/rim/i.test(m.name)) rimBox.union(tmp);
     });
-    if (box.isEmpty()) box.copy(all);
-    if (box.isEmpty()) return;
-    const radius = Math.max(box.max.y - box.min.y, box.max.z - box.min.z) / 2;
+    const box = rimBox.isEmpty() ? all : rimBox;
+    const tyreRadius = all.isEmpty() ? 0.335 : Math.max(all.max.y - all.min.y, all.max.z - all.min.z) / 2;
+    if (box.isEmpty()) return tyreRadius;
+    const rimRadius = Math.min(tyreRadius * 0.76, Math.max(box.max.y - box.min.y, box.max.z - box.min.z) / 2 * 0.92);
     const side = node.position.x >= 0 ? 1 : -1;
-    const x = side > 0 ? box.max.x : box.min.x;
+    // Place recessed 14 mm inside the outer rim lip so center-lock nuts & rim lips stay crisp in 3D
+    const outerX = side > 0 ? box.max.x : box.min.x;
+    const x = outerX - side * 0.014;
     if (!this.blurMat) {
-      const m = new THREE.MeshStandardNodeMaterial({ color: 0x3a3c44, roughness: 0.55, metalness: 0.5, transparent: true, depthWrite: false });
-      const r = uv().sub(0.5).length().mul(2);   // 0 at the centre, 1 at the rim
-      m.opacityNode = smoothstep(float(1.0), float(0.8), r).mul(this.blurOp);
+      const m = new THREE.MeshStandardNodeMaterial({ roughness: 0.24, metalness: 0.88, transparent: true, depthWrite: false, side: THREE.DoubleSide });
+      const st = texture(spokeBlurTex(), uv());
+      m.colorNode = vec4(st.rgb, 1);
+      m.opacityNode = st.a.mul(this.blurOp);
       this.blurMat = m;
     }
-    const disc = new THREE.Mesh(new THREE.CircleGeometry(radius * 0.97, 40), this.blurMat);
-    disc.name = `wheel_blur_${node.name}`;   // 'wheel_' prefix: never dented
-    disc.rotation.y = side * Math.PI / 2;
-    disc.position.set(x + side * 0.004, (box.max.y + box.min.y) / 2, (box.max.z + box.min.z) / 2);
-    node.add(disc);
+    const ring = new THREE.Mesh(new THREE.RingGeometry(rimRadius * 0.16, rimRadius, 48, 1), this.blurMat);
+    ring.name = `wheel_blur_${node.name}`;   // 'wheel_' prefix: never dented
+    ring.rotation.y = side * Math.PI / 2;
+    ring.position.set(x, (box.max.y + box.min.y) / 2, (box.max.z + box.min.z) / 2);
+    node.add(ring);
+    return tyreRadius;
   }
 
   setPaint(hex: string, finish: Finish) {
@@ -214,41 +465,89 @@ export class CarVisual {
     for (const s of this.headlights) s.intensity = this.lightsOn && !this.lightsBroken ? this.headlightIntensity * this.dim : 0;
   }
 
-  static async load(cfg: CarVisualConfig, sharedHeadlights?: THREE.SpotLight[]): Promise<CarVisual> {
-    const gltf = await loadGLTF(assetUrl(cfg.model));
-    return new CarVisual(cfg, gltf.scene, sharedHeadlights);
+  /** Wheel hub centres and outer tyre radii in car MODEL space (used by Dents to keep crumpled fenders out of tyres). */
+  wheelWells(): { pos: THREE.Vector3; radius: number }[] {
+    const off = this.cfg.wheel_visual_offset_m ?? 0;
+    return this.wheels.map((w) => ({
+      pos: new THREE.Vector3(w.restPos.x + Math.sign(w.restPos.x) * off, w.restPos.y, w.restPos.z),
+      radius: w.radius,
+    }));
   }
 
-  /**
-   * pos/quat: where to DRAW the body (interpolated between physics ticks); physPos/physQuat: the
-   * body pose the core's wheel centres refer to (the state the last tick STARTED from, i.e. one
-   * step before the body's current pose: using the newer pose shifted the wheels back by v*dt, 15 cm at 130 km/h). Wheels are converted to
-   * car-local with the physics pose, then follow the drawn body: no drift between car and wheels.
-   */
+  static async load(cfg: CarVisualConfig, sharedHeadlights?: THREE.SpotLight[]): Promise<CarVisual> {
+    const gltf = await loadGLTF(assetUrl(cfg.model));
+    return new CarVisual(cfg, cloneCarScene(gltf.scene), sharedHeadlights);
+  }
+
   update(pos: THREE.Vector3, quat: THREE.Quaternion, out: Float64Array, physPos = pos, physQuat = quat) {
     this.root.position.copy(pos);
     this.root.quaternion.copy(quat);
     this.root.updateMatrixWorld();
     const inv = this.physInv.compose(physPos, physQuat, ONE).invert();
     const off = this.cfg.wheel_visual_offset_m ?? 0;
-    const tNow = performance.now(), dtS = Math.max(0.001, (tNow - this.lastUpdate) / 1000);
+    const tNow = performance.now(), dtS = Math.min(0.05, Math.max(0.001, (tNow - this.lastUpdate) / 1000));
     const first = this.lastUpdate === 0;
     this.lastUpdate = tNow;
+
+    // Detect uninitialised `out` (all wheel world centres at origin while car isn't at origin)
+    const outValid = (out[OUT.wheel(0)] !== 0 || out[OUT.wheel(0) + 1] !== 0 || out[OUT.wheel(0) + 2] !== 0
+      || out[OUT.wheel(1)] !== 0 || out[OUT.wheel(1) + 2] !== 0);
+
     let spinFrame = 0;
+    let wheelMinBottom = Infinity;
     for (let i = 0; i < 4; i++) {
       const w = this.wheels[i], o = OUT.wheel(i);
-      const centre = this.tmpCentre.set(out[o], out[o + 1], out[o + 2]).applyMatrix4(inv).add(this.cg);
-      centre.x += Math.sign(centre.x) * off;                 // model track is a little wider than physics
-      this.qa.setFromAxisAngle(Y, out[o + 3]);               // steer about the car's up axis
-      this.qb.setFromAxisAngle(X, out[o + 4]);               // spin about the axle
-      if (!first) spinFrame = Math.max(spinFrame, Math.abs(out[o + 4] - w.spin) / dtS * this.renderDt);   // rad turned per DRAWN frame
-      w.spin = out[o + 4];
+      const side = w.restPos.x >= 0 ? 1 : -1;
+      let centre: THREE.Vector3;
+      if (outValid) {
+        centre = this.tmpCentre.set(out[o], out[o + 1], out[o + 2]).applyMatrix4(inv).add(this.cg);
+        centre.x += Math.sign(centre.x || side) * off;
+        // Enforce physical wheel-arch envelope so crash wall overlaps or extreme impulses NEVER pop wheels out of arches
+        centre.x = THREE.MathUtils.clamp(centre.x, side > 0 ? w.restPos.x - 0.06 : w.restPos.x - 0.06, side > 0 ? w.restPos.x + 0.06 : w.restPos.x + 0.06);
+        centre.y = THREE.MathUtils.clamp(centre.y, w.restPos.y - 0.075, w.restPos.y + 0.062);
+        centre.z = THREE.MathUtils.clamp(centre.z, w.restPos.z - 0.032, w.restPos.z + 0.032);
+      } else {
+        centre = this.tmpCentre.copy(w.restPos);
+      }
+      wheelMinBottom = Math.min(wheelMinBottom, centre.y - w.radius);
+
+      const steer = outValid ? THREE.MathUtils.clamp(out[o + 3], -0.62, 0.62) : 0;
+      const omega = outValid ? out[o + 10] : 0;   // exact wheel angular velocity (rad/s), immune to 2*pi fmod wraps
+      if (first || (Math.abs(omega) < 0.02 && Math.abs(out[o + 4]) < 1e-4)) {
+        w.spin = outValid ? out[o + 4] : 0;
+      } else {
+        w.spin = (w.spin + omega * dtS) % (Math.PI * 2);
+      }
+      spinFrame = Math.max(spinFrame, Math.abs(omega) * this.renderDt);
+
+      this.qa.setFromAxisAngle(Y, steer);
+      this.qb.setFromAxisAngle(X, w.spin);
       w.node.position.copy(centre);
       w.node.quaternion.copy(this.qa).multiply(this.qb).multiply(w.rest);
-      if (w.caliper) { w.caliper.position.copy(centre); w.caliper.quaternion.copy(this.qa); }
+      if (w.caliper) {
+        w.caliper.position.copy(centre);
+        w.caliper.quaternion.copy(this.qa);
+        if (w.caliperRest) w.caliper.quaternion.multiply(w.caliperRest);
+      }
     }
-    if (this.blurMat) {   // blur disc: 0 below ~20 deg of rotation per drawn frame, full above ~57 deg; eased so it never flickers
-      const target = 0.92 * THREE.MathUtils.smoothstep(spinFrame, 0.35, 1.0);
+
+    // Keep soft contact shadow planted right on the road surface beneath the tyres (fading smoothly if airborne)
+    if (Number.isFinite(wheelMinBottom)) {
+      this.contactShadow.position.y = wheelMinBottom + 0.014;
+      const clearance = Math.max(0, wheelMinBottom);
+      this.shadowOp.value = 0.92 * (1 - THREE.MathUtils.smoothstep(clearance, 0.04, 0.35));
+    }
+
+    // Dynamic brake light response (running tail glow -> crisp HDR crimson under braking)
+    if (this.tailMats.length && !this.lightsBroken) {
+      const braking = this.dim > 0.5 && out[OUT.brake] > 0.05 ? THREE.MathUtils.clamp(out[OUT.brake], 0, 1) : 0;
+      const baseGlow = this.lightsOn ? (this.dim > 0.5 ? 1.85 : 1.15) : 0.08;
+      const targetGlow = baseGlow + braking * 7.5;
+      for (const tm of this.tailMats) tm.emissiveIntensity = targetGlow;
+    }
+
+    if (this.blurMat) {
+      const target = 0.88 * THREE.MathUtils.smoothstep(spinFrame, 0.42, 1.35);
       this.blurOp.value += (target - this.blurOp.value) * 0.25;
     }
   }

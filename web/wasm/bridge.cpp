@@ -99,6 +99,7 @@ EMSCRIPTEN_KEEPALIVE void rs_info(int id) {
 EMSCRIPTEN_KEEPALIVE void rs_reset_motion(int id, double speed, int gear) {
     g_cars[id]->vehicle->reset_motion(speed, gear);
     g_cars[id]->out = rs::VehicleOutput{};
+    if (speed == 0) g_cars[id]->spin = {};
     if (gear >= 0) g_cars[id]->controls->set_gear(gear);
 }
 

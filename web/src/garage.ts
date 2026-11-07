@@ -19,12 +19,12 @@ export interface Selection {
 
 /** iridescence: strength of the angle-dependent colour shift of pearl paint (0 = none). */
 export const FINISHES: Record<Finish, { label: string; clearcoat: number; roughness: number; metalness: number; iridescence?: number }> = {
-  gloss:    { label: 'Gloss',    clearcoat: 1,   roughness: 0.32, metalness: 0.35 },
-  satin:    { label: 'Satin',    clearcoat: 0.3, roughness: 0.45, metalness: 0.25 },
-  metallic: { label: 'Metallic', clearcoat: 1,   roughness: 0.22, metalness: 0.9 },
-  pearl:    { label: 'Pearl',    clearcoat: 1,   roughness: 0.24, metalness: 0.6, iridescence: 1 },
-  candy:    { label: 'Candy',    clearcoat: 1,   roughness: 0.16, metalness: 0.95 },
-  matte:    { label: 'Matte',    clearcoat: 0,   roughness: 0.8,  metalness: 0.1 },
+  gloss:    { label: 'Gloss',    clearcoat: 1,    roughness: 0.22, metalness: 0.45 },
+  satin:    { label: 'Satin',    clearcoat: 0.35, roughness: 0.42, metalness: 0.32 },
+  metallic: { label: 'Metallic', clearcoat: 1,    roughness: 0.18, metalness: 0.88 },
+  pearl:    { label: 'Pearl',    clearcoat: 1,    roughness: 0.20, metalness: 0.65, iridescence: 1 },
+  candy:    { label: 'Candy',    clearcoat: 1,    roughness: 0.14, metalness: 0.94 },
+  matte:    { label: 'Matte',    clearcoat: 0.04, roughness: 0.72, metalness: 0.15 },
 };
 
 export const SWATCHES = ['#c0160f', '#e8890a', '#e6c619', '#1f9d55', '#0e7c86', '#1d4ed8', '#6d28d9', '#d946a8', '#b9bcc4', '#15171c'];

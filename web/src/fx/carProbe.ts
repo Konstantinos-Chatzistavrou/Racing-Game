@@ -34,10 +34,12 @@ export class CarProbe {
   attach(model: THREE.Object3D, intensity = 1) {
     model.traverse((o) => {
       const m = o as THREE.Mesh;
-      if (!m.isMesh) return;
+      if (!m.isMesh || m.name === 'wheel_contact_shadow') return;
       for (const mat of (Array.isArray(m.material) ? m.material : [m.material]) as THREE.MeshStandardMaterial[]) {
+        if (!mat || !('envMap' in mat)) continue;
         mat.envMap = this.filtered.texture;
-        mat.envMapIntensity = intensity;
+        const base = (mat.userData.baseEnvIntensity ??= (mat.envMapIntensity ?? 1));
+        mat.envMapIntensity = base * intensity;
       }
     });
   }

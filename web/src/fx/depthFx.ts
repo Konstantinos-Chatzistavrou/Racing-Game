@@ -16,6 +16,7 @@ export interface DepthFxOpts {
   maxDistance?: number;
   intensity?: number;
   withAo?: boolean;
+  carPos?: THREE.Vector3;
 }
 
 export class DepthFx {
@@ -39,11 +40,21 @@ export class DepthFx {
     // Inside an RTT pass the built-in camera nodes are the quad's own camera: bind the GAME camera's matrices (the Matrix4
     // objects are updated in place by three, so the uniforms follow the camera).
     const projInv = uniform(camera.projectionMatrixInverse), viewM = uniform(camera.matrixWorldInverse), worldM = uniform(camera.matrixWorld);
+    const carU = uniform(opts.carPos ?? new THREE.Vector3(0, -100, 0));
     const nRaw = getNormalFromDepth(uv(), depth as unknown as THREE.Node, projInv);   // view space
     const vPos = getViewPosition(uv(), depth as unknown as THREE.Node, projInv);
     const wPos = worldM.mul(vec4(vPos, 1.0)).xyz;
     const up = viewM.mul(vec4(0, 1, 0, 0)).xyz.normalize();   // world up, in view space
-    const isUp = smoothstep(float(0.85), float(0.97), dot(nRaw, up).abs());
+    // Exclude the player's car body (above road level near carPos) from road puddle ripples & normal flattening,
+    // and specularly occlude wet-road SSR directly underneath the car's chassis footprint so the contact shadow stays dark.
+    const cdx = wPos.x.sub(carU.x), cdz = wPos.z.sub(carU.z);
+    const carDist2 = cdx.mul(cdx).add(cdz.mul(cdz));
+    const nearCar = smoothstep(float(2.7 * 2.7), float(1.65 * 1.65), carDist2);
+    const aboveRoad = smoothstep(carU.y.sub(0.32), carU.y.sub(0.12), wPos.y);
+    const notCarBody = float(1).sub(nearCar.mul(aboveRoad));
+    const underChassis = smoothstep(float(2.05 * 2.05), float(0.85 * 0.85), carDist2).mul(float(1).sub(aboveRoad));
+    const roadSpecOcc = float(1).sub(underChassis.mul(0.88));
+    const isUp = smoothstep(float(0.85), float(0.97), dot(nRaw, up).abs()).mul(notCarBody);
     // Reconstruct world-space rainwater puddle mask (matches groundMaterials.ts road puddles)
     const wp = vec2(wPos.x, wPos.z.negate());
     const pLo = mx_noise_float(wp.mul(0.068).add(vec2(3.1, 9.4))).mul(0.5).add(0.5);
@@ -55,7 +66,7 @@ export class DepthFx {
     const ndotv = dot(n, vPos.normalize().negate()).abs().clamp(0, 1);
     const fresnel = float(1).sub(ndotv).pow(2.4);
     const wetWeight = mix(mix(float(0.04), float(0.26), fresnel), mix(float(0.52), float(0.92), fresnel), pud);
-    const wet = isUp.mul(wetWeight);
+    const wet = isUp.mul(wetWeight).mul(roadSpecOcc);
     this.normals = rtt(vec4(n, wet), null, null, { type: THREE.HalfFloatType }) as unknown as THREE.RTTNode;
     this.node = ssr(beauty, depth, this.normals as unknown as THREE.Node<'vec3'>,
       { metalnessNode: (this.normals as unknown as { a: THREE.Node<'float'> }).a, roughnessNode: float(0.18), camera, binaryRefine: opt.binaryRefine });
