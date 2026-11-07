@@ -22,10 +22,10 @@
 // different transforms and shared materials, and a part that breaks off keeps its dents. Meshes
 // without the matrices (wheels, interior sharing a material) get dentOn = 0: never dented.
 import * as THREE from 'three/webgpu';
-import { Fn, Loop, If, uniform, uniformArray, positionLocal, normalLocal, vec3, vec4, float, sin, cos } from 'three/tsl';
+import { Fn, Loop, If, uniform, uniformArray, positionLocal, normalLocal, vec3, vec4, float, sin, cos, smoothstep } from 'three/tsl';
 
 export const MAX_DENTS = 16;
-const MAX_DEPTH = 0.3;            // m per slot (merged dents stop deepening here)
+const MAX_DEPTH = 0.24;           // m per slot (merged dents stop deepening here)
 const I4 = new THREE.Matrix4();
 
 type Obj = { object?: THREE.Object3D | null };
@@ -33,12 +33,13 @@ type Obj = { object?: THREE.Object3D | null };
 export class Dents {
   private pt = Array.from({ length: MAX_DENTS }, () => new THREE.Vector4());    // xyz point, w depth (m)
   private dir = Array.from({ length: MAX_DENTS }, () => new THREE.Vector4());   // xyz inward dir, w radius (m)
+  private wheels = Array.from({ length: 4 }, () => new THREE.Vector4(0, -10, 0, 0.4)); // xyz wheel hub in model space, w keep-out radius
   private countU = uniform(0, 'int');
   count = 0;
   readonly positionNode: THREE.Node;
 
   constructor() {
-    const ptU = uniformArray(this.pt, 'vec4'), dirU = uniformArray(this.dir, 'vec4');
+    const ptU = uniformArray(this.pt, 'vec4'), dirU = uniformArray(this.dir, 'vec4'), wheelU = uniformArray(this.wheels, 'vec4');
     // Object3D.clone() JSON-copies userData: on a cloned mesh (remote players' cars) the matrices are
     // plain objects, not Matrix4. Those meshes are never dented: identity and off.
     const isM4 = (m: unknown): m is THREE.Matrix4 => !!(m as { isMatrix4?: boolean } | undefined)?.isMatrix4;
@@ -64,14 +65,34 @@ export class Dents {
           const push = b.xyz.mul(0.6).sub(n.mul(0.4)).normalize();
           const side = vec3(b.z.negate(), 0, b.x);                     // crash dir x up: crumple wrinkles
           const h = sin(p.x.mul(41).add(p.y.mul(17))).mul(cos(p.z.mul(29)));
-          disp.addAssign(push.mul(a.w.mul(w)).add(side.mul(h.mul(a.w).mul(0.25).mul(w))));
+          disp.addAssign(push.mul(a.w.mul(w)).add(side.mul(h.mul(a.w).mul(0.18).mul(w))));
           tilt.addAssign(d.mul(s.mul(a.w).mul(-4).div(R2)));          // depth * grad w (toward the centre)
         });
       });
-      const t = tilt.sub(n.mul(tilt.dot(n)));                          // tangential part only
+      // Attenuate inward denting around the 4 wheel wells so crumpled fenders never collapse through spinning tyres
+      const archMask = float(1).toVar();
+      for (let k = 0; k < 4; k++) {
+        const wh = wheelU.element(k) as unknown as THREE.Node<'vec4'>;
+        const dx = p.x.sub(wh.x).div(0.24);
+        const dy = p.y.sub(wh.y).div(wh.w);
+        const dz = p.z.sub(wh.z).div(wh.w);
+        const ed = dx.mul(dx).add(dy.mul(dy)).add(dz.mul(dz)).sqrt();
+        archMask.assign(archMask.min(smoothstep(float(0.92), float(1.48), ed)));
+      }
+      const maxDisp = float(0.22);
+      const clamped = disp.mul(maxDisp.div(disp.length().max(maxDisp))).mul(archMask);
+      const t = tilt.mul(archMask).sub(n.mul(tilt.mul(archMask).dot(n)));   // tangential part only
       normalLocal.assign(toLocal.mul(vec4(n.add(t.mul(float(1.5).div(t.length().max(1.5)))), 0)).xyz.normalize());
-      return toLocal.mul(vec4(p.add(disp), 1)).xyz;
+      return toLocal.mul(vec4(p.add(clamped), 1)).xyz;
     })() as unknown as THREE.Node;
+  }
+
+  /** Set the 4 wheel-arch protective ellipsoids in car MODEL space. */
+  setWheels(wells: { pos: THREE.Vector3; radius: number }[]) {
+    for (let i = 0; i < 4; i++) {
+      const w = wells[i];
+      if (w) this.wheels[i].set(w.pos.x, w.pos.y, w.pos.z, w.radius + 0.065);
+    }
   }
 
   /** Mark a car mesh as dentable: store its rest mesh -> model matrix (model = car glTF root). */

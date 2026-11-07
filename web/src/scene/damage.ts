@@ -18,8 +18,8 @@ import { Dents } from './dents';
 const ZONES = ['front', 'rear', 'left', 'right'] as const;
 // Crush direction per zone in model space (X left, Y up, Z forward): the dent goes INTO the car.
 const INWARD = [new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 0, 1), new THREE.Vector3(-1, 0, 0), new THREE.Vector3(1, 0, 0)];
-// never dented: wheels, calipers, the cabin and the underbody (the old model's names, then v3's)
-const SKIP = ['wheel_', 'caliper_', 'interior', 'seat', 'dashboard', 'steering', 'wheel_well', 'underbody', 'hood_inner'];
+// never dented: wheels, calipers, glass cabin, wheel-well liners and underbody (checked across full ancestor chain)
+const SKIP = ['wheel_', 'caliper_', 'interior', 'seat', 'dashboard', 'steering', 'wheel_well', 'underbody', 'hood_inner', 'glass'];
 // Break-off thresholds in metres of zone crush (same as the Godot build).
 const BREAK_CRUSH: Record<string, number> = { bumper_front: 0.3, bumper_rear: 0.3, mirror_L: 0.12, mirror_R: 0.12 };
 const LIGHTS_CRUSH = 0.12;
@@ -137,9 +137,18 @@ export class DamageVisuals {
   onImpact: (kj: number, glass: boolean) => void = () => {};
 
   constructor(private car: CarVisual, private cfg: DamageVisualConfig, private pw: PhysicsWorld, private scene: THREE.Scene) {
+    this.dents.setWheels(car.wheelWells());
+    const isSkipped = (o: THREE.Object3D) => {
+      let cur: THREE.Object3D | null = o;
+      while (cur && cur !== car.model) {
+        if (SKIP.some((p) => cur!.name.startsWith(p))) return true;
+        cur = cur.parent;
+      }
+      return false;
+    };
     car.model.traverse((o) => {
       const m = o as THREE.Mesh;
-      if (m.isMesh && !SKIP.some((p) => o.name.startsWith(p))) this.deformables.push(m);
+      if (m.isMesh && !isSkipped(o)) this.deformables.push(m);
     });
     // Shader dents on every body material (set before the first compile: no mid-race pipeline).
     // A skipped mesh sharing one of these materials has no dent matrices -> dentOn = 0.

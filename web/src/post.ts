@@ -141,6 +141,8 @@ export class Post {
   private smaas: ScaledSMAA[] = [];
   private maxFx: DepthFx | null = null;
   private depthFx: DepthFx | null = null;
+  /** Shared world position of the player car (mutated in-place by main.ts so DepthFx masks car roof ripples & underbody SSR). */
+  readonly carPos = new THREE.Vector3(0, -100, 0);
   private sharpness = uniform(0.5);
   private _scale = 1;
   preset: PresetName;
@@ -162,10 +164,10 @@ export class Post {
       const pr = PRESETS[name];
       const p = new THREE.RenderPipeline(renderer);
       const fx = pr.ao && pr.ssr && ssrOn
-        ? (this.maxFx ??= new DepthFx(this.scenePass, camera, { resScale: 0.75, quality: 0.3, maxDistance: 85, intensity: 0.72, withAo: aoOn }))
+        ? (this.maxFx ??= new DepthFx(this.scenePass, camera, { resScale: 0.75, quality: 0.3, maxDistance: 85, intensity: 0.72, withAo: aoOn, carPos: this.carPos }))
         : null;
       const lite = !fx && pr.ssr && ssrOn
-        ? (this.depthFx ??= new DepthFx(this.scenePass, camera, { resScale: 0.5, quality: 0.16, maxDistance: 55, intensity: 0.6 }))
+        ? (this.depthFx ??= new DepthFx(this.scenePass, camera, { resScale: 0.5, quality: 0.16, maxDistance: 55, intensity: 0.6, carPos: this.carPos }))
         : null;
       let lit: THREE.Node<'vec4'> = fx ? fx.color : lite ? lite.color : color;
       if (opts.bloom && pr.bloom > 0) {

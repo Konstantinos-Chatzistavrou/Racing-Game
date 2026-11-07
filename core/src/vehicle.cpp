@@ -97,9 +97,13 @@ VehicleOutput Vehicle::update(const ChassisState& s, const std::array<WheelConta
     std::array<bool, 4> touching{};
     for (int w = 0; w < 4; ++w) {
         const WheelContact& c = contacts[w];
-        touching[w] = c.hit && c.distance <= rays[w].length;
+        const double cos_n = -dot(c.normal, rays[w].direction);
+        touching[w] = c.hit && c.distance <= rays[w].length && cos_n >= 0.35;
         if (!touching[w]) continue;
-        comp[w] = rays[w].length - c.distance;
+        const AxleParams& ax = cfg_.axle(w);
+        const double max_phys_comp = std::min(ax.spring_rest_length,
+            cfg_.wheels[w].static_compression + ax.max_compression + 0.025);
+        comp[w] = clamp(rays[w].length - c.distance, 0.0, max_phys_comp);
         // Compression rate = speed of the mount along the suspension axis toward the ground
         // (ground assumed static).
         Vec3 v_mount = s.velocity + cross(s.angular_velocity, rays[w].origin - s.position);

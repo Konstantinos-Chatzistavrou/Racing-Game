@@ -11,7 +11,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { GROUP_CAR, type PhysicsWorld } from './physics/world';
 import { materialsOf } from './scene/city';
 import { mergeStaticMeshes } from './scene/merge';
-import { setupCarMaterials, type CarVisualConfig } from './scene/car';
+import { createContactShadow, setupCarMaterials, type CarVisualConfig } from './scene/car';
 import { assetUrl, loadGLTF } from './scene/loaders';
 
 interface RouteSample { x: number; y: number; z: number; curvature: number; width_left: number; width_right: number }
@@ -142,6 +142,7 @@ export class AiTraffic {
       if (new URLSearchParams(location.search).get('merge') !== '0') mergeStaticMeshes(model, wheels.map((w) => w.node));   // ~89 meshes -> one per material (the wheels spin: kept)
       const root = new THREE.Group();
       root.add(model);
+      if (!black) root.add(createContactShadow(cb.size_m[0] * 1.22, cb.size_m[2] * 1.16, cb.centre_in_model_m[2]));
       scene.add(root);
       // One unshadowed spot per car (cheap): lights up the road ahead, walls and the player as it
       // passes. None at all in the black-car test (lights off).
