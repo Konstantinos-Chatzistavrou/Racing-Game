@@ -3,9 +3,9 @@
   "name": "Harrier GT",
   "physics": "cars/harrier_gt.json",
   "model": "res://assets/cars/v4/harrier_gt_hero.glb",
-  "notes": "modified from '2018 Mercedes C-Coup\u00e9 DTM' by Dave Love SketchFab (CC BY 4.0, CREDITS.md). Model space +X left, +Y up, +Z forward, origin on the ground at the body length centre. Front axle z 1.220, rear -1.430 (wheelbase 2.650), hubs y 0.331, model track 1.549.",
+  "notes": "modified from '2018 Mercedes C-Coupé DTM' by Dave Love SketchFab (CC BY 4.0, CREDITS.md). Model space +X left, +Y up, +Z forward, origin on the ground at the body length centre. Front axle z 1.220, rear -1.430 (wheelbase 2.650), hubs y 0.331, model track 1.549.",
   "cg_in_model_m": [
-    0.0,
+    0,
     0.51,
     -0.158
   ],
@@ -15,7 +15,7 @@
     "rl": "wheel_RL",
     "rr": "wheel_RR"
   },
-  "wheel_visual_offset_m": 0.03,
+  "wheel_visual_offset_m": -0.022,
   "collision_box": {
     "size_m": [
       1.93,
@@ -23,9 +23,9 @@
       4.33
     ],
     "centre_in_model_m": [
-      0.0,
+      0,
       0.72,
-      0.0
+      0
     ],
     "end_lift_m": 0.13,
     "end_lift_start_m": 1.59,
@@ -99,10 +99,10 @@
     "taillight_bar"
   ],
   "engine_smoke_in_model_m": [
-    0.0,
+    0,
     0.78,
     1.59
   ],
   "lod_model": "res://assets/cars/v3/vela_gt_traffic.glb",
-  "lod_distance_m": 30.0
+  "lod_distance_m": 30
 }
