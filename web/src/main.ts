@@ -1,10 +1,11 @@
 // Night Run (web build): three.js WebGPU renderer + Rapier rigid bodies + the rs_core physics
 // compiled to WebAssembly. WebGPU required. URL options: ?scale=0.75 (pins the render resolution; default adaptive),
 // ?quality=high|medium|low (pins the post/render preset; default adaptive), ?webgl=1 (debug only),
-// ?bloom=0, ?aa=0, ?shadows=0, ?lights=12 (WebGL 2 light pool size), ?mp=1 or ?mp=ws://host:port (preselects the Online mode, see net.ts),
-// ?ai=0..3 (AI cars), ?blackcar=1 (AI cars matte black, lights off: night lighting test),
+// ?bloom=0, ?aa=0, ?shadows=0, ?lights=12 (WebGL 2 light pool size), ?party=CODE (invite: join that multiplayer party, see party.ts),
+// ?peer=host:port (own PeerJS server), ?ai=0..5 (race rivals, default 5), ?blackcar=1 (AI cars matte black, lights off: night lighting test),
 // ?menu=0 (skip the title and garage: straight into a free run, for the test tools).
-// Flow: loading -> title (graphics tuned once behind a cover) -> garage (car, paint, tuning, mode) -> race / free run / online.
+// Flow: loading -> title (graphics tuned once behind a cover) -> Play -> game modes: Race (you + 5 AI rivals) / Free Roam (just you) /
+// Multiplayer (party lobby). The garage (title -> Garage) is cars, paint and upgrades only: back to the title, or Continue -> game modes.
 import * as THREE from 'three/webgpu';
 import { Post, PRESETS, PRESET_ORDER, ScaledClusteredLighting, type PresetName } from './post';
 import { CarProbe } from './fx/carProbe';
@@ -21,10 +22,12 @@ import { Hud } from './hud';
 import { DamageVisuals } from './scene/damage';
 import { GameAudio } from './audio';
 import { TouchControls, wantsTouch } from './touch';
-import { Net } from './net';
-import { Menu, type Gfx } from './menu';
-import { applyMods, loadSelection, modsOf, paintOf, type CatalogCar } from './garage';
+import { RemoteCars } from './net';
+import { Party, cleanCode, type Progress } from './party';
+import { Menu, rank, type Gfx, type Screen, type Standing } from './menu';
+import { applyMods, loadSelection, modsOf, paintOf, type CatalogCar, type Mode } from './garage';
 import { AiTraffic } from './ai';
+import { formatLap } from './hud';
 import { autoCap, benchClose, benchProgress, benchResults, measureRefresh, recommend, stats, type BenchReport, type PhaseResult, type SoakWindow } from './bench';
 
 const params = new URLSearchParams(location.search);
@@ -198,7 +201,9 @@ async function main() {
   const probeIntensity = num('probei', 1.25);
   const probe = webgpu && probeEvery > 0 ? new CarProbe(renderer, scene, pmrem, num('probesize', 128), probeEvery) : null;
   probe?.attach(visual.model, probeIntensity);
-  let net: Net | null = null;   // only while an Online session runs
+  let remote: RemoteCars | null = null;   // other players' cars, while a party session runs
+  let party: Party | null = null;         // the multiplayer party we are in (lobby or driving)
+  const remoteProg = new Map<string, Progress>();
   let shape = shapeOf(visualCfg);
   visual.renderDt = capInterval ? capInterval / 1000 : 1 / 60;
   let car = new CarBody(pw, core, shape, visual.cg);
@@ -206,18 +211,23 @@ async function main() {
   // Rapier only indexes new colliders for queries during a step: step once so the spawn probe
   // below can see the city (without this the first spawn misses the road and drops 3 m).
   pw.world.step();
-  const aiCount = Math.max(0, Math.min(3, num('ai', 0)));
-  if (aiCount > 0) say('Loading traffic…');
-  const ai = await AiTraffic.create(scene, pw, defaultCfg, route.samples, aiCount, params.get('blackcar') === '1');
+  const aiCount = Math.max(0, Math.min(5, num('ai', 5)));
+  if (aiCount > 0) say('Loading rivals…');
+  const ai = await AiTraffic.create(scene, pw, defaultCfg, route.samples, aiCount, params.get('blackcar') === '1', physics.vela_gt ?? physics[catalog[0].id]);
 
   // Start line = first route sample (core coords: Z-up) -> three (x, z, -y).
   const s0 = nycS0 ?? route.samples[0];
+  const startYaw = Math.atan2(Math.cos(s0.heading), -Math.sin(s0.heading));
+  /** Grid slot: metres ahead of the start point (ds) and to its right (lat). Free roam: 0, 0. */
+  let grid = { ds: 0, lat: 0 };
   const spawn = () => {
     const p = new THREE.Vector3(s0.x, s0.z + 3, -s0.y);
+    p.x += Math.sin(startYaw) * grid.ds - Math.cos(startYaw) * grid.lat;
+    p.z += Math.cos(startYaw) * grid.ds + Math.sin(startYaw) * grid.lat;
     const hit = pw.raycast(p, p.clone().add(new THREE.Vector3(0, -20, 0)));
     if (hit) p.y -= hit.toi;
     p.y += core.info.cgHeight + 0.02;
-    car.place(p, Math.atan2(Math.cos(s0.heading), -Math.sin(s0.heading)));
+    car.place(p, startYaw);
     car.settle();
   };
   spawn();
@@ -227,6 +237,10 @@ async function main() {
   let race = new CoreRace(routeJson, 0);
   let raceCar = race.addCar(car.body.translation());
   let raceT0 = 0, lap: LapInfo | null = null;
+  /** AI rivals in the race tracker: their tracker index, last progress, finish time (-1 racing) */
+  let aiRace: { idx: number; lap: LapInfo | null; fin: number }[] = [];
+  /** Laps of the session's race (0: free roam / free party session). */
+  const raceLaps = () => sel.mode === 'race' ? sel.laps : sel.mode === 'online' && party?.mode === 'race' ? party.laps : 0;
 
   const pos = new THREE.Vector3(), quat = new THREE.Quaternion();
   const input = new Input();
@@ -241,7 +255,7 @@ async function main() {
   audio.muted = true;   // silent in the menus
   // Session state. boot/title/garage/busy: car parked on the start line under the orbit camera;
   // countdown: same, with 3-2-1; race: driving; paused: everything frozen; results: race over, car braked.
-  type State = 'boot' | 'title' | 'garage' | 'busy' | 'countdown' | 'race' | 'paused' | 'results';
+  type State = 'boot' | 'title' | 'garage' | 'modes' | 'lobby' | 'busy' | 'countdown' | 'race' | 'paused' | 'results';
   let state: State = 'boot';
   let pausedFrom: State = 'race';
   let settledShowroom = 0;
@@ -277,15 +291,37 @@ async function main() {
   const resetCar = () => {
     spawn(); core.repair(); damage.repair(); input.hold = true; settledShowroom = 0;
     syncPose();
-    race = new CoreRace(routeJson, sel.mode === 'race' ? sel.laps : 0);
+    ai.reset();
+    race = new CoreRace(routeJson, raceLaps());
     raceCar = race.addCar(car.body.translation());
+    aiRace = ai.mode === 'race' ? ai.cars.map((c) => ({ idx: race.addCar(c.pos), lap: null, fin: -1 })) : [];
     raceT0 = ticks * DT;
     lapTimes = []; raceFinishedAt = -1; lap = null;
     hud.resetLaps();
-    ai.reset();
+    remoteProg.clear();
+  };
+  /** R in a race or a party: back on the road where you are (nearest route point, facing the right way), repaired. */
+  const recover = () => {
+    const t = car.body.translation();
+    let best = 0, bd = Infinity;
+    for (let i = 0; i < route.samples.length; i++) {
+      const q = route.samples[i], d = (q.x - t.x) ** 2 + (-q.y - t.z) ** 2;
+      if (d < bd) { bd = d; best = i; }
+    }
+    const q = route.samples[best];
+    const p = new THREE.Vector3(q.x, t.y + 3, -q.y);
+    const hit = pw.raycast(p, p.clone().add(new THREE.Vector3(0, -30, 0)), car.body);
+    if (hit) p.y -= hit.toi;
+    p.y += core.info.cgHeight + 0.02;
+    car.place(p, Math.atan2(Math.cos(q.heading), -Math.sin(q.heading)));
+    car.settle();
+    core.repair(); damage.repair(); input.hold = true;
+    syncPose();
+    remote?.kick();
   };
   input.onReset = () => {
-    if (state === 'race') { if (sel.mode === 'race') void beginRace(); else resetCar(); }
+    if (state !== 'race') return;
+    if (sel.mode === 'free') resetCar(); else recover();
   };
   input.onLights = () => { if (driving()) { visual.lightsOn = !visual.lightsOn; visual.applyHeadlights(); } };
   const enableTouch = () => {
@@ -296,14 +332,14 @@ async function main() {
       camera: () => rig.toggle(),
       toggleGearbox: () => (input.assists.autoGearbox = !input.assists.autoGearbox),
       unlockAudio: () => audio.unlock(),
-      garage: () => { if (driving()) toGarage(); },
+      garage: () => { if (driving()) quitSession(party ? 'lobby' : 'title'); },
     });
   };
   const onTouch = () => { if (driving()) { enableTouch(); removeEventListener('touchstart', onTouch); } };
   addEventListener('touchstart', onTouch, { passive: true });
   input.onCamera = () => { if (driving()) rig.toggle(); };
   input.onHud = () => { if (driving()) hud.toggle(); };
-  input.onGarage = () => { if (driving()) toGarage(); };
+  input.onGarage = () => { if (driving()) quitSession(party ? 'lobby' : 'title'); };
 
   // Showroom studio rig for title/garage views: elevated off-axis warm softbox key + opposite cool rim kicker.
   // Intensity changes only (never visibility) so lit material shaders never recompile.
@@ -339,6 +375,7 @@ async function main() {
   if (ai.cars.length) {
     const yaw = Math.atan2(Math.cos(s0.heading), -Math.sin(s0.heading));
     ai.stage(pos.clone().setY(pos.y - core.info.cgHeight - 0.05), yaw);
+    ai.mode = 'race';
     ai.update(1, camera);
   }
   {
@@ -361,7 +398,7 @@ async function main() {
     damage.repair();
     visual.lightsOn = true; visual.applyHeadlights();
   }
-  ai.reset();
+  ai.setMode('off');
   city.props.warmup(false);
   nyc?.endWarm();
   damage.warmup(false);
@@ -371,7 +408,7 @@ async function main() {
   const setExtra = () => (hud.extra = `${backend} · ${Math.floor(renderer.domElement.width * scale)}×${Math.floor(renderer.domElement.height * scale)}`
     + ` → ${renderer.domElement.width}×${renderer.domElement.height} · scale ${+scale.toFixed(2)}${adaptive ? '' : ' (fixed)'}`
     + ` · ${post.preset}${presetPinned ? ' (fixed)' : ''} · ${cityLights.mode}`
-    + (net ? ` · ${net.status}` : ''));
+    + (party ? ` · party ${party.code} · ${party.members.length} driver${party.members.length > 1 ? 's' : ''}` : ''));
   setExtra();
 
   // --- loop: fixed 240 Hz physics, render every frame -----------------------------------------
@@ -459,6 +496,7 @@ async function main() {
   let frameNo = 0;
   g.__game = { city, nyc, ai, visual, audio, rig, damage, trace, input, renderer, camera, scene, post,
     get car() { return car; }, get core() { return core; }, get state() { return state; }, menu: () => menu, sel,
+    get party() { return party; }, get remote() { return remote; }, standings: () => standings(), get lap() { return lap; },
     bench: (soak = false) => runBench(soak),
     setPreset: (name: PresetName) => { setPreset(PRESET_ORDER.indexOf(name)); setExtra(); },
     setScale: (x: number) => { scale = x; post.setScale(x); setExtra(); },
@@ -540,19 +578,117 @@ async function main() {
       if (p !== visualPath) void fetchVisualCfg(p);
     }
   };
+  const paintInt = () => parseInt(paintOf(sel, catalog).slice(1), 16);
+  const meForParty = () => ({ name: sel.name, car: sel.car, paint: paintInt() });
+  const isShowroom = (st: State) => st === 'title' || st === 'garage' || st === 'modes' || st === 'lobby' || st === 'busy';
   const menu: Menu = new Menu(sel, catalog, physics, {
-    preview: () => { void showCar().then(() => visual.setPaint(paintOf(sel, catalog), sel.finish)); },
-    go: () => void startSession(),
+    preview: () => { void showCar().then(() => { visual.setPaint(paintOf(sel, catalog), sel.finish); party?.updateMe(meForParty()); }); },
+    play: (mode) => void startSession(mode),
     gfx: (g2) => applyGfx(g2),
     resume: () => resume(),
-    restart: () => { menu.show('none'); if (sel.mode === 'race') void beginRace(); else { resetCar(); setState('race'); audio.muted = false; prev = performance.now(); } },
-    garage: () => toGarage(),
+    restart: () => { menu.show('none'); if (raceLaps() > 0) void beginRace(); else { resetCar(); setState('race'); audio.muted = false; prev = performance.now(); } },
+    quit: (to) => quitSession(party ? 'lobby' : to),
     bench: (soak) => void runBench(soak),
-    screen: (sc) => { if (sc === 'title' || sc === 'garage') setState(sc); if (sc === 'garage') preloadGarageCars(); },
+    screen: (sc: Screen) => {
+      if (sc === 'title' || sc === 'garage' || sc === 'modes' || sc === 'lobby') setState(sc);
+      if (sc === 'garage') preloadGarageCars();
+    },
     cam: (az, el, dist) => { orbit.az = az; orbit.el = el; orbit.dist = dist; orbit.drag = false; },
+    // ---- multiplayer ----
+    partyCreate: () => {
+      if (menu.partyBusy) return;
+      menu.partyBusy = true; menu.partyNote = ''; menu.render();
+      Party.create(meForParty()).then(attachParty, (e: Error) => { menu.partyNote = e.message; })
+        .finally(() => { menu.partyBusy = false; if (menu.screen === 'lobby') menu.render(); });
+    },
+    partyJoin: (code) => {
+      code = cleanCode(code);
+      if (menu.partyBusy) return;
+      if (code.length < 4) { menu.partyNote = 'Type the party code your friend sent you.'; menu.render(); return; }
+      menu.partyBusy = true; menu.partyNote = ''; menu.render();
+      Party.join(code, meForParty()).then(attachParty, (e: Error) => { menu.partyNote = e.message; })
+        .finally(() => { menu.partyBusy = false; if (menu.screen === 'lobby') menu.render(); });
+    },
+    partyLeave: () => {
+      party?.leave();
+      detachParty('');
+    },
+    partyMode: (mode, laps) => party?.setMode(mode, laps),
+    partyStart: () => party?.start(),
+    partyLobby: () => { if (party?.isHost) party.backToLobby(); quitSession('lobby'); },
+    partyRejoin: () => { if (party?.phase === 'driving') void startSession('online', true); },
+    partyMe: () => party?.updateMe(meForParty()),
   });
   menu.gfx = gfx;
-  document.getElementById('hud-garage')?.addEventListener('click', () => { if (driving()) toGarage(); });
+  {
+    const inv = cleanCode(params.get('party') ?? '');
+    if (inv.length >= 4) menu.invite = inv;
+  }
+
+  /** Party session: the leader started (load now), everyone is in (go), back to the lobby, others' cars and progress. */
+  let partyGo = false, loadingSession = false;
+  function attachParty(p: Party) {
+    party = p;
+    menu.party = p;
+    menu.partyNote = '';
+    menu.invite = '';
+    if (params.has('party')) history.replaceState(null, '', location.pathname + location.search.replace(/[?&]party=[^&]*/, '').replace(/^&/, '?'));
+    p.hooks = {
+      changed: () => {
+        if (remote) { remote.names = new Map(p.members.map((m) => [m.id, m.name])); remote.refreshTags(); }
+        if (menu.screen === 'lobby' || menu.screen === 'modes') menu.render();
+        setExtra();
+      },
+      start: () => { partyGo = false; void startSession('online'); },
+      go: () => { if (loadingSession) partyGo = true; else if (state === 'busy') void beginRace(); },
+      lobby: () => { if (driving() || state === 'busy') quitSession('lobby'); else if (menu.screen === 'lobby') menu.render(); },
+      pose: (id, ps, paint) => { if (remote && (driving() || state === 'busy')) remote.receive(id, ps, paint); },
+      progress: (id, gp) => { remoteProg.set(id, gp); if (state === 'results') menu.updateResults(standings()); },
+      left: (id) => { remote?.remove(id); remoteProg.delete(id); },
+      closed: (reason) => detachParty(reason),
+    };
+    menu.show('lobby');
+    setExtra();
+  }
+  function detachParty(reason: string) {
+    party = null;
+    menu.party = null;
+    menu.partyNote = reason;
+    if (driving() || state === 'busy') quitSession('lobby');
+    else if (menu.screen === 'lobby') menu.render();
+    else if (reason) menu.show('lobby');
+    setExtra();
+  }
+
+  /** Everyone in the race, in order: you, the AI rivals (single player) or the party (online). */
+  function standings(): Standing[] {
+    const L = lap?.routeLength ?? route.length_m;
+    const myFin = lap?.finished ? lapTimes.reduce((a, b) => a + b, 0) : -1;
+    const list: Standing[] = [{ name: party ? sel.name : 'You', you: true, fin: myFin, d: lap?.distance ?? -L, best: lap?.best ?? 0, ai: false }];
+    if (sel.mode === 'race') ai.cars.forEach((c, i) => { const r = aiRace[i]; if (r) list.push({ name: c.name, you: false, fin: r.fin, d: r.lap?.distance ?? 0, best: r.lap?.best ?? 0, ai: true }); });
+    if (sel.mode === 'online' && party) for (const m of party.members) {
+      if (m.id === party.selfId) continue;
+      const g = remoteProg.get(m.id);
+      list.push({ name: m.name, you: false, fin: g?.fin ?? -1, d: g?.d ?? -L, best: g?.best ?? 0, ai: false });
+    }
+    return list;
+  }
+  /** HUD running order: gap to the car in front, in seconds at the current speed (distance-based) or metres. */
+  let boardAt = 0, progAt = 0;
+  function updateBoard(now: number) {
+    if (now - boardAt < 250) return;
+    boardAt = now;
+    if (raceLaps() === 0) { hud.board(null); return; }
+    const ranked = rank(standings());
+    if (ranked.length < 2) { hud.board(null); return; }
+    hud.board(ranked.map((s, i) => {
+      if (i === 0) return { name: s.name, gap: s.fin >= 0 ? 'FIN' : 'LEADER', you: s.you };
+      const a = ranked[i - 1];
+      const gap = s.fin >= 0 ? (a.fin >= 0 ? `+${(s.fin - a.fin).toFixed(1)}s` : 'FIN') : `+${Math.max(0, Math.round(a.d - s.d))} m`;
+      return { name: s.name, gap, you: s.you };
+    }));
+  }
+  document.getElementById('hud-garage')?.addEventListener('click', () => { if (driving()) quitSession(party ? 'lobby' : 'title'); });
   document.getElementById('hud-pause')?.addEventListener('click', () => {
     if (state === 'race') { pausedFrom = state; setState('paused'); audio.muted = true; menu.show('pause'); }
     else if (state === 'paused') resume();
@@ -603,24 +739,51 @@ async function main() {
     Object.assign(g.__game, { visual, damage });   // `car` / `core` are live getters on __game
   }).catch((e) => console.error('car swap failed', e)));
 
-  async function startSession() {
+  /**
+   * Load a session: race (you + AI rivals on a grid), free roam (just you) or a party session
+   * (online: the party's rules, other players' cars). A party session waits for the leader's GO
+   * unless we rejoin one already driving.
+   */
+  async function startSession(mode: Mode, rejoin = false) {
+    if (loadingSession) return;
+    loadingSession = true;
+    sel.mode = mode;
     setState('busy');
-    menu.show('busy', sel.mode === 'online' ? 'Connecting…' : 'Getting ready…');
+    menu.show('busy', mode === 'online' ? 'Loading the party session…' : 'Getting ready…');
     await showCar();
     visual.setPaint(paintOf(sel, catalog), sel.finish);
     if (carKey() !== builtKey) rebuildPlayer();
-    if (sel.mode === 'online') {
-      net = new Net(sel.server, scene, visual);
-      net.paint = parseInt(paintOf(sel, catalog).slice(1), 16);
-      net.onChange = setExtra;
-      net.warmup(true);              // remote car shaders compiled now, not as a hitch when someone joins
+    // grid: single-player race = P4 of 6 between the rivals; party = slot by join order (two columns, 8 m rows)
+    if (mode === 'race' && ai.cars.length) {
+      grid = { ds: 0, lat: 0 };
+      grid = { ds: 0, lat: ai.setGrid(new THREE.Vector3(s0.x, s0.z, -s0.y)) };
+      ai.setMode('race');
+    } else {
+      ai.setMode('off');
+      const slot = party ? Math.max(0, party.members.findIndex((m) => m.id === party!.selfId)) : 0;
+      grid = mode === 'online' ? { ds: -8 * (slot >> 1), lat: slot % 2 ? 2.2 : -2.2 } : { ds: 0, lat: 0 };
+    }
+    if (mode === 'online') {
+      remote?.clear();
+      remote = new RemoteCars(scene, visual);
+      if (party) remote.names = new Map(party.members.map((m) => [m.id, m.name]));
+      remote.warmup(true);           // remote car shaders compiled now, not as a hitch when someone joins
       await warm();
-      net.warmup(false);
+      remote.warmup(false);
     } else await sleep(60);          // brief settle for any fullscreen transition
-    hud.lapTotal = sel.mode === 'race' ? sel.laps : 0;
+    hud.lapTotal = raceLaps();
     hud.show();
     if (wantsTouch()) enableTouch();
     audio.unlock();
+    loadingSession = false;
+    if (mode === 'online' && !rejoin) {
+      if (!party) { quitSession('lobby'); return; }
+      resetCar();
+      menu.show('busy', 'Waiting for the other drivers…');
+      party.ready();
+      if (partyGo || party.phase === 'driving') { partyGo = false; await beginRace(); }
+      return;
+    }
     await beginRace();
   }
 
@@ -650,13 +813,15 @@ async function main() {
     hud.resetFps();
     input.poll();                    // drop key edges pressed in the menus
     audio.muted = false;
+    remote?.kick();
     prev = performance.now(); acc = 0; lastRenderAt = 0;
-    if (sel.mode !== 'race') { setState('race'); setExtra(); return; }
+    if (raceLaps() === 0) { ai.go(); setState('race'); setExtra(); return; }
     setState('countdown');
     for (const t of ['3', '2', '1']) { menu.countdown(t); await sleep(900); if (state !== 'countdown') { menu.countdown(''); return; } }
     menu.countdown('GO');
     setState('race');
     raceT0 = ticks * DT;
+    ai.go();
     setTimeout(() => menu.countdown(''), 700);
   }
 
@@ -667,14 +832,18 @@ async function main() {
     prev = performance.now();
   }
 
-  function toGarage() {
-    net?.close(); net = null;
+  /** End the session: back to the title, the game modes, or (party) the lobby. */
+  function quitSession(to: 'title' | 'modes' | 'lobby') {
+    remote?.clear(); remote = null;
     hud.hide();
+    hud.board(null);
     menu.countdown('');
     audio.muted = true;
+    ai.setMode('off');
+    grid = { ds: 0, lat: 0 };
     resetCar();
-    setState('garage');
-    menu.show('garage');
+    setState(to);
+    menu.show(to);
     visual.setPaint(paintOf(sel, catalog), sel.finish);
     setExtra();
   }
@@ -683,7 +852,9 @@ async function main() {
     setState('results');
     audio.muted = true;
     const total = lapTimes.reduce((a, b) => a + b, 0);
-    menu.showResults({ total, best: Math.min(...lapTimes), laps: lapTimes, laps_target: sel.laps });
+    menu.showResults({ total, best: Math.min(...lapTimes), laps: lapTimes, laps_target: raceLaps(), standings: standings(),
+      routeLength: lap?.routeLength ?? route.length_m, online: sel.mode === 'online' });
+    if (party) party.sendProgress({ d: lap?.distance ?? 0, lap: lap?.laps ?? 0, fin: total, best: lap?.best ?? 0 });
   }
 
   addEventListener('keydown', (e) => {
@@ -767,7 +938,7 @@ async function main() {
     const cb0 = bench.active ? now : 0;
     const frame = Math.min(0.1, (now - prev) / 1000);
     prev = now;
-    const inShowroom = state === 'title' || state === 'garage' || state === 'busy';
+    const inShowroom = isShowroom(state);
     const live = state !== 'paused' && (!inShowroom || settledShowroom < 24 || bench.active);
     if (bench.active) benchStep(frame);
     if (live) acc += frame; else acc = 0;
@@ -811,7 +982,10 @@ async function main() {
       }
     }
     if (driving()) audio.update(car.out, car.out[OUT.speed]);
-    net?.update(now, pos, quat);
+    if (remote) {
+      remote.update(now, camera);
+      if (party && driving()) { const out = remote.outgoing(now, pos, quat); if (out) party.sendPose(out, paintInt()); }
+    }
     if (!driving() || state === 'busy') { placeShowroom(frame, pos); }
     else {
       showKey.intensity = showRim.intensity = 0;
@@ -834,7 +1008,7 @@ async function main() {
     // 60/120/144 Hz display averages exactly the cap instead of rounding down.
     if (capInterval === 0 || tuning || bench.uncap || now - lastRenderAt >= capInterval - 2) {
       lastRenderAt = capInterval && !bench.uncap && now - lastRenderAt < capInterval * 1.5 ? lastRenderAt + capInterval : now;
-      const hasCasters = ai.cars.length > 0 || net !== null || damage.debrisCount > 0;
+      const hasCasters = ai.mode === 'race' || remote !== null || damage.debrisCount > 0;
       if (hasCasters && ++frameNo % (params.has('se') ? num('se', 2) : PRESETS[post.preset].shadowEvery) === 0) for (const sh of headShadows) sh.needsUpdate = true;
       post.render();
       if (post.preset !== 'low' && post.preset !== 'medium') probe?.update(pos, visual.root);
@@ -862,10 +1036,19 @@ async function main() {
       }
     }
     if (state === 'race') {
-      lap = race.update(raceCar, car.body.translation(), ticks * DT - raceT0);
+      const tRace = ticks * DT - raceT0;
+      lap = race.update(raceCar, car.body.translation(), tRace);
       if (lap.laps > lapTimes.length) lapTimes.push(lap.last);
-      if (sel.mode === 'race' && lap.finished && raceFinishedAt < 0) raceFinishedAt = now;
-      if (raceFinishedAt > 0 && now - raceFinishedAt > 1500) finishRace();
+      for (const [i, r] of aiRace.entries()) {
+        r.lap = race.update(r.idx, ai.cars[i].pos, tRace);
+        if (r.lap.finished && r.fin < 0) r.fin = tRace;
+      }
+      if (raceLaps() > 0) {
+        if (lap.finished && raceFinishedAt < 0) raceFinishedAt = now;
+        if (raceFinishedAt > 0 && now - raceFinishedAt > 1500) finishRace();
+        updateBoard(now);
+        if (party && now - progAt > 250) { progAt = now; party.sendProgress({ d: lap.distance, lap: lap.laps, fin: lap.finished ? lapTimes.reduce((a, b) => a + b, 0) : -1, best: lap.best }); }
+      }
     }
     if (driving() && state !== 'paused') hud.update(now, frame, car.out, core.info, input.assists, damage.last, lap);
     // Graphics tuning (title menu only, behind the cover; see startTuning)

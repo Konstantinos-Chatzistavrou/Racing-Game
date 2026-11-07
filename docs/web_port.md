@@ -181,6 +181,16 @@ screens in `web/src/menu.ts`, data in `web/src/garage.ts` + `data/cars/catalog.j
   paint material.
 - **Tuning** (`applyMods`): engine +5 % torque per stage, tyres +5 % grip, weight -3 % mass and inertia, aero
   +25 % downforce / +6 % drag per stage. Levels 0-3; stats bars read the patched JSON.
-- **Modes**: Free run (traffic, laps counted forever), Race (N laps against the clock, countdown, results; the AI cars
-  are traffic, not racers), Online (relay in `server/`; players' paint colour is sent as `c` with each pose).
-- `?menu=0` skips the front end (free run at once) for `web/tools/drive.mjs`; scenarios `menu` and `online` walk the UI.
+- **Flow**: title → Play → game modes (Race / Free Roam / Multiplayer). The garage (title → Garage) has no mode picker:
+  Main Menu or Continue → game modes.
+- **Race**: you + 5 AI rivals (`ai.ts`, `?ai=0..5`). Rivals are kinematic bodies on a smoothed 2 m driving line (route
+  corners rounded); speed profile from the core AIDriver limits on the default car's physics (cornering skill·0.82·µg,
+  braking skill·0.85·µg, power/drag-limited acceleration), skills 0.78-0.92, own preferred line, move over to pass a
+  slower car or the player, ≤5 % catch-up. Always flat on the road (yaw only). All six cars are in the core RaceTracker
+  (positions, finish times). 'off' parks them under the city with lights at 0 (the light set never changes).
+- **Free Roam**: just you.
+- **Multiplayer** (`party.ts`, `net.ts`): PeerJS star around the leader; messages hello / lobby / start / loaded / go /
+  lobbyback / pose (20 Hz + 1 s heartbeat) / prog (4 Hz) / bye. Leader GO waits for every member's `loaded` (20 s cap).
+  Grid slot by join order. `?party=CODE` invite banner, `?peer=` own broker.
+- `?menu=0` skips the front end (free run at once) for `web/tools/drive.mjs`; scenarios `menu`, `race6`, `follow` walk the
+  UI / race; `tools/party_test.mjs` and `tools/party_game_test.mjs` test parties.

@@ -5,6 +5,7 @@ export interface CatalogCar { id: string; name: string; tag: string; physics: st
 export type Finish = 'gloss' | 'satin' | 'metallic' | 'pearl' | 'candy' | 'matte';
 export type ModKey = 'engine' | 'tyres' | 'weight' | 'aero';
 export type Mods = Record<ModKey, number>;   // level 0 (stock) .. 3
+/** free roam (just you), race (you + AI rivals), online (a party session: its rules come from the party) */
 export type Mode = 'free' | 'race' | 'online';
 
 export interface Selection {
@@ -14,7 +15,8 @@ export interface Selection {
   mods: Record<string, Mods>;        // per car
   mode: Mode;
   laps: number;
-  server: string;
+  /** multiplayer display name */
+  name: string;
 }
 
 /** iridescence: strength of the angle-dependent colour shift of pearl paint (0 = none). */
@@ -38,8 +40,6 @@ export const MODS: Record<ModKey, { label: string; levels: string[]; hint: strin
 };
 export const MOD_KEYS = Object.keys(MODS) as ModKey[];
 export const noMods = (): Mods => ({ engine: 0, tyres: 0, weight: 0, aero: 0 });
-
-export const DEFAULT_SERVER = () => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.hostname || 'localhost'}:8787`;
 
 /** Physics JSON with the mods applied (a new object; the catalog JSON is never touched). */
 export function applyMods(base: any, m: Mods): any {
@@ -76,7 +76,7 @@ export function statsOf(d: any): Stats {
 
 const KEY = 'nr.garage.v1';
 export function loadSelection(cars: CatalogCar[], params: URLSearchParams): Selection {
-  const sel: Selection = { car: cars[1]?.id ?? cars[0].id, paint: {}, finish: 'gloss', mods: {}, mode: 'free', laps: 3, server: DEFAULT_SERVER() };
+  const sel: Selection = { car: cars[1]?.id ?? cars[0].id, paint: {}, finish: 'gloss', mods: {}, mode: 'race', laps: 3, name: `Driver ${Math.floor(1000 + Math.random() * 9000)}` };
   try {
     const s = JSON.parse(localStorage.getItem(KEY) ?? 'null');
     if (s && typeof s === 'object') {
@@ -88,15 +88,13 @@ export function loadSelection(cars: CatalogCar[], params: URLSearchParams): Sele
         for (const key of MOD_KEYS) m[key] = Math.max(0, Math.min(3, Math.round(Number((v as Mods)?.[key]) || 0)));
         sel.mods[k] = m;
       }
-      if (['free', 'race', 'online'].includes(s.mode)) sel.mode = s.mode;
+      if (['free', 'race'].includes(s.mode)) sel.mode = s.mode;
       if ([1, 3, 5, 10].includes(s.laps)) sel.laps = s.laps;
-      if (typeof s.server === 'string' && /^wss?:\/\//.test(s.server)) sel.server = s.server;
+      if (typeof s.name === 'string' && s.name.trim()) sel.name = s.name.trim().slice(0, 18);
     }
   } catch { /* storage blocked or corrupt: defaults */ }
   const q = params.get('car');   // ?car=<id>: pick the car from the URL (tests, links)
   if (q && cars.some((c) => c.id === q)) sel.car = q;
-  const mp = params.get('mp');
-  if (mp && mp !== '0') { sel.mode = 'online'; if (/^wss?:\/\//.test(mp)) sel.server = mp; }
   return sel;
 }
 export function saveSelection(sel: Selection) {
