@@ -11,8 +11,8 @@ import { MAX_MEMBERS, cleanCode, type Party, type PartyMode } from './party';
 
 export type Gfx = 'auto' | 'max' | 'ultra' | 'high' | 'medium' | 'low';
 export type Screen = 'none' | 'title' | 'garage' | 'modes' | 'lobby' | 'pause' | 'results' | 'busy';
-/** One line of the race standings. fin: finish time (s) or -1; d: distance covered (m). */
-export interface Standing { name: string; you: boolean; fin: number; d: number; best: number; ai: boolean }
+/** One line of the race standings. fin: finish time (s) or -1; d: distance covered (m); dnf: out of the race. */
+export interface Standing { name: string; you: boolean; fin: number; d: number; best: number; ai: boolean; dnf?: boolean; why?: string }
 export interface ResultData { total: number; best: number; laps: number[]; laps_target: number; standings: Standing[]; routeLength: number; online: boolean }
 
 export interface MenuHooks {
@@ -34,7 +34,7 @@ export interface MenuHooks {
   partyCreate(): void;
   partyJoin(code: string): void;
   partyLeave(): void;
-  partyMode(mode: PartyMode, laps: number): void;
+  partyMode(mode: PartyMode, laps: number, realism: boolean): void;
   partyStart(): void;
   /** leader: everybody back to the lobby */
   partyLobby(): void;
@@ -42,20 +42,27 @@ export interface MenuHooks {
   partyRejoin(): void;
   /** our name changed */
   partyMe(): void;
+  /** results screen: watch the cars still racing */
+  spectate(): void;
 }
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const bar = (f: number) => `<i style="width:${Math.round(Math.max(0, Math.min(1, f)) * 100)}%"></i>`;
 const hex = (n: number) => '#' + (n >>> 0 & 0xffffff).toString(16).padStart(6, '0');
 
-/** Standings order: finished (by time), then by distance covered. */
+/** Standings order: finished (by time), then still racing, then out (DNF); each by distance covered. */
 export function rank(list: Standing[]) {
   return list.slice().sort((a, b) => {
     if ((a.fin >= 0) !== (b.fin >= 0)) return a.fin >= 0 ? -1 : 1;
     if (a.fin >= 0) return a.fin - b.fin;
+    if (!!a.dnf !== !!b.dnf) return a.dnf ? 1 : -1;
     return b.d - a.d;
   });
 }
+const RULES = {
+  realism: 'No resets in races: a wreck, a rollover or 30 s stuck puts you out (DNF) and you spectate the rest.',
+  respawn: 'R puts you back on the road, repaired, any time.',
+};
 
 export class Menu {
   private root = document.getElementById('menu')!;
@@ -165,6 +172,10 @@ export class Menu {
           <button class="huge" data-act="garage-open" ${dis}>⚙ Garage</button>
         </div>
         <div class="gfx-panel">
+          <div class="gfx"><span class="dim">DRIVING</span><button class="chip ${this.sel.realism ? 'on' : ''}" data-act="realism" data-v="1">Full Realism</button><button class="chip ${this.sel.realism ? '' : 'on'}" data-act="realism" data-v="0">Respawns</button></div>
+          <div class="dim note">${this.sel.realism ? RULES.realism : RULES.respawn}</div>
+        </div>
+        <div class="gfx-panel">
           <div class="gfx"><span class="dim">GRAPHICS</span>${g('auto', 'Auto')}${g('max', 'Max')}${g('ultra', 'Ultra')}${g('high', 'High')}${g('medium', 'Medium')}${g('low', 'Low')}</div>
           <div class="dim note">${esc(this.gfxNote || 'WebGPU Clustered Forward+ · 240 Hz Physics')}</div>
         </div>
@@ -245,6 +256,7 @@ export class Menu {
         <div class="mcard">
           <div class="mcard-top"><span class="micon">🏁</span><b>Race</b><span class="dim">6-car grid · you vs 5 rivals</span></div>
           <p class="dim">Start mid-pack through Midtown. Rivals take their own lines and fight for position. Finish ahead of them all.</p>
+          <div class="opts"><span class="dim">RULES</span><span class="pill ${sel.realism ? 'gold' : ''}">${sel.realism ? 'FULL REALISM' : 'RESPAWNS'}</span><span class="dim small-note">change on the main menu</span></div>
           <div class="opts"><span class="dim">LAPS</span>${laps}</div>
           <button class="primary huge" data-act="start-race">▶ Start Race · ${sel.laps} Lap${sel.laps > 1 ? 's' : ''}</button>
         </div>
@@ -291,8 +303,10 @@ export class Menu {
     const empty = Array.from({ length: Math.max(0, MAX_MEMBERS - p.members.length) }, () => '<div class="member empty"><i class="dot"></i><div class="mtext"><span class="dim">Open slot</span></div></div>').join('');
     const modeChip = (m: PartyMode, label: string) => `<button class="chip ${p.mode === m ? 'on' : ''}" data-act="pmode" data-v="${m}" ${p.isHost ? '' : 'disabled'}>${label}</button>`;
     const lapChip = (n: number) => `<button class="chip ${p.laps === n ? 'on' : ''}" data-act="plaps" data-v="${n}" ${p.isHost ? '' : 'disabled'}>${n}</button>`;
+    const realChip = (on: boolean, label: string) => `<button class="chip ${p.realism === on ? 'on' : ''}" data-act="preal" data-v="${on ? 1 : 0}" ${p.isHost ? '' : 'disabled'}>${label}</button>`;
     const rules = `<div class="opts"><span class="dim">MODE</span>${modeChip('race', 'Race')}${modeChip('free', 'Free Roam')}
-      ${p.mode === 'race' ? `<span class="dim sep">LAPS</span>${[1, 3, 5, 10].map(lapChip).join('')}` : ''}</div>`;
+      ${p.mode === 'race' ? `<span class="dim sep">LAPS</span>${[1, 3, 5, 10].map(lapChip).join('')}` : ''}</div>
+      ${p.mode === 'race' ? `<div class="opts"><span class="dim">RULES</span>${realChip(true, 'Full Realism')}${realChip(false, 'Respawns')}<span class="dim small-note">${p.realism ? RULES.realism : RULES.respawn}</span></div>` : ''}`;
     let action: string;
     if (p.phase === 'driving') action = p.mode === 'free' ? '<button class="primary huge" data-act="prejoin">▶ Rejoin Free Roam</button>' : p.isHost ? '<button class="huge" data-act="plobby">Everyone back to lobby</button>' : '<div class="dim wait">The party is racing. You can join the next one.</div>';
     else if (p.phase === 'loading') action = '<div class="dim wait"><span class="spin inline"></span> Loading…</div>';
@@ -333,6 +347,7 @@ export class Menu {
     const pos = ranked.findIndex((s) => s.you) + 1;
     const leader = ranked[0];
     const gap = (s: Standing) => {
+      if (s.dnf) return `DNF${s.why ? ' · ' + s.why : ''}`;
       if (s === leader) return s.fin >= 0 ? formatLap(s.fin) : '—';
       if (s.fin >= 0 && leader.fin >= 0) return '+' + (s.fin - leader.fin).toFixed(3);
       const laps = Math.floor((leader.d - s.d) / r.routeLength);
@@ -343,14 +358,17 @@ export class Menu {
         <span class="spos">${i + 1}</span><b>${esc(s.name)}</b><span class="dim">${s.best > 0 ? formatLap(s.best) : ''}</span><span class="sgap">${gap(s)}</span></div>`).join('')}</div>` : '';
     const rows = r.laps.map((t, i) => `<div class="row"><span>LAP ${i + 1}</span><b class="${t === r.best ? 'best' : ''}">${formatLap(t)}</b></div>`).join('');
     const p = this.party;
+    const me = ranked.find((s) => s.you);
+    const racing = ranked.some((s) => !s.you && s.fin < 0 && !s.dnf);
+    const spec = racing ? '<button data-act="spectate">👁 Spectate</button>' : '';
     const btns = r.online
-      ? (p?.isHost ? '<button class="primary" data-act="plobby">↩ Everyone to Lobby</button>' : '<span class="dim wait">Waiting for the leader…</span>') + `<button data-act="pleave">${p?.isHost ? 'Close Party' : 'Leave Party'}</button>`
-      : '<button class="primary" data-act="restart">↻ Race Again</button><button data-act="quit-modes">Game Modes</button><button data-act="quit">Main Menu</button>';
+      ? spec + (p?.isHost ? '<button class="primary" data-act="plobby">↩ Everyone to Lobby</button>' : '<span class="dim wait">Waiting for the leader…</span>') + `<button data-act="pleave">${p?.isHost ? 'Close Party' : 'Leave Party'}</button>`
+      : '<button class="primary" data-act="restart">↻ Race Again</button>' + spec + '<button data-act="quit-modes">Game Modes</button><button data-act="quit">Main Menu</button>';
     return `<div class="card center results-card">
       <div class="kicker">${r.online ? 'PARTY RACE' : 'RACE'} RESULT</div>
-      <h2>${ranked.length > 1 ? `You finished ${ord(pos)}` : 'Race Complete'}</h2>
-      <div class="big ${pos === 1 ? 'win' : ''}">${ranked.length > 1 ? `P${pos}<small> / ${ranked.length}</small>` : formatLap(r.total)}</div>
-      <div class="dim">${formatLap(r.total)} · ${r.laps_target} lap${r.laps_target > 1 ? 's' : ''} · Best lap <b class="best-inline">${formatLap(r.best)}</b></div>
+      <h2>${me?.dnf ? `Did not finish${me.why ? ' · ' + esc(me.why) : ''}` : ranked.length > 1 ? `You finished ${ord(pos)}` : 'Race Complete'}</h2>
+      <div class="big ${pos === 1 && !me?.dnf ? 'win' : ''}">${me?.dnf ? 'DNF' : ranked.length > 1 ? `P${pos}<small> / ${ranked.length}</small>` : formatLap(r.total)}</div>
+      <div class="dim">${me?.dnf ? `${r.laps.length} of ${r.laps_target} laps` : `${formatLap(r.total)} · ${r.laps_target} lap${r.laps_target > 1 ? 's' : ''}`} · Best lap <b class="best-inline">${formatLap(r.best)}</b></div>
       ${table}
       <div class="rows">${rows}</div>
       <div class="btns">${btns}</div>
@@ -401,8 +419,11 @@ export class Menu {
       case 'pcreate': this.hooks.partyCreate(); break;
       case 'pjoin': this.hooks.partyJoin(this.joinCode); break;
       case 'pleave': this.hooks.partyLeave(); break;
-      case 'pmode': this.party && this.hooks.partyMode(v as PartyMode, this.party.laps); break;
-      case 'plaps': this.party && this.hooks.partyMode(this.party.mode, Number(v)); break;
+      case 'pmode': this.party && this.hooks.partyMode(v as PartyMode, this.party.laps, this.party.realism); break;
+      case 'plaps': this.party && this.hooks.partyMode(this.party.mode, Number(v), this.party.realism); break;
+      case 'preal': this.party && this.hooks.partyMode(this.party.mode, this.party.laps, v === '1'); break;
+      case 'realism': sel.realism = v === '1'; this.save(); this.render(); break;
+      case 'spectate': this.hooks.spectate(); break;
       case 'pstart': this.hooks.partyStart(); break;
       case 'plobby': this.hooks.partyLobby(); break;
       case 'prejoin': this.hooks.partyRejoin(); break;

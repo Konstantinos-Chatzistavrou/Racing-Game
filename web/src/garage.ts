@@ -17,6 +17,8 @@ export interface Selection {
   laps: number;
   /** multiplayer display name */
   name: string;
+  /** races: true = full realism (no resets; wrecked / rolled / stuck = DNF, then spectate), false = R respawns */
+  realism: boolean;
 }
 
 /** iridescence: strength of the angle-dependent colour shift of pearl paint (0 = none). */
@@ -76,7 +78,7 @@ export function statsOf(d: any): Stats {
 
 const KEY = 'nr.garage.v1';
 export function loadSelection(cars: CatalogCar[], params: URLSearchParams): Selection {
-  const sel: Selection = { car: cars[1]?.id ?? cars[0].id, paint: {}, finish: 'gloss', mods: {}, mode: 'race', laps: 3, name: `Driver ${Math.floor(1000 + Math.random() * 9000)}` };
+  const sel: Selection = { car: cars[1]?.id ?? cars[0].id, paint: {}, finish: 'gloss', mods: {}, mode: 'race', laps: 3, name: `Driver ${Math.floor(1000 + Math.random() * 9000)}`, realism: true };
   try {
     const s = JSON.parse(localStorage.getItem(KEY) ?? 'null');
     if (s && typeof s === 'object') {
@@ -91,6 +93,7 @@ export function loadSelection(cars: CatalogCar[], params: URLSearchParams): Sele
       if (['free', 'race'].includes(s.mode)) sel.mode = s.mode;
       if ([1, 3, 5, 10].includes(s.laps)) sel.laps = s.laps;
       if (typeof s.name === 'string' && s.name.trim()) sel.name = s.name.trim().slice(0, 18);
+      if (typeof s.realism === 'boolean') sel.realism = s.realism;
     }
   } catch { /* storage blocked or corrupt: defaults */ }
   const q = params.get('car');   // ?car=<id>: pick the car from the URL (tests, links)

@@ -345,3 +345,17 @@ body.menu #tags { display: none; }
   #menu .modes-screen { gap: 12px; }
   #board { top: 120px; }
 }
+
+/* ---- full realism: no reset button; spectator bar ---------------------------------------------- */
+body.noreset #hud-reset, body.noreset [data-c="reset"] { display: none; }
+#menu .small-note { font-size: 11px; letter-spacing: 0; }
+#spectate { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 6; display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px 8px 14px; border-radius: var(--r); background: var(--panel); border: 1px solid var(--line2); border-top: 2px solid var(--accent);
+  font-size: 13px; white-space: nowrap; contain: layout style; }
+#spectate[hidden] { display: none; }
+#spectate .sp-out { font-weight: 900; letter-spacing: .16em; font-size: 11px; color: #ff7a8c; }
+#spectate b { font-weight: 800; min-width: 120px; }
+#spectate button { font: inherit; font-weight: 700; color: var(--fg); background: #ffffff10; border: 1px solid var(--line2); border-radius: 8px; padding: 6px 11px; cursor: pointer; }
+#spectate button:hover { background: #ffffff22; }
+body.spectating #dash, body.spectating #warn, body.spectating #laps, body.spectating #help, body.spectating #hud-reset, body.spectating #hud-cam { display: none; }
+body.spectating #board { top: 12px; }

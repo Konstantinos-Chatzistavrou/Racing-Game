@@ -13,23 +13,27 @@ export const MAX_MEMBERS = 6;
 const PREFIX = 'opengrid-v1-';
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';   // no 0/O, 1/I: easy to read out
 const LOAD_TIMEOUT_MS = 20000;
+const BROKER_TRIES = 4;          // the public broker drops connections now and then: try again before giving up
+const brokerTrouble = (type?: string) => type === 'network' || type === 'server-error' || type === 'socket-error' || type === 'socket-closed';
 
 export interface Member { id: string; name: string; car: string; paint: number; host: boolean; ready: boolean }
 export type PartyMode = 'free' | 'race';
 export type Phase = 'lobby' | 'loading' | 'driving';
-export interface Pose { x: number; y: number; z: number; qx: number; qy: number; qz: number; qw: number }
-/** Race progress: distance along the route (m), laps done, finish time (s, -1 still racing). */
-export interface Progress { d: number; lap: number; fin: number; best: number }
+/** Car pose (body centre) and velocity (m/s, optional: older senders and heartbeats of a parked car). */
+export interface Pose { x: number; y: number; z: number; qx: number; qy: number; qz: number; qw: number; vx?: number; vy?: number; vz?: number }
+/** Race progress: distance along the route (m), laps done, finish time (s, -1 still racing), out of the race (1 = DNF). */
+export interface Progress { d: number; lap: number; fin: number; best: number; dnf?: number }
 
 type Msg =
   | { t: 'hello'; name: string; car: string; paint: number }
-  | { t: 'lobby'; members: Member[]; mode: PartyMode; laps: number; phase: Phase }
-  | { t: 'start'; mode: PartyMode; laps: number }
+  | { t: 'lobby'; members: Member[]; mode: PartyMode; laps: number; realism: boolean; phase: Phase }
+  | { t: 'start'; mode: PartyMode; laps: number; realism: boolean }
   | { t: 'loaded' }
   | { t: 'go' }
   | { t: 'lobbyback' }
   | { t: 'pose'; id?: string; p: Pose; c?: number }
   | { t: 'prog'; id?: string; g: Progress }
+  | { t: 'gone'; id?: string }
   | { t: 'bye'; reason: string };
 
 export interface PartyHooks {
@@ -44,11 +48,13 @@ export interface PartyHooks {
   pose(id: string, p: Pose, paint: number | undefined): void;
   progress(id: string, g: Progress): void;
   left(id: string): void;
+  /** a player left the session (back to the lobby): take their car off the road */
+  gone(id: string): void;
   /** the party is over for us (leader left, kicked, network gone) */
   closed(reason: string): void;
 }
 
-const noop: PartyHooks = { changed() {}, start() {}, go() {}, lobby() {}, pose() {}, progress() {}, left() {}, closed() {} };
+const noop: PartyHooks = { changed() {}, start() {}, go() {}, lobby() {}, pose() {}, progress() {}, left() {}, gone() {}, closed() {} };
 
 export function newCode() {
   let s = '';
@@ -57,7 +63,10 @@ export function newCode() {
   return s;
 }
 export const cleanCode = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
-export const inviteLink = (code: string) => `${location.origin}${location.pathname}?party=${code}`;
+export const inviteLink = (code: string) => {
+  const peer = new URLSearchParams(location.search).get('peer');   // own broker: friends must use the same one
+  return `${location.origin}${location.pathname}?party=${code}${peer ? `&peer=${encodeURIComponent(peer)}` : ''}`;
+};
 
 function peerOptions(): PeerOptions {
   const q = new URLSearchParams(location.search).get('peer');
@@ -70,12 +79,22 @@ function peerOptions(): PeerOptions {
 
 const finite = (o: Record<string, unknown>, keys: string[]) => keys.every((k) => typeof o[k] === 'number' && Number.isFinite(o[k] as number));
 const POSE_KEYS = ['x', 'y', 'z', 'qx', 'qy', 'qz', 'qw'];
+/** Pose with finite numbers; velocity dropped if it isn't (or is absurd). */
+function cleanPose(p: unknown): Pose | null {
+  if (!p || typeof p !== 'object' || !finite(p as Record<string, unknown>, POSE_KEYS)) return null;
+  const q = p as Pose;
+  const out: Pose = { x: q.x, y: q.y, z: q.z, qx: q.qx, qy: q.qy, qz: q.qz, qw: q.qw };
+  if (finite(p as Record<string, unknown>, ['vx', 'vy', 'vz']) && Math.hypot(q.vx!, q.vy!, q.vz!) < 150) { out.vx = q.vx; out.vy = q.vy; out.vz = q.vz; }
+  return out;
+}
 const cleanName = (s: unknown) => (typeof s === 'string' ? s.replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 18) : '') || 'Driver';
 
 export class Party {
   members: Member[] = [];
   mode: PartyMode = 'race';
   laps = 3;
+  /** race rules (the leader's): full realism (no resets, DNF + spectate) or respawns */
+  realism = true;
   phase: Phase = 'lobby';
   hooks: PartyHooks = noop;
   private conns = new Map<string, DataConnection>();   // leader: every member's connection; member: the leader's
@@ -106,8 +125,8 @@ export class Party {
         const fail = (e: unknown) => {
           const type = (e as { type?: string }).type;
           peer.destroy();
-          if (type === 'unavailable-id' && ++tries < 4) attempt();    // code taken: another one
-          else reject(new Error(type === 'network' || type === 'server-error' || type === 'socket-error' ? 'Cannot reach the matchmaking service. Check your connection.' : String((e as Error).message ?? e)));
+          if ((type === 'unavailable-id' || brokerTrouble(type)) && ++tries < BROKER_TRIES) setTimeout(attempt, brokerTrouble(type) ? 1200 * tries : 0);   // code taken / broker hiccup: again
+          else reject(new Error(brokerTrouble(type) ? 'Cannot reach the matchmaking service. Check your connection and try again.' : String((e as Error).message ?? e)));
         };
         peer.once('error', fail);
         peer.once('open', () => {
@@ -123,16 +142,24 @@ export class Party {
   }
 
   /** Join a friend's party by code. Rejects if it doesn't exist, is full or is mid-session. */
-  static join(code: string, me: { name: string; car: string; paint: number }): Promise<Party> {
+  static async join(code: string, me: { name: string; car: string; paint: number }): Promise<Party> {
     code = cleanCode(code);
+    for (let tries = 1; ; tries++) {
+      try { return await Party.joinOnce(code, me); } catch (e) {
+        if (!(e as { broker?: boolean }).broker || tries >= BROKER_TRIES) throw e;
+        await new Promise((r) => setTimeout(r, 1200 * tries));
+      }
+    }
+  }
+  private static joinOnce(code: string, me: { name: string; car: string; paint: number }): Promise<Party> {
     return new Promise((resolve, reject) => {
       const peer = new Peer(peerOptions());
       let settled = false;
-      const fail = (msg: string) => { if (settled) return; settled = true; clearTimeout(timer); peer.destroy(); reject(new Error(msg)); };
+      const fail = (msg: string, broker = false) => { if (settled) return; settled = true; clearTimeout(timer); peer.destroy(); reject(Object.assign(new Error(msg), { broker })); };
       const timer = setTimeout(() => fail('No answer from that party. Check the code, or ask the leader to send a new invite.'), 15000);
       peer.once('error', (e) => {
         const type = (e as { type?: string }).type;
-        fail(type === 'peer-unavailable' ? `There is no party ${code}. Check the code.` : type === 'network' || type === 'server-error' || type === 'socket-error' ? 'Cannot reach the matchmaking service. Check your connection.' : String((e as Error).message ?? e));
+        fail(type === 'peer-unavailable' ? `There is no party ${code}. Check the code.` : brokerTrouble(type) ? 'Cannot reach the matchmaking service. Check your connection and try again.' : String((e as Error).message ?? e), brokerTrouble(type));
       });
       peer.once('open', () => {
         const c = peer.connect(PREFIX + code, { reliable: true, serialization: 'json' });
@@ -167,15 +194,15 @@ export class Party {
     this.members = this.members.filter((m) => m.id !== id);
     this.loaded.delete(id);
     this.hooks.left(id);
-    this.broadcast({ t: 'lobby', members: this.members, mode: this.mode, laps: this.laps, phase: this.phase });
+    this.broadcast({ t: 'lobby', members: this.members, mode: this.mode, laps: this.laps, realism: this.realism, phase: this.phase });
     this.hooks.changed();
     this.checkLoaded();
   }
 
-  /** Leader: race or free roam, number of laps. */
-  setMode(mode: PartyMode, laps: number) {
+  /** Leader: race or free roam, number of laps, realism (no resets) or respawns. */
+  setMode(mode: PartyMode, laps: number, realism = this.realism) {
     if (!this.isHost || this.phase !== 'lobby') return;
-    this.mode = mode; this.laps = laps;
+    this.mode = mode; this.laps = laps; this.realism = realism;
     this.pushLobby();
   }
 
@@ -185,7 +212,7 @@ export class Party {
     this.phase = 'loading';
     this.loaded.clear();
     for (const m of this.members) m.ready = false;
-    this.broadcast({ t: 'start', mode: this.mode, laps: this.laps });
+    this.broadcast({ t: 'start', mode: this.mode, laps: this.laps, realism: this.realism });
     this.pushLobby();
     this.hooks.start(this.mode, this.laps);
     clearTimeout(this.loadTimer);
@@ -215,7 +242,7 @@ export class Party {
   }
 
   private pushLobby() {
-    this.broadcast({ t: 'lobby', members: this.members, mode: this.mode, laps: this.laps, phase: this.phase });
+    this.broadcast({ t: 'lobby', members: this.members, mode: this.mode, laps: this.laps, realism: this.realism, phase: this.phase });
     this.hooks.changed();
   }
 
@@ -248,6 +275,12 @@ export class Party {
     const m: Msg = { t: 'prog', g };
     if (this.isHost) this.broadcast({ ...m, id: this.selfId });
     else this.sendHost(m);
+  }
+
+  /** We left the session (lobby, menu): the others take our car off the road. */
+  sendGone() {
+    if (this.isHost) this.broadcast({ t: 'gone', id: this.selfId });
+    else this.sendHost({ t: 'gone' });
   }
 
   private sendHost(m: Msg) {
@@ -283,15 +316,22 @@ export class Party {
           this.checkLoaded();
           break;
         }
-        case 'pose':
-          if (!this.conns.has(from) || !m.p || !finite(m.p as unknown as Record<string, unknown>, POSE_KEYS)) return;
-          this.broadcast({ t: 'pose', id: from, p: m.p, c: m.c }, from);
-          this.hooks.pose(from, m.p, m.c);
+        case 'pose': {
+          const p = cleanPose(m.p);
+          if (!this.conns.has(from) || !p) return;
+          this.broadcast({ t: 'pose', id: from, p, c: m.c }, from);
+          this.hooks.pose(from, p, m.c);
           break;
+        }
         case 'prog':
           if (!this.conns.has(from) || !m.g || !finite(m.g as unknown as Record<string, unknown>, ['d', 'lap', 'fin', 'best'])) return;
           this.broadcast({ t: 'prog', id: from, g: m.g }, from);
           this.hooks.progress(from, m.g);
+          break;
+        case 'gone':
+          if (!this.conns.has(from)) return;
+          this.broadcast({ t: 'gone', id: from }, from);
+          this.hooks.gone(from);
           break;
       }
       return;
@@ -303,14 +343,16 @@ export class Party {
         this.members = m.members.map((x) => ({ ...x, name: cleanName(x.name) }));
         this.mode = m.mode === 'free' ? 'free' : 'race';
         this.laps = Number(m.laps) || 3;
+        this.realism = m.realism !== false;
         this.phase = m.phase;
         this.hooks.changed();
         break;
-      case 'start': this.mode = m.mode === 'free' ? 'free' : 'race'; this.laps = Number(m.laps) || 3; this.phase = 'loading'; this.hooks.start(this.mode, this.laps); break;
+      case 'start': this.mode = m.mode === 'free' ? 'free' : 'race'; this.laps = Number(m.laps) || 3; this.realism = m.realism !== false; this.phase = 'loading'; this.hooks.start(this.mode, this.laps); break;
       case 'go': this.phase = 'driving'; this.hooks.go(); break;
       case 'lobbyback': this.phase = 'lobby'; this.hooks.lobby(); break;
-      case 'pose': if (m.id && m.id !== this.selfId && m.p && finite(m.p as unknown as Record<string, unknown>, POSE_KEYS)) this.hooks.pose(m.id, m.p, m.c); break;
+      case 'pose': { const p = cleanPose(m.p); if (m.id && m.id !== this.selfId && p) this.hooks.pose(m.id, p, m.c); break; }
       case 'prog': if (m.id && m.id !== this.selfId && m.g) this.hooks.progress(m.id, m.g); break;
+      case 'gone': if (m.id && m.id !== this.selfId) this.hooks.gone(m.id); break;
       case 'bye': this.end(m.reason); break;
     }
   }

@@ -22,6 +22,7 @@ import { Hud } from './hud';
 import { DamageVisuals } from './scene/damage';
 import { GameAudio } from './audio';
 import { TouchControls, wantsTouch } from './touch';
+import type RAPIER from '@dimforge/rapier3d-compat';
 import { RemoteCars } from './net';
 import { Party, cleanCode, type Progress } from './party';
 import { Menu, rank, type Gfx, type Screen, type Standing } from './menu';
@@ -241,6 +242,11 @@ async function main() {
   let aiRace: { idx: number; lap: LapInfo | null; fin: number }[] = [];
   /** Laps of the session's race (0: free roam / free party session). */
   const raceLaps = () => sel.mode === 'race' ? sel.laps : sel.mode === 'online' && party?.mode === 'race' ? party.laps : 0;
+  /** Race rules: full realism (no resets; wrecked / rolled over / stuck = DNF, then spectate) or respawns. A party uses the leader's. */
+  const realism = () => raceLaps() > 0 && (sel.mode === 'online' ? party?.realism !== false : sel.realism);
+  /** Out of the race (realism): why, or '' while racing. */
+  let myDnf = '';
+  let rolledT = 0, stuckT = 0;
 
   const pos = new THREE.Vector3(), quat = new THREE.Quaternion();
   const input = new Input();
@@ -255,15 +261,19 @@ async function main() {
   audio.muted = true;   // silent in the menus
   // Session state. boot/title/garage/busy: car parked on the start line under the orbit camera;
   // countdown: same, with 3-2-1; race: driving; paused: everything frozen; results: race over, car braked.
-  type State = 'boot' | 'title' | 'garage' | 'modes' | 'lobby' | 'busy' | 'countdown' | 'race' | 'paused' | 'results';
+  type State = 'boot' | 'title' | 'garage' | 'modes' | 'lobby' | 'busy' | 'countdown' | 'race' | 'paused' | 'spectate' | 'results';
   let state: State = 'boot';
   let pausedFrom: State = 'race';
   let settledShowroom = 0;
-  const driving = () => state === 'race' || state === 'countdown' || state === 'paused' || state === 'results';
+  const driving = () => state === 'race' || state === 'countdown' || state === 'paused' || state === 'spectate' || state === 'results';
   const setState = (st: State) => {
     state = st;
     if (!driving()) settledShowroom = 0;
     document.body.classList.toggle('menu', !driving());
+    // full realism race: no reset button (R does nothing)
+    hud.canRecover = !realism();
+    document.body.classList.toggle('noreset', !hud.canRecover);
+    document.body.classList.toggle('spectating', st === 'spectate');
     syncHeadlights();
     if (city) city.props.drawScale = driving() ? DRAW_SCALE[post.preset] : Math.min(0.45, DRAW_SCALE[post.preset]);
   };
@@ -297,6 +307,7 @@ async function main() {
     aiRace = ai.mode === 'race' ? ai.cars.map((c) => ({ idx: race.addCar(c.pos), lap: null, fin: -1 })) : [];
     raceT0 = ticks * DT;
     lapTimes = []; raceFinishedAt = -1; lap = null;
+    myDnf = ''; rolledT = stuckT = 0; hud.outWarn = '';
     hud.resetLaps();
     remoteProg.clear();
   };
@@ -320,7 +331,7 @@ async function main() {
     remote?.kick();
   };
   input.onReset = () => {
-    if (state !== 'race') return;
+    if (state !== 'race' || realism()) return;   // full realism: no resets in a race
     if (sel.mode === 'free') resetCar(); else recover();
   };
   input.onLights = () => { if (driving()) { visual.lightsOn = !visual.lightsOn; visual.applyHeadlights(); } };
@@ -613,11 +624,12 @@ async function main() {
       party?.leave();
       detachParty('');
     },
-    partyMode: (mode, laps) => party?.setMode(mode, laps),
+    partyMode: (mode, laps, real) => party?.setMode(mode, laps, real),
     partyStart: () => party?.start(),
     partyLobby: () => { if (party?.isHost) party.backToLobby(); quitSession('lobby'); },
     partyRejoin: () => { if (party?.phase === 'driving') void startSession('online', true); },
     partyMe: () => party?.updateMe(meForParty()),
+    spectate: () => enterSpectate(),
   });
   menu.gfx = gfx;
   {
@@ -633,6 +645,7 @@ async function main() {
     menu.partyNote = '';
     menu.invite = '';
     if (params.has('party')) history.replaceState(null, '', location.pathname + location.search.replace(/[?&]party=[^&]*/, '').replace(/^&/, '?'));
+    if (p.isHost) p.setMode(p.mode, p.laps, sel.realism);   // the leader's own rules setting is the party default
     p.hooks = {
       changed: () => {
         if (remote) { remote.names = new Map(p.members.map((m) => [m.id, m.name])); remote.refreshTags(); }
@@ -644,7 +657,8 @@ async function main() {
       lobby: () => { if (driving() || state === 'busy') quitSession('lobby'); else if (menu.screen === 'lobby') menu.render(); },
       pose: (id, ps, paint) => { if (remote && (driving() || state === 'busy')) remote.receive(id, ps, paint); },
       progress: (id, gp) => { remoteProg.set(id, gp); if (state === 'results') menu.updateResults(standings()); },
-      left: (id) => { remote?.remove(id); remoteProg.delete(id); },
+      left: (id) => { remote?.remove(id); remoteProg.delete(id); if (state === 'spectate') specRetarget(); },
+      gone: (id) => { remote?.remove(id); if (state === 'spectate') specRetarget(); },
       closed: (reason) => detachParty(reason),
     };
     menu.show('lobby');
@@ -664,15 +678,91 @@ async function main() {
   function standings(): Standing[] {
     const L = lap?.routeLength ?? route.length_m;
     const myFin = lap?.finished ? lapTimes.reduce((a, b) => a + b, 0) : -1;
-    const list: Standing[] = [{ name: party ? sel.name : 'You', you: true, fin: myFin, d: lap?.distance ?? -L, best: lap?.best ?? 0, ai: false }];
+    const list: Standing[] = [{ name: party ? sel.name : 'You', you: true, fin: myFin, d: lap?.distance ?? -L, best: lap?.best ?? 0, ai: false, dnf: !!myDnf, why: myDnf }];
     if (sel.mode === 'race') ai.cars.forEach((c, i) => { const r = aiRace[i]; if (r) list.push({ name: c.name, you: false, fin: r.fin, d: r.lap?.distance ?? 0, best: r.lap?.best ?? 0, ai: true }); });
     if (sel.mode === 'online' && party) for (const m of party.members) {
       if (m.id === party.selfId) continue;
       const g = remoteProg.get(m.id);
-      list.push({ name: m.name, you: false, fin: g?.fin ?? -1, d: g?.d ?? -L, best: g?.best ?? 0, ai: false });
+      list.push({ name: m.name, you: false, fin: g?.fin ?? -1, d: g?.d ?? -L, best: g?.best ?? 0, ai: false, dnf: !!g?.dnf });
     }
     return list;
   }
+  // ---- full realism: out of the race, then spectate ------------------------------------------------
+  // Same rules as the core's RaceTracker::check_out: totaled, upside down for 5 s, or stuck (< 1 km/h) for 30 s.
+  const ROLL_OUT_S = 5, STUCK_OUT_S = 30;
+  function checkOut(frame: number) {
+    if (!realism() || myDnf || lap?.finished) { hud.outWarn = ''; return; }
+    const upY = 1 - 2 * (physQuat.x * physQuat.x + physQuat.z * physQuat.z);   // body up . world up
+    rolledT = upY < 0.3 ? rolledT + frame : 0;
+    stuckT = Math.abs(car.out[OUT.speed]) < 0.28 ? stuckT + frame : 0;
+    const why = damage.last?.totaled ? 'wrecked' : rolledT > ROLL_OUT_S ? 'rolled over' : stuckT > STUCK_OUT_S ? 'stuck' : '';
+    hud.outWarn = rolledT > 0.5 ? `ROLLED OVER · OUT IN ${Math.ceil(ROLL_OUT_S - rolledT)} s` : stuckT > STUCK_OUT_S - 10 ? `STUCK · OUT IN ${Math.ceil(STUCK_OUT_S - stuckT)} s` : '';
+    if (!why) return;
+    myDnf = why;
+    hud.outWarn = '';
+    party?.sendProgress({ d: lap?.distance ?? 0, lap: lap?.laps ?? 0, fin: -1, best: lap?.best ?? 0, dnf: 1 });
+    enterSpectate(`OUT · ${why.toUpperCase()}`);
+  }
+
+  /** Cars to watch: the AI rivals (single player) or the other players, best placed first. */
+  type SpecTarget = { name: string; body: RAPIER.RigidBody | null; root: THREE.Object3D; ground: boolean; speed: () => number };
+  function specTargets(): SpecTarget[] {
+    const order = rank(standings()).map((x) => x.name);
+    const list: SpecTarget[] = [];
+    if (sel.mode === 'race') for (const c of ai.cars) list.push({ name: c.name, body: c.body, root: c.root, ground: true, speed: () => c.v });
+    if (remote && party) for (const id of remote.ids()) {
+      const r = remote.get(id);
+      if (r) list.push({ name: party.members.find((m) => m.id === id)?.name ?? 'Driver', body: r.body, root: r.root, ground: false, speed: () => 0 });
+    }
+    return list.sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name));
+  }
+  let specIdx = 0, specName = '', specLabel = '', specAt = 0, resAt = 0, resKey = '';
+  const specOut = new Float64Array(car.out.length), specPos = new THREE.Vector3(), specQuat = new THREE.Quaternion(), specPrev = new THREE.Vector3();
+  const specEl = document.getElementById('spectate')!;
+  function enterSpectate(label = specLabel || (lap?.finished ? 'FINISHED' : 'OUT')) {
+    specLabel = label;
+    setState('spectate');
+    menu.show('none');
+    audio.muted = true;
+    specAt = performance.now();
+    specIdx = 0; specName = '';
+    specRetarget();
+    specEl.hidden = false;
+  }
+  function hideSpectate() { specEl.hidden = true; }
+  function specRetarget() {
+    const t = specTargets();
+    if (!t.length) { if (state === 'spectate') finishRace(); return; }
+    const keep = t.findIndex((x) => x.name === specName);
+    specIdx = keep >= 0 ? keep : Math.min(specIdx, t.length - 1);
+    const cur = t[specIdx];
+    specName = cur.name;
+    if (cur.body) rig.setTarget(cur.body, 7000);
+    specPrev.copy(cur.root.position);
+    rig.snap();
+    specEl.innerHTML = `<span class="sp-out">${specLabel}</span><span class="dim">Spectating</span><b></b>
+      <button type="button" data-sp="-1" aria-label="Previous car">◀</button><button type="button" data-sp="1" aria-label="Next car">▶</button>
+      <button type="button" data-sp="res">Results</button>`;
+    specEl.querySelector('b')!.textContent = `${specIdx + 1}. ${cur.name}`;
+  }
+  function specStep(d: number) { const n = specTargets().length; if (!n) return; specIdx = (specIdx + d + n) % n; specName = ''; specRetarget(); }
+  specEl.addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('[data-sp]') as HTMLElement | null;
+    if (!b || state !== 'spectate') return;
+    if (b.dataset.sp === 'res') finishRace(); else specStep(Number(b.dataset.sp));
+  });
+  function specCamera(frame: number) {
+    const cur = specTargets().find((x) => x.name === specName);
+    if (!cur) { specRetarget(); return; }
+    specPos.copy(cur.root.position);
+    if (cur.ground) specPos.y += 0.5;           // AI roots sit on the road, players' at the body centre
+    specQuat.copy(cur.root.quaternion);
+    const v = frame > 0 ? specPrev.distanceTo(cur.root.position) / frame : 0;
+    specPrev.copy(cur.root.position);
+    specOut[OUT.speed] = cur.ground ? cur.speed() : v;
+    rig.update(frame, specPos, specQuat, stepAcc.set(0, 0, 0), specOut);
+  }
+
   /** HUD running order: gap to the car in front, in seconds at the current speed (distance-based) or metres. */
   let boardAt = 0, progAt = 0;
   function updateBoard(now: number) {
@@ -684,12 +774,13 @@ async function main() {
     hud.board(ranked.map((s, i) => {
       if (i === 0) return { name: s.name, gap: s.fin >= 0 ? 'FIN' : 'LEADER', you: s.you };
       const a = ranked[i - 1];
-      const gap = s.fin >= 0 ? (a.fin >= 0 ? `+${(s.fin - a.fin).toFixed(1)}s` : 'FIN') : `+${Math.max(0, Math.round(a.d - s.d))} m`;
+      const gap = s.dnf ? 'DNF' : s.fin >= 0 ? (a.fin >= 0 ? `+${(s.fin - a.fin).toFixed(1)}s` : 'FIN') : `+${Math.max(0, Math.round(a.d - s.d))} m`;
       return { name: s.name, gap, you: s.you };
     }));
   }
   document.getElementById('hud-garage')?.addEventListener('click', () => { if (driving()) quitSession(party ? 'lobby' : 'title'); });
   document.getElementById('hud-pause')?.addEventListener('click', () => {
+    if (state === 'spectate') { finishRace(); return; }
     if (state === 'race') { pausedFrom = state; setState('paused'); audio.muted = true; menu.show('pause'); }
     else if (state === 'paused') resume();
   });
@@ -765,7 +856,7 @@ async function main() {
     }
     if (mode === 'online') {
       remote?.clear();
-      remote = new RemoteCars(scene, visual);
+      remote = new RemoteCars(scene, visual, pw, shape);
       if (party) remote.names = new Map(party.members.map((m) => [m.id, m.name]));
       remote.warmup(true);           // remote car shaders compiled now, not as a hitch when someone joins
       await warm();
@@ -834,7 +925,10 @@ async function main() {
 
   /** End the session: back to the title, the game modes, or (party) the lobby. */
   function quitSession(to: 'title' | 'modes' | 'lobby') {
+    if (remote) party?.sendGone();
     remote?.clear(); remote = null;
+    hideSpectate();
+    rig.setTarget(car.body, core.info.redline);
     hud.hide();
     hud.board(null);
     menu.countdown('');
@@ -852,12 +946,20 @@ async function main() {
     setState('results');
     audio.muted = true;
     const total = lapTimes.reduce((a, b) => a + b, 0);
-    menu.showResults({ total, best: Math.min(...lapTimes), laps: lapTimes, laps_target: raceLaps(), standings: standings(),
+    hideSpectate();
+    rig.setTarget(car.body, core.info.redline);
+    menu.showResults({ total, best: lapTimes.length ? Math.min(...lapTimes) : 0, laps: lapTimes, laps_target: raceLaps(), standings: standings(),
       routeLength: lap?.routeLength ?? route.length_m, online: sel.mode === 'online' });
-    if (party) party.sendProgress({ d: lap?.distance ?? 0, lap: lap?.laps ?? 0, fin: total, best: lap?.best ?? 0 });
+    if (party) party.sendProgress({ d: lap?.distance ?? 0, lap: lap?.laps ?? 0, fin: lap?.finished ? total : -1, best: lap?.best ?? 0, dnf: myDnf ? 1 : 0 });
   }
 
   addEventListener('keydown', (e) => {
+    if (state === 'spectate' && !e.repeat) {
+      if (e.code === 'ArrowLeft' || e.code === 'KeyA') specStep(-1);
+      else if (e.code === 'ArrowRight' || e.code === 'KeyD') specStep(1);
+      else if (e.code === 'Escape') finishRace();
+      return;
+    }
     if (e.code !== 'Escape' || e.repeat) return;
     if (state === 'race') { pausedFrom = state; setState('paused'); audio.muted = true; menu.show('pause'); }
     else if (state === 'paused') resume();
@@ -911,6 +1013,23 @@ async function main() {
   }
 
   const carAcc = new THREE.Vector3(), lastVel = new THREE.Vector3(), stepAcc = new THREE.Vector3();
+  /**
+   * Car-to-car contact with another player: their body is kinematic (infinitely heavy) here, so the step gave our car
+   * the whole velocity change of hitting a wall. Two equal cars share it: keep half. (Their game does the same with us.)
+   */
+  const preV = new THREE.Vector3(), preW = new THREE.Vector3();
+  const halveRemoteHits = (tTick: number) => {
+    let touching = false;
+    for (const c of remote!.colliders) {
+      let hit = false;
+      pw.world.contactPair(car.collider, c, (m) => { if (m.numContacts() > 0) hit = true; });
+      if (hit) { touching = true; remote!.touched(c, tTick); }
+    }
+    if (!touching) return;
+    const lv = car.body.linvel(), av = car.body.angvel();
+    car.body.setLinvel({ x: (preV.x + lv.x) / 2, y: (preV.y + lv.y) / 2, z: (preV.z + lv.z) / 2 }, true);
+    car.body.setAngvel({ x: (preW.x + av.x) / 2, y: (preW.y + av.y) / 2, z: (preW.z + av.z) / 2 }, true);
+  };
   syncPose();
   post.carPos.copy(pos);
 
@@ -949,8 +1068,11 @@ async function main() {
       car.tick(state === 'race' ? input.poll() : IDLE, input.assists);
       if (inShowroom) { car.body.setLinvel({ x: 0, y: Math.min(0, car.body.linvel().y), z: 0 }, true); car.body.setAngvel({ x: 0, y: 0, z: 0 }, true); settledShowroom++; }   // parked for the showroom
       ai.tick(DT, car.body.translation());
+      remote?.tick(now - (acc - DT) * 1000, DT);   // other players' bodies at this tick's time
+      if (remote?.colliders.size) { const lv = car.body.linvel(), av = car.body.angvel(); preV.set(lv.x, lv.y, lv.z); preW.set(av.x, av.y, av.z); }
       const t0 = performance.now();
       pw.world.step();
+      if (remote?.colliders.size) halveRemoteHits(now - (acc - DT) * 1000);
       stepMs += (performance.now() - t0 - stepMs) * 0.01;   // Rapier cost per 240 Hz step, smoothed
       readBody(physPos, physQuat);
       // car acceleration for the camera spring, from the physics (low-passed ~25 ms)
@@ -984,12 +1106,13 @@ async function main() {
     if (driving()) audio.update(car.out, car.out[OUT.speed]);
     if (remote) {
       remote.update(now, camera);
-      if (party && driving()) { const out = remote.outgoing(now, pos, quat); if (out) party.sendPose(out, paintInt()); }
+      if (party && driving()) { const out = remote.outgoing(now, pos, quat, car.body.linvel()); if (out) party.sendPose(out, paintInt()); }
     }
     if (!driving() || state === 'busy') { placeShowroom(frame, pos); }
     else {
       showKey.intensity = showRim.intensity = 0;
-      if (live) rig.update(frame, pos, quat, carAcc, car.out);
+      if (state === 'spectate') specCamera(frame);
+      else if (live) rig.update(frame, pos, quat, carAcc, car.out);
     }
     cityLights.update(frame, camera);   // WebGL 2 pool only (5 Hz); a no-op with clustered lighting
     nyc?.update(pos, frame, driving() ? visual.velocity : undefined, (impulse, kind) => {
@@ -1035,22 +1158,35 @@ async function main() {
         }
       }
     }
-    if (state === 'race') {
+    if (state === 'race' || (raceLaps() > 0 && (state === 'spectate' || state === 'results'))) {
       const tRace = ticks * DT - raceT0;
-      lap = race.update(raceCar, car.body.translation(), tRace);
-      if (lap.laps > lapTimes.length) lapTimes.push(lap.last);
+      // our progress only while we race (a wreck being pushed around must not gain places)
+      if (state === 'race' && !myDnf) {
+        lap = race.update(raceCar, car.body.translation(), tRace);
+        if (lap.laps > lapTimes.length) lapTimes.push(lap.last);
+      }
       for (const [i, r] of aiRace.entries()) {
         r.lap = race.update(r.idx, ai.cars[i].pos, tRace);
         if (r.lap.finished && r.fin < 0) r.fin = tRace;
       }
-      if (raceLaps() > 0) {
-        if (lap.finished && raceFinishedAt < 0) raceFinishedAt = now;
-        if (raceFinishedAt > 0 && now - raceFinishedAt > 1500) finishRace();
+      if (raceLaps() > 0 && lap) {
+        if (state === 'race') {
+          if (lap.finished && raceFinishedAt < 0) raceFinishedAt = now;
+          if (raceFinishedAt > 0 && now - raceFinishedAt > 1500) finishRace();
+          checkOut(frame);
+        }
         updateBoard(now);
-        if (party && now - progAt > 250) { progAt = now; party.sendProgress({ d: lap.distance, lap: lap.laps, fin: lap.finished ? lapTimes.reduce((a, b) => a + b, 0) : -1, best: lap.best }); }
+        if (party && now - progAt > 250) { progAt = now; party.sendProgress({ d: lap.distance, lap: lap.laps, fin: lap.finished ? lapTimes.reduce((a, b) => a + b, 0) : -1, best: lap.best, dnf: myDnf ? 1 : 0 }); }
+        // everyone else done: the race is over (spectating -> results); results on screen follow the field
+        if (state === 'spectate' && now - specAt > 2000 && !rank(standings()).some((x) => !x.you && x.fin < 0 && !x.dnf)) finishRace();
+        if (state === 'results' && now - resAt > 1000) {
+          resAt = now;
+          const key = JSON.stringify(standings().map((x) => [x.fin, x.dnf, Math.round(x.d / 50)]));
+          if (key !== resKey) { resKey = key; menu.updateResults(standings()); }
+        }
       }
     }
-    if (driving() && state !== 'paused') hud.update(now, frame, car.out, core.info, input.assists, damage.last, lap);
+    if (driving() && state !== 'paused' && state !== 'spectate') hud.update(now, frame, car.out, core.info, input.assists, damage.last, lap);
     // Graphics tuning (title menu only, behind the cover; see startTuning)
     if (now >= winStart) frameTimes.push(frame * 1000);
     if (tuning && now - winStart >= WINDOW) {

@@ -14,6 +14,22 @@ export const GROUP_DEBRIS = (0x0002 << 16) | 0xfffe;   // same tick as the Godot
 
 export async function loadRapier() { await RAPIER.init(); }
 
+/**
+ * A car's collision hull in its body frame (origin at the CG): flat underside between +-endLiftStart, rising
+ * endLift to each bumper (see car visual json). Also used for other players' cars (net.ts).
+ */
+export function carHull(shape: CarShape, cgInModel: { x: number; y: number; z: number }) {
+  const [sx, sy, sz] = shape.boxSize, [cx, cy, cz] = shape.boxCentre;
+  const x = sx / 2, y0 = cy - sy / 2, y1 = cy + sy / 2, z = sz / 2, zs = shape.endLiftStart;
+  const pts: number[] = [];
+  for (const px of [-x, x]) {
+    for (const [pz, py] of [[-z, y0 + shape.endLift], [-zs, y0], [zs, y0], [z, y0 + shape.endLift], [-z, y1], [z, y1]] as const) {
+      pts.push(cx + px - cgInModel.x, py - cgInModel.y, cz + pz - cgInModel.z);
+    }
+  }
+  return RAPIER.ColliderDesc.convexHull(new Float32Array(pts))!;
+}
+
 export class PhysicsWorld {
   readonly world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
   private surfaceOf = new Map<number, number>();   // collider handle -> core surface index
@@ -108,16 +124,7 @@ export class CarBody {
         .setCcdEnabled(true)
         .setCanSleep(false),
     );
-    // Convex hull: flat underside between +-endLiftStart, rising endLift to each bumper (see car visual json).
-    const [sx, sy, sz] = shape.boxSize, [cx, cy, cz] = shape.boxCentre;
-    const x = sx / 2, y0 = cy - sy / 2, y1 = cy + sy / 2, z = sz / 2, zs = shape.endLiftStart;
-    const pts: number[] = [];
-    for (const px of [-x, x]) {
-      for (const [pz, py] of [[-z, y0 + shape.endLift], [-zs, y0], [zs, y0], [z, y0 + shape.endLift], [-z, y1], [z, y1]] as const) {
-        pts.push(cx + px - cgInModel.x, py - cgInModel.y, cz + pz - cgInModel.z);
-      }
-    }
-    const hull = RAPIER.ColliderDesc.convexHull(new Float32Array(pts))!.setDensity(0).setFriction(0.3).setRestitution(0.1)
+    const hull = carHull(shape, cgInModel).setDensity(0).setFriction(0.3).setRestitution(0.1)
       .setCollisionGroups(GROUP_CAR).setActiveEvents(RAPIER.ActiveEvents.NONE);
     this.collider = pw.world.createCollider(hull, this.body);
   }

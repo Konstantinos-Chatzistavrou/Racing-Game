@@ -1,6 +1,6 @@
 // Drives the game in the system Chrome with WebGPU enabled (Linux needs the flags) through the
 // DevTools protocol: load, idle, full throttle, brake. Prints telemetry + fps, saves screenshots.
-// Usage: node tools/drive.mjs [url] [outdir] [straight|crash|mobile|bench|profile|night|menu|race6|follow]   (parties: tools/party_test.mjs, tools/party_game_test.mjs)   (CDP_PORT=9334 to change the DevTools port)
+// Usage: node tools/drive.mjs [url] [outdir] [straight|crash|mobile|bench|profile|night|menu|race6|follow|dnf]   (parties: tools/party_test.mjs, tools/party_game_test.mjs)   (CDP_PORT=9334 to change the DevTools port)
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -134,6 +134,32 @@ try {
       await click('[data-act=modes]'); await sleep(300); await click('[data-act=start-free]'); await sleep(4000);
       console.log('free roam (expect no rivals, no board):', await evaluate(`JSON.stringify({ state: window.__game.state, ai: window.__game.ai.mode, board: !document.getElementById('board').hidden })`));
     }
+  }
+  if (scenario === 'dnf') {
+    // Full realism (title setting) race: flip the car -> 'ROLLED OVER · OUT IN n s' -> DNF after 5 s -> spectating the rivals
+    // (switch car), Results -> 'Did not finish'. Then Respawns: R works in a race.
+    const click = (q) => evaluate(`(() => { const e = document.querySelector('${q}'); if (!e) return 'MISSING ${q}'; e.click(); return 'ok'; })()`);
+    const st = () => evaluate(`JSON.stringify({ state: window.__game.state, warn: document.getElementById('warn').textContent, spec: document.getElementById('spectate').hidden ? null : document.getElementById('spectate').textContent.replace(/\s+/g, ' '),
+      resetBtn: getComputedStyle(document.getElementById('hud-reset')).display })`);
+    for (let i = 0; i < 90 && (await evaluate(`window.__game.menu().tuning`)); i++) await sleep(500);
+    console.log('realism chip', await click('[data-act=realism][data-v="1"]'));
+    await click('[data-act=play]'); await sleep(400); await click('[data-act=laps][data-v="1"]'); await click('[data-act=start-race]');
+    await sleep(6000); console.log('racing', await st());
+    await evaluate(`(() => { const b = window.__game.car.body, t = b.translation(); b.setTranslation({ x: t.x, y: t.y + 1.5, z: t.z }, true); b.setRotation({ x: 0, y: 0, z: 1, w: 0 }, true); return 1; })()`);
+    await sleep(2500); console.log('flipped', await st()); await shot('d1_rolled.png');
+    await sleep(4500); console.log('out', await st()); await shot('d2_spectate.png');
+    await click('#spectate [data-sp="1"]'); await sleep(1500); console.log('next', await st()); await shot('d3_spectate_next.png');
+    await click('#spectate [data-sp="res"]'); await sleep(800);
+    console.log('results', await evaluate(`JSON.stringify({ state: window.__game.state, h2: document.querySelector('#menu h2')?.textContent, rows: [...document.querySelectorAll('.srow')].map((e) => e.textContent.replace(/\s+/g, ' ').trim()) })`));
+    await shot('d4_results.png');
+    await click('[data-act=quit]'); await sleep(1000);
+    await click('[data-act=realism][data-v="0"]'); await click('[data-act=play]'); await sleep(400); await click('[data-act=start-race]');
+    await sleep(6000);
+    const before = await evaluate(`JSON.stringify(window.__game.car.body.translation())`);
+    await evaluate(`(() => { const b = window.__game.car.body, t = b.translation(); b.setTranslation({ x: t.x + 6, y: t.y + 1.5, z: t.z }, true); b.setRotation({ x: 0, y: 0, z: 1, w: 0 }, true); return 1; })()`);
+    await sleep(1500);
+    await evaluate(`(window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyR', key: 'r' })), 1)`); await sleep(1500);
+    console.log('respawns: R after a flip', await st(), before, await evaluate(`JSON.stringify({ upY: (() => { const r = window.__game.car.body.rotation(); return +(1 - 2 * (r.x * r.x + r.z * r.z)).toFixed(2); })() })`));
   }
   if (scenario === 'follow') {
     // Ride along behind a rival (FOLLOW=<index>, default 0) for a race: the player car is placed 13 m behind it every frame,

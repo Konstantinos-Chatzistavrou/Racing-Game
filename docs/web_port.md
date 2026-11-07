@@ -192,5 +192,11 @@ screens in `web/src/menu.ts`, data in `web/src/garage.ts` + `data/cars/catalog.j
 - **Multiplayer** (`party.ts`, `net.ts`): PeerJS star around the leader; messages hello / lobby / start / loaded / go /
   lobbyback / pose (20 Hz + 1 s heartbeat) / prog (4 Hz) / bye. Leader GO waits for every member's `loaded` (20 s cap).
   Grid slot by join order. `?party=CODE` invite banner, `?peer=` own broker.
+  Other players are kinematic bodies with our hull (`carHull`), moved every physics tick to a prediction (last pose +
+  sent velocity × (age + 50 ms), ≤ 300 ms; disagreements fade over 120 ms), so both sides of a contact get pushed.
+  `gone` takes a player who left the session off the road.
+- **Rules** (title: Full Realism / Respawns; a party uses the leader's): realism races have no R; out (DNF) when totaled,
+  upside down 5 s or stuck 30 s (core check_out rules), then spectate (rig follows an AI / remote body) until the field
+  is done or Results. Progress carries `dnf`; standings rank finished > racing > DNF.
 - `?menu=0` skips the front end (free run at once) for `web/tools/drive.mjs`; scenarios `menu`, `race6`, `follow` walk the
   UI / race; `tools/party_test.mjs` and `tools/party_game_test.mjs` test parties.

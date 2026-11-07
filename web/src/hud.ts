@@ -34,6 +34,10 @@ export class Hud {
   extra = '';
   /** Race mode: lap count shown as 'n / total' (0 = free run, counted forever). */
   lapTotal = 0;
+  /** R repairs (false in a full-realism race: a wreck is out) */
+  canRecover = true;
+  /** full realism: 'ROLLED OVER · OUT IN 3 s' etc. ('' none) */
+  outWarn = '';
   fps = 60;
   private el = { needle: $('needle'), rev: $('revfill') };
   private needleKey = '';
@@ -116,13 +120,14 @@ export class Hud {
     const pct = (x: number) => Math.round(Math.min(1, x) * 100);
     el.classList.toggle('bad', dmg.totaled);
     el.textContent = dmg.totaled
-      ? 'WRECKED · limping · R repairs'
+      ? (this.canRecover ? 'WRECKED · limping · R repairs' : 'WRECKED')
       : `DAMAGE  body ${pct(Math.max(...dmg.zone))}%  engine ${pct(dmg.engine)}%  wheels ${pct(Math.max(...dmg.wheel))}%`;
   }
 
   /** Fire and brake lamps (DOM rebuilt only when the text changes). */
   private updateWarnings(dmg: Damage | null) {
     const chips: string[] = [];
+    if (this.outWarn) chips.push(`<div class="chip">${this.outWarn}</div>`);
     if (dmg) {
       if (dmg.fire > 0) chips.push(`<div class="chip red">${ICON_FIRE}ENGINE FIRE</div>`);
       else if (dmg.smoulder > 0) chips.push(`<div class="chip">${ICON_FIRE}ENGINE OVERHEATING</div>`);

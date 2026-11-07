@@ -31,7 +31,9 @@ Parties are peer to peer (WebRTC through [PeerJS](https://peerjs.com/)): no game
 **Join Party** banner on the title) or the 5-letter code. Up to 6 drivers. The leader picks **Race** (1/3/5/10 laps,
 synchronised 3-2-1 once everyone has loaded, live running order, results with everyone's times) or **Free Roam**
 together, and can send everyone back to the lobby. The leader's browser forwards each player's car pose and race
-progress to the others; other cars carry name tags and pass through you (no collisions between players).
+progress to the others; other cars carry name tags and are solid: each player's car is a physics body in everyone
+else's game, placed where it is now (predicted from its last position and velocity), so cars bump, push and dent each
+other. The leader's **Full Realism / Respawns** rule applies to the whole party.
 
 The public PeerJS broker (`0.peerjs.com`) introduces the players and PeerJS's STUN/TURN servers get them through home
 routers. To use your own broker instead:
@@ -49,6 +51,10 @@ windows), both with the Vite dev server running.
 
 ## Playing
 
+**Driving** (title screen): **Full Realism** (default) or **Respawns**. In Full Realism there is no reset in a race
+(AI or party): a wrecked car, 5 s on its roof, or 30 s stuck is a DNF, and you spectate the remaining cars (◀ ▶ or
+A / D to switch, Results to end). Respawns: R puts you back on the road, repaired. Free roam always allows R.
+
 The game opens on a title screen that tunes the graphics once for the device (resolution and effects
 level, behind a cover; the result is remembered; Auto / Max / Ultra / High / Medium / Low can be set there). Quality never
 changes while a car is on screen. **Play** opens the game modes:
@@ -60,8 +66,8 @@ changes while a car is on screen. **Play** opens the game modes:
 
 **Garage** (from the title) is for the car only: pick a car, paint and finish, upgrades (engine, tyres, weight, aero;
 applied to the physics data). From there go back to the **Main Menu** or **Continue** to the game modes. Esc pauses:
-resume, restart or quit to the main menu. R puts you back on the road where you are (race, party) or at the start
-(free roam). Details in `docs/web_port.md`.
+resume, restart or quit to the main menu. R (when allowed) puts you back on the road where you are (race, party) or at
+the start (free roam). The results screen has **Spectate** while others are still racing. Details in `docs/web_port.md`.
 
 ## Layout
 
