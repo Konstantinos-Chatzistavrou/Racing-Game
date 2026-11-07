@@ -34,6 +34,7 @@ type Msg =
   | { t: 'pose'; id?: string; p: Pose; c?: number }
   | { t: 'prog'; id?: string; g: Progress }
   | { t: 'gone'; id?: string }
+  | { t: 'pole'; id?: string; x: number; y: number; vx: number; vz: number }
   | { t: 'bye'; reason: string };
 
 export interface PartyHooks {
@@ -50,11 +51,13 @@ export interface PartyHooks {
   left(id: string): void;
   /** a player left the session (back to the lobby): take their car off the road */
   gone(id: string): void;
+  /** a player knocked down the pole at (x, y) (game frame) driving at (vx, vz) */
+  pole(x: number, y: number, vx: number, vz: number): void;
   /** the party is over for us (leader left, kicked, network gone) */
   closed(reason: string): void;
 }
 
-const noop: PartyHooks = { changed() {}, start() {}, go() {}, lobby() {}, pose() {}, progress() {}, left() {}, gone() {}, closed() {} };
+const noop: PartyHooks = { changed() {}, start() {}, go() {}, lobby() {}, pose() {}, progress() {}, left() {}, gone() {}, pole() {}, closed() {} };
 
 export function newCode() {
   let s = '';
@@ -277,6 +280,13 @@ export class Party {
     else this.sendHost(m);
   }
 
+  /** We knocked down a pole: it falls for everyone. */
+  sendPole(x: number, y: number, vx: number, vz: number) {
+    const m: Msg = { t: 'pole', x, y, vx, vz };
+    if (this.isHost) this.broadcast({ ...m, id: this.selfId });
+    else this.sendHost(m);
+  }
+
   /** We left the session (lobby, menu): the others take our car off the road. */
   sendGone() {
     if (this.isHost) this.broadcast({ t: 'gone', id: this.selfId });
@@ -328,6 +338,11 @@ export class Party {
           this.broadcast({ t: 'prog', id: from, g: m.g }, from);
           this.hooks.progress(from, m.g);
           break;
+        case 'pole':
+          if (!this.conns.has(from) || !finite(m as unknown as Record<string, unknown>, ['x', 'y', 'vx', 'vz'])) return;
+          this.broadcast({ t: 'pole', id: from, x: m.x, y: m.y, vx: m.vx, vz: m.vz }, from);
+          this.hooks.pole(m.x, m.y, m.vx, m.vz);
+          break;
         case 'gone':
           if (!this.conns.has(from)) return;
           this.broadcast({ t: 'gone', id: from }, from);
@@ -353,6 +368,7 @@ export class Party {
       case 'pose': { const p = cleanPose(m.p); if (m.id && m.id !== this.selfId && p) this.hooks.pose(m.id, p, m.c); break; }
       case 'prog': if (m.id && m.id !== this.selfId && m.g) this.hooks.progress(m.id, m.g); break;
       case 'gone': if (m.id && m.id !== this.selfId) this.hooks.gone(m.id); break;
+      case 'pole': if (m.id !== this.selfId && finite(m as unknown as Record<string, unknown>, ['x', 'y', 'vx', 'vz'])) this.hooks.pole(m.x, m.y, m.vx, m.vz); break;
       case 'bye': this.end(m.reason); break;
     }
   }

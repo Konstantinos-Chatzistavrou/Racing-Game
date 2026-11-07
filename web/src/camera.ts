@@ -17,7 +17,7 @@
 //   redline. The old high-frequency shake aliased into judder at 30 fps; at <= 7 Hz a 30 fps
 //   frame rate still samples each wobble 4+ times, so it reads as engine strain, not stutter.
 import * as THREE from 'three/webgpu';
-import type { PhysicsWorld } from './physics/world';
+import { GROUP_VIEW, type PhysicsWorld } from './physics/world';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { OUT } from './physics/core';
 
@@ -119,7 +119,7 @@ export class CameraRig {
 
     // keep the camera out of walls: pull it in along the car->camera line
     const head = this.head.copy(carPos).addScaledVector(UP, 1.0);
-    const hit = this.pw.raycast(head, want, this.car);
+    const hit = this.pw.raycast(head, want, this.car, true, GROUP_VIEW);   // poles / trees don't yank the camera in
     let wall = Infinity;                         // max allowed distance from `head`
     if (hit) {
       const dist = head.distanceTo(want);

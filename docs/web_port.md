@@ -200,3 +200,16 @@ screens in `web/src/menu.ts`, data in `web/src/garage.ts` + `data/cars/catalog.j
   is done or Results. Progress carries `dnf`; standings rank finished > racing > DNF.
 - `?menu=0` skips the front end (free run at once) for `web/tools/drive.mjs`; scenarios `menu`, `race6`, `follow` walk the
   UI / race; `tools/party_test.mjs` and `tools/party_game_test.mjs` test parties.
+
+## Street furniture physics (nyc/obstacles.ts, props.ts PROP_PHYS)
+
+Poles, signals, hydrants, bins, shelters, kiosks and tree trunks within 40 m of the car are fixed Rapier colliders
+(GROUP_PROP: the chase camera and AI ground rays ignore them). Trees never break. A breakable is sheared only if the car
+can pay its breakaway energy after sharing momentum with the part of its mass it must accelerate:
+v1 = m v / (m + effFrac M), v2 = sqrt(v1^2 - 2E/m). Lamp post 420 kg / 22 kJ (stays up below ~21 km/h and stops the car),
+signal 650 kg / 35 kJ, hydrant 180 kg / 14 kJ, kiosk 650 kg / 25 kJ, bin 45 kg / 0.8 kJ. Damage = the energy the car lost.
+Measured (headless drive.mjs `poles`): lamp at 72 km/h -> ~59 km/h, 48 kJ; lamp at 15 km/h -> stopped, pole stands; tree at
+50 km/h -> stopped, 138 kJ; hydrant at 45 km/h -> 29 km/h. Sheared poles topple as rods about their foot under real gravity
+(~1 s for a 9.5 m lamp; fast hits throw the top back toward the car), can land on the player's car (energy 0.5 I w^2,
+~13 kJ for a lamp onto a roof) and rest on it until it drives out. A knocked-down pole falls for the whole party.
+

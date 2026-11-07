@@ -15,7 +15,7 @@
 // ?blackcar=1 makes them matte black with lights off (night lighting test).
 import * as THREE from 'three/webgpu';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { GROUP_CAR, type PhysicsWorld } from './physics/world';
+import { GROUP_CAR, GROUP_VIEW, type PhysicsWorld } from './physics/world';
 import { materialsOf } from './scene/city';
 import { mergeStaticMeshes } from './scene/merge';
 import { createContactShadow, setupCarMaterials, type CarVisualConfig } from './scene/car';
@@ -351,7 +351,7 @@ export class AiTraffic {
   private ground(x: number, z: number, top: number, len = 60): number | null {
     this.ray.origin = { x, y: top, z };
     const hit = this.pw.world.castRay(this.ray, len, true,
-      RAPIER.QueryFilterFlags.EXCLUDE_DYNAMIC | RAPIER.QueryFilterFlags.EXCLUDE_KINEMATIC, GROUP_CAR);
+      RAPIER.QueryFilterFlags.EXCLUDE_DYNAMIC | RAPIER.QueryFilterFlags.EXCLUDE_KINEMATIC, GROUP_VIEW);
     return hit ? top - hit.timeOfImpact : null;
   }
 

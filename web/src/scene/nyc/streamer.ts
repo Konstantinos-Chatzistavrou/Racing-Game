@@ -709,6 +709,9 @@ export class NycStreamer {
     if (this.overlay && (this.overlayT -= dt) < 0) { this.overlayT = 0.25; this.overlay.textContent = this.report(); }
   }
 
+  /** The street furniture (poles, trees) for obstacles.ts; null until ready or with stub props. */
+  get streetProps(): NycProps | null { return this.props instanceof NycProps ? this.props : null; }
+
   breakNearestPole(carPos: THREE.Vector3, carVel?: THREE.Vector3): boolean {
     return this.props?.breakNearestPole?.(carPos, carVel) ?? false;
   }

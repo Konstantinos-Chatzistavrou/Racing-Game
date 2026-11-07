@@ -10,7 +10,11 @@ export const DT = 1 / 240;
 // Collision groups ((membership << 16) | filter): cars never collide with their own debris, so a
 // bumper that breaks off inside the car's hull doesn't register as a second crash.
 export const GROUP_CAR = (0x0001 << 16) | 0xfffd;
-export const GROUP_DEBRIS = (0x0002 << 16) | 0xfffe;   // same tick as the Godot build (physics_ticks_per_second = 240)
+export const GROUP_DEBRIS = (0x0002 << 16) | 0xfffe;
+/** Street poles and tree trunks (nyc/obstacles.ts): hit by cars and debris, ignored by GROUP_VIEW rays. */
+export const GROUP_PROP = (0x0004 << 16) | 0xffff;
+/** Rays that should see the city but not poles / trees (chase camera, AI ground probe). */
+export const GROUP_VIEW = (0x0001 << 16) | (0xfffd & ~0x0004);   // same tick as the Godot build (physics_ticks_per_second = 240)
 
 export async function loadRapier() { await RAPIER.init(); }
 
@@ -80,7 +84,7 @@ export class PhysicsWorld {
    * with count (groups = GROUP_CAR): a bumper that broke off and lies in front of a wheel is not
    * road (wheel rays used to land on debris and kick the car sideways).
    */
-  raycast(from: THREE.Vector3, to: THREE.Vector3, exclude?: RAPIER.RigidBody, solid = true) {
+  raycast(from: THREE.Vector3, to: THREE.Vector3, exclude?: RAPIER.RigidBody, solid = true, groups = GROUP_CAR) {
     const d = this.rayDir.subVectors(to, from);
     const len = d.length();
     if (len < 1e-6) return null;
@@ -88,7 +92,7 @@ export class PhysicsWorld {
     let ray = this.ray;
     if (!ray) ray = this.ray = new RAPIER.Ray(from, d);
     else { ray.origin = from; ray.dir = d; }
-    const hit = this.world.castRayAndGetNormal(ray, len, solid, undefined, GROUP_CAR, undefined, exclude);
+    const hit = this.world.castRayAndGetNormal(ray, len, solid, undefined, groups, undefined, exclude);
     if (!hit) return null;
     const out = this.rayHit;
     out.toi = hit.timeOfImpact;

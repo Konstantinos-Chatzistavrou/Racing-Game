@@ -51,6 +51,10 @@ windows), both with the Vite dev server running.
 
 ## Playing
 
+**Street furniture is solid**: trees never break; lamp posts, signals, hydrants, bins, shelters and kiosks stop you when
+you're slow and shear when you're fast enough, taking real speed off the car and denting it; a sheared pole topples
+slowly under its own weight and can land on your car.
+
 **Driving** (title screen): **Full Realism** (default) or **Respawns**. In Full Realism there is no reset in a race
 (AI or party): a wrecked car, 5 s on its roof, or 30 s stuck is a DNF, and you spectate the remaining cars (◀ ▶ or
 A / D to switch, Results to end). Respawns: R puts you back on the road, repaired. Free roam always allows R.

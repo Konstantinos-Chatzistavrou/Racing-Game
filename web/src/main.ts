@@ -14,6 +14,7 @@ import { CoreCar, CoreRace, OUT, loadCore, type LapInfo, type RawInput } from '.
 import { CarBody, DT, PhysicsWorld, loadRapier, type CarShape } from './physics/world';
 import { CityLighting, loadCity } from './scene/city';
 import { NycStreamer, nycCityShim } from './scene/nyc';
+import { StreetObstacles, type PoleHit } from './scene/nyc/obstacles';
 import { CarVisual, type CarVisualConfig } from './scene/car';
 import { initLoaders } from './scene/loaders';
 import { CameraRig } from './camera';
@@ -174,6 +175,9 @@ async function main() {
     camera.updateProjectionMatrix();
   }
   const nycS0 = nyc ? nyc.spawnPoint() : null;
+  // Poles, hydrants, bins, shelters, kiosks and tree trunks near the car are solid (obstacles.ts)
+  const streetProps = nyc?.streetProps ?? null;
+  const obstacles = streetProps && params.get('solidprops') !== '0' ? new StreetObstacles(pw, streetProps) : null;
   const city = nyc ? nycCityShim() : await loadCity(scene, pw, core.info.surfaces, (f) => say(`Loading city… ${Math.round(f * 100)}%`, 20 + f * 55), webgpu && num('bundle', 1) === 1);
   const cityLights = new CityLighting(scene, city.lights, webgpu, num('lights', 12));
   // Reflections: capture the lit city once from street level (the car isn't in the scene yet).
@@ -507,7 +511,7 @@ async function main() {
   let frameNo = 0;
   g.__game = { city, nyc, ai, visual, audio, rig, damage, trace, input, renderer, camera, scene, post,
     get car() { return car; }, get core() { return core; }, get state() { return state; }, menu: () => menu, sel,
-    get party() { return party; }, get remote() { return remote; }, standings: () => standings(), get lap() { return lap; },
+    get party() { return party; }, get remote() { return remote; }, streetProps, obstacles, standings: () => standings(), get lap() { return lap; },
     bench: (soak = false) => runBench(soak),
     setPreset: (name: PresetName) => { setPreset(PRESET_ORDER.indexOf(name)); setExtra(); },
     setScale: (x: number) => { scale = x; post.setScale(x); setExtra(); },
@@ -659,6 +663,10 @@ async function main() {
       progress: (id, gp) => { remoteProg.set(id, gp); if (state === 'results') menu.updateResults(standings()); },
       left: (id) => { remote?.remove(id); remoteProg.delete(id); if (state === 'spectate') specRetarget(); },
       gone: (id) => { remote?.remove(id); if (state === 'spectate') specRetarget(); },
+      pole: (x, y, vx, vz) => {
+        const pl = streetProps?.poleAt(x, y);
+        if (pl && driving()) poleHit({ pole: pl, point: { x: pl.x, y: pl.z, z: -pl.y }, impulse: 0, vx, vz }, false);
+      },
       closed: (reason) => detachParty(reason),
     };
     menu.show('lobby');
@@ -1018,6 +1026,24 @@ async function main() {
    * the whole velocity change of hitting a wall. Two equal cars share it: keep half. (Their game does the same with us.)
    */
   const preV = new THREE.Vector3(), preW = new THREE.Vector3();
+  /**
+   * We sheared a pole (obstacles.afterStep already took the speed off): it falls, our front takes the impulse (the
+   * collider is gone, so feedCrash can't find the contact point), the others in the party see it fall too.
+   */
+  let contactId = 900000;
+  const poleHit = (h: PoleHit, mine: boolean) => {
+    streetProps!.knockDown(h.pole, h.vx, h.vz);
+    if (!mine) { obstacles?.release(h.pole); return; }
+    core.contact(h.point, h.impulse, ++contactId);
+    audio.impact(Math.max(15, h.impulse / 400), false, 'pole');
+    party?.sendPole(h.pole.x, h.pole.y, h.vx, h.vz);
+  };
+  // A falling pole landing on our car: dent where it lands.
+  if (streetProps) {
+    // the core's damage reads an impulse on our car: the one that carries this energy (E = J^2 / 2m)
+    streetProps.onLand = (x, y, z, energy) => { core.contact({ x, y, z }, Math.sqrt(2 * core.info.mass * energy), ++contactId); audio.impact(Math.max(10, energy / 1000), true, 'pole'); };
+  }
+  const carBox = { pos: new THREE.Vector3(), quat: new THREE.Quaternion(), half: [0, 0, 0] as [number, number, number], centre: [0, 0, 0] as [number, number, number] };
   const halveRemoteHits = (tTick: number) => {
     let touching = false;
     for (const c of remote!.colliders) {
@@ -1069,9 +1095,10 @@ async function main() {
       if (inShowroom) { car.body.setLinvel({ x: 0, y: Math.min(0, car.body.linvel().y), z: 0 }, true); car.body.setAngvel({ x: 0, y: 0, z: 0 }, true); settledShowroom++; }   // parked for the showroom
       ai.tick(DT, car.body.translation());
       remote?.tick(now - (acc - DT) * 1000, DT);   // other players' bodies at this tick's time
-      if (remote?.colliders.size) { const lv = car.body.linvel(), av = car.body.angvel(); preV.set(lv.x, lv.y, lv.z); preW.set(av.x, av.y, av.z); }
+      if (remote?.colliders.size || obstacles) { const lv = car.body.linvel(), av = car.body.angvel(); preV.set(lv.x, lv.y, lv.z); preW.set(av.x, av.y, av.z); }
       const t0 = performance.now();
       pw.world.step();
+      if (obstacles) { const h = obstacles.afterStep(car.collider, car.body, core.info.mass, preV, preW); if (h) poleHit(h, true); }
       if (remote?.colliders.size) halveRemoteHits(now - (acc - DT) * 1000);
       stepMs += (performance.now() - t0 - stepMs) * 0.01;   // Rapier cost per 240 Hz step, smoothed
       readBody(physPos, physQuat);
@@ -1115,6 +1142,13 @@ async function main() {
       else if (live) rig.update(frame, pos, quat, carAcc, car.out);
     }
     cityLights.update(frame, camera);   // WebGL 2 pool only (5 Hz); a no-op with clustered lighting
+    if (obstacles) obstacles.sync(frame, pos);
+    if (streetProps) {
+      carBox.pos.copy(physPos); carBox.quat.copy(physQuat);
+      carBox.half = [shape.boxSize[0] / 2, shape.boxSize[1] / 2, shape.boxSize[2] / 2];
+      carBox.centre = [shape.boxCentre[0] - visual.cg.x, shape.boxCentre[1] - visual.cg.y, shape.boxCentre[2] - visual.cg.z];
+      streetProps.carBox = driving() ? carBox : null;
+    }
     nyc?.update(pos, frame, driving() ? visual.velocity : undefined, (impulse, kind) => {
       const lv = car.body.linvel();
       const s = Math.hypot(lv.x, lv.z);

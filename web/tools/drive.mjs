@@ -1,6 +1,6 @@
 // Drives the game in the system Chrome with WebGPU enabled (Linux needs the flags) through the
 // DevTools protocol: load, idle, full throttle, brake. Prints telemetry + fps, saves screenshots.
-// Usage: node tools/drive.mjs [url] [outdir] [straight|crash|mobile|bench|profile|night|menu|race6|follow|dnf]   (parties: tools/party_test.mjs, tools/party_game_test.mjs)   (CDP_PORT=9334 to change the DevTools port)
+// Usage: node tools/drive.mjs [url] [outdir] [straight|crash|mobile|bench|profile|night|menu|race6|follow|dnf|poles]   (parties: tools/party_test.mjs, tools/party_game_test.mjs)   (CDP_PORT=9334 to change the DevTools port)
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -160,6 +160,76 @@ try {
     await sleep(1500);
     await evaluate(`(window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyR', key: 'r' })), 1)`); await sleep(1500);
     console.log('respawns: R after a flip', await st(), before, await evaluate(`JSON.stringify({ upY: (() => { const r = window.__game.car.body.rotation(); return +(1 - 2 * (r.x * r.x + r.z * r.z)).toFixed(2); })() })`));
+  }
+  if (scenario === 'poles') {
+    // Solid street furniture (run headless: HEADLESS=1): a lamp post at 72 km/h (shears, car keeps ~64 km/h, pole topples),
+    // the same at 15 km/h (too slow to shear: stops the car, pole stays), a tree at 50 km/h (never breaks).
+    // Each case: back to the spawn, pick the nearest object of the kind whose approach is clear, start 6 m out in the
+    // street (lamp yaw = the mast arm, pointing into the street) and 13 m along the kerb, aimed at it.
+    const spawn = await evaluate(`JSON.stringify(window.__game.car.body.translation())`);
+    const setup = (kind, kmh) => evaluate(`(() => {
+      const g = window.__game, sp = g.streetProps, s0 = ${spawn}, V = g.camera.position.constructor;
+      g.car.place(new V(s0.x, s0.y, s0.z), 0, 0);
+      const poles = [], trees = [];
+      sp.near(s0.x, -s0.z, 160, poles, trees);
+      const lamps = poles.filter((p) => p.kind === 'lamp');
+      const list = ('${kind}' === 'tree' ? trees : poles.filter((p) => p.kind === '${kind}'))
+        .sort((a, b) => Math.hypot(a.x - s0.x, a.y + s0.z) - Math.hypot(b.x - s0.x, b.y + s0.z));
+      const all = [...poles, ...trees];
+      for (const o of list) {
+        const ref = o.yaw !== undefined && o.kind !== 'hydrant' ? o : lamps.reduce((m, l) => (!m || Math.hypot(l.x - o.x, l.y - o.y) < Math.hypot(m.x - o.x, m.y - o.y) ? l : m), null);
+        if (!ref) continue;
+        const ix = Math.cos(ref.yaw), iz = -Math.sin(ref.yaw), kx = -Math.sin(ref.yaw), kz = -Math.cos(ref.yaw);   // into street, along kerb (three)
+        for (const side of [1, -1]) {
+          const sx = o.x + ix * 6 + kx * 13 * side, sz = -o.y + iz * 6 + kz * 13 * side;
+          let dx = o.x - sx, dz = -o.y - sz; const d = Math.hypot(dx, dz); dx /= d; dz /= d;
+          const clear = all.every((q) => { if (q === o) return true;
+            const px = q.x - sx, pz = -q.y - sz, along = px * dx + pz * dz, side2 = Math.abs(px * dz - pz * dx);
+            return along < -2 || along > d + 6 || side2 > 1.8; });
+          if (!clear) continue;
+          g.car.place(new V(sx, o.z + 0.6, sz), Math.atan2(dx, dz), ${kmh} / 3.6); g.input.hold = false;
+          window.__target = o;
+          return JSON.stringify({ target: [o.x.toFixed(1), o.y.toFixed(1)], dist: d.toFixed(1) });
+        }
+      }
+      return 'no clear ${kind}';
+    })()`);
+    const after = (ms) => sleep(ms).then(() => evaluate(`(() => { const g = window.__game, o = window.__target, d = g.damage.last;
+      return JSON.stringify({ kmh: Math.round(Math.abs(g.car.out[102]) * 3.6), broken: o.broken ?? 'tree', kj: d ? +d.totalKj.toFixed(1) : 0, colliders: g.obstacles?.count,
+        dist: +Math.hypot(g.car.body.translation().x - o.x, g.car.body.translation().z + o.y).toFixed(1) }); })()`));
+    await sleep(3000);
+    if (process.env.FALL) {
+      // the fall itself: a lamp clipped with the right corner along the kerb at 72 km/h (the car stays on the road), then a
+      // lamp knocked down backward onto a parked car (does it land, dent the roof and lie on it?)
+      const r = await evaluate(`(() => { const g = window.__game, sp = g.streetProps, s0 = ${spawn}, V = g.camera.position.constructor;
+        const poles = []; sp.near(s0.x, -s0.z, 160, poles, []);
+        const l = poles.filter((p) => p.kind === 'lamp').sort((a, b) => Math.hypot(a.x - s0.x, a.y + s0.z) - Math.hypot(b.x - s0.x, b.y + s0.z))[0];
+        const ix = Math.cos(l.yaw), iz = -Math.sin(l.yaw), kx = -Math.sin(l.yaw), kz = -Math.cos(l.yaw);
+        g.car.place(new V(l.x + ix * 0.6 + kx * 14, l.z + 0.6, -l.y + iz * 0.6 + kz * 14), Math.atan2(-kx, -kz), 20); g.input.hold = false;
+        window.__target = l; return JSON.stringify({ lamp: [l.x, l.y] }); })()`);
+      console.log('fall: kerb hit', r);
+      for (let i = 0; i < 6; i++) { await sleep(400); console.log(`  +${(i + 1) * 0.4}s`, await after(0)); await shot(`f_kerb_${i}.png`); }
+      const r2 = await evaluate(`(() => { const g = window.__game, sp = g.streetProps, s0 = ${spawn}, V = g.camera.position.constructor;
+        g.core.repair(); g.damage.repair();
+        const poles = []; sp.near(s0.x, -s0.z, 200, poles, []);
+        const l = poles.filter((p) => p.kind === 'lamp' && !p.broken).sort((a, b) => Math.hypot(a.x - s0.x, a.y + s0.z) - Math.hypot(b.x - s0.x, b.y + s0.z))[0];
+        const ix = Math.cos(l.yaw), iz = -Math.sin(l.yaw);
+        // park the car in the street 4 m out from the lamp, side-on; knock the lamp down toward it
+        g.car.place(new V(l.x + ix * 4.2, l.z + 0.6, -l.y + iz * 4.2), Math.atan2(-Math.sin(l.yaw), -Math.cos(l.yaw)), 0); g.input.hold = true;
+        window.__target = l; window.__kj0 = g.damage.last?.totalKj ?? 0;
+        setTimeout(() => sp.knockDown(l, -ix * 12, -iz * 12), 400);
+        return JSON.stringify({ lamp: [l.x, l.y] }); })()`);
+      console.log('fall: onto a parked car', r2);
+      for (let i = 0; i < 6; i++) { await sleep(400); console.log(`  +${(i + 1) * 0.4}s`, await after(0)); await shot(`f_onto_${i}.png`); }
+    }
+    for (const [kind, kmh, name] of (process.env.FALL ? [] : [['lamp', 72, 'lamp_72'], ['lamp', 15, 'lamp_15'], ['tree', 50, 'tree_50'], ['hydrant', 45, 'hydrant_45'], ['signalR', 72, 'signal_72']])) {
+      await evaluate(`(window.__game.core.repair(), window.__game.damage.repair(), 1)`);
+      console.log(name, 'setup', await setup(kind, kmh));
+      await sleep(250); await evaluate(`(window.__game.obstacles?.sync(0, window.__game.car.body.translation(), true), 1)`);
+      console.log(name, '+0.6s', await after(600)); await shot(`p_${name}_a.png`);
+      console.log(name, '+1.2s', await after(600)); await shot(`p_${name}_b.png`);
+      console.log(name, '+2.5s', await after(1300)); await shot(`p_${name}_c.png`);
+    }
   }
   if (scenario === 'follow') {
     // Ride along behind a rival (FOLLOW=<index>, default 0) for a race: the player car is placed 13 m behind it every frame,

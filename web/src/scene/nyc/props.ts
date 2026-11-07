@@ -423,9 +423,29 @@ function signalColor(t: number, group: number, phase: number, out: THREE.Color) 
 
 interface TileLights { serial: number; x0: number; y0: number; z: number; lamps: number[][]; signals: number[][]; signs: number[][]; brokenLamps: Set<number>; brokenSignals: Set<number> }
 
-type BreakableKind = 'lamp' | 'signalR' | 'signalL' | 'hydrant' | 'bus' | 'kiosk' | 'waste';
+export type BreakableKind = 'lamp' | 'signalR' | 'signalL' | 'hydrant' | 'bus' | 'kiosk' | 'waste';
 
-interface BreakablePole {
+/**
+ * Street furniture as physical objects (see obstacles.ts): mass (kg), breakaway energy (J: what it takes to shear the
+ * base / tear it out), the part of the mass a car has to bring up to its own speed at the instant of the hit (a pole
+ * struck at its foot acts like ~1/4 of its mass, a box like all of it), collision shape, and how it falls:
+ * 'topple' = a rod pivoting on its foot (length L), 'tumble' = thrown and rolling.
+ */
+export const PROP_PHYS: Record<BreakableKind, { mass: number; breakJ: number; effFrac: number; fall: 'topple' | 'tumble'; L: number;
+  shape: { r: number; h: number } | { hx: number; hy: number; hz: number; ox?: number } }> = {
+  lamp:    { mass: 420, breakJ: 22000, effFrac: 0.25, fall: 'topple', L: 9.5, shape: { r: 0.15, h: 3 } },
+  signalR: { mass: 650, breakJ: 35000, effFrac: 0.25, fall: 'topple', L: 6.3, shape: { r: 0.15, h: 3 } },
+  signalL: { mass: 650, breakJ: 35000, effFrac: 0.25, fall: 'topple', L: 6.3, shape: { r: 0.15, h: 3 } },
+  hydrant: { mass: 180, breakJ: 14000, effFrac: 0.5, fall: 'topple', L: 0.8, shape: { r: 0.16, h: 0.8 } },
+  waste:   { mass: 45, breakJ: 800, effFrac: 0.9, fall: 'tumble', L: 0.9, shape: { r: 0.27, h: 0.9 } },
+  bus:     { mass: 450, breakJ: 18000, effFrac: 0.6, fall: 'tumble', L: 2.6, shape: { hx: 0.8, hy: 1.3, hz: 1.85 } },
+  kiosk:   { mass: 650, breakJ: 25000, effFrac: 0.9, fall: 'tumble', L: 2.2, shape: { hx: 0.55, hy: 1.05, hz: 0.8 } },
+};
+
+/** The player's car for falling poles: body centre, rotation, hull half extents and their centre in the body frame. */
+export interface CarBox { pos: THREE.Vector3; quat: THREE.Quaternion; half: [number, number, number]; centre: [number, number, number] }
+
+export interface BreakablePole {
   kind: BreakableKind;
   slot: number;
   x: number;          // game frame x (three x)
@@ -441,6 +461,8 @@ interface BreakablePole {
 interface FlyingPole {
   kind: BreakableKind;
   slot: number;
+  /** topple: a rod pivoting on its sliding foot; fields below (tumble uses the free-flight ones above them) */
+  topple?: { dx: number; dz: number; theta: number; omega: number; vb: number; vbx: number; vbz: number; L: number; mass: number; yaw: number; hitCar: boolean; settled: boolean };
   x: number; y: number; z: number;       // three coordinates (y up)
   vx: number; vy: number; vz: number;
   rx: number; ry: number; rz: number;    // Euler angles
@@ -469,6 +491,7 @@ const _pos = new THREE.Vector3();
 const _quat = new THREE.Quaternion();
 const _euler = new THREE.Euler();
 const _scale = new THREE.Vector3(1, 1, 1);
+const _inv = new THREE.Quaternion(), _quat2 = new THREE.Quaternion(), _axis = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
 
 export class NycProps {
   readonly root = new THREE.Group();
@@ -497,7 +520,13 @@ export class NycProps {
   private lights: Slot[] = [];
   private tileLights = new Map<string, TileLights>();
   private tilePoles = new Map<string, BreakablePole[]>();
-  private tileTrees = new Map<string, { slot: number; x: number; y: number }[]>();
+  private tileTrees = new Map<string, { slot: number; x: number; y: number; z: number; scale: number }[]>();
+  /** Poles and trees are solid Rapier colliders (obstacles.ts): no proximity break here. */
+  solidPoles = false;
+  /** Player's car, for falling poles landing on it (set every frame by main). */
+  carBox: CarBox | null = null;
+  /** A falling pole hit the car: where (three coords) and the energy it brought (J). */
+  onLand: ((x: number, y: number, z: number, energy: number) => void) | null = null;
   private tileBuildings = new Map<string, { z: number; boxes: BuildingColliderBox[] }>();
   private flyingPoles: FlyingPole[] = [];
   brokenPolesCount = 0;
@@ -710,7 +739,7 @@ export class NycProps {
     }
     const treeRows = rawTreeRows.filter((r) => !this.isInsideAnyBuilding(r[0], r[1]));
     const treeSlots = S.tree.add(key, treeRows, (r, m, mo) => writeMatrix(m, mo, r[0], r[1], z, r[2], r[3], r[3] * (0.9 + 0.2 * ((r[2] * 7) % 1)), r[3]));
-    this.tileTrees.set(key, treeSlots.map((slot, i) => ({ slot, x: treeRows[i][0], y: treeRows[i][1] })));
+    this.tileTrees.set(key, treeSlots.map((slot, i) => ({ slot, x: treeRows[i][0], y: treeRows[i][1], z, scale: treeRows[i][3] ?? 1 })));
     for (const [set, side, kName] of [[S.signalR, 1, 'signalR'], [S.signalL, -1, 'signalL']] as [InstanceSet, number, BreakableKind][]) {
       const sigRows = d.signal?.filter((r) => r[3] === side);
       const slots = set.add(key, sigRows, (r, m, mo, ex, eo) => {
@@ -765,8 +794,9 @@ export class NycProps {
     this.signs.flush();
     if (lampDirty) {
       (this.pools.instanceMatrix.array as Float32Array).set(this.sets.lamp.mesh.instanceMatrix.array as Float32Array);
-      for (const fp of this.flyingPoles) {
-        if (fp.kind === 'lamp') (this.pools.instanceMatrix.array as Float32Array).fill(0, fp.slot * 16, fp.slot * 16 + 16);
+      // knocked-down lamps (flying or lying) stay dark
+      for (const poles of this.tilePoles.values()) for (const p of poles) {
+        if (p.broken && p.kind === 'lamp') (this.pools.instanceMatrix.array as Float32Array).fill(0, p.slot * 16, p.slot * 16 + 16);
       }
       this.pools.instanceMatrix.needsUpdate = true;
     }
@@ -846,12 +876,75 @@ export class NycProps {
     }
   }
 
+  /** Unbroken breakables and trees within r m of (cx, cy) (game frame: three x, -z). */
+  near(cx: number, cy: number, r: number, poles: BreakablePole[], trees: { x: number; y: number; z: number; scale: number }[]) {
+    poles.length = 0; trees.length = 0;
+    const r2 = r * r, ix0 = Math.floor(cx / 256), iy0 = Math.floor(cy / 256);
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+      const key = `${ix0 + dx}_${iy0 + dy}`;
+      for (const p of this.tilePoles.get(key) ?? []) if (!p.broken && (p.x - cx) ** 2 + (p.y - cy) ** 2 < r2) poles.push(p);
+      for (const t of this.tileTrees.get(key) ?? []) if ((t.x - cx) ** 2 + (t.y - cy) ** 2 < r2) trees.push(t);
+    }
+  }
+
+  /** The unbroken breakable nearest (x, y) within maxD m (other players' hits arrive as a position). */
+  poleAt(x: number, y: number, maxD = 1.5): BreakablePole | null {
+    let best: BreakablePole | null = null, bd = maxD * maxD;
+    const ix0 = Math.floor(x / 256), iy0 = Math.floor(y / 256);
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+      for (const p of this.tilePoles.get(`${ix0 + dx}_${iy0 + dy}`) ?? []) {
+        const d = (p.x - x) ** 2 + (p.y - y) ** 2;
+        if (!p.broken && d < bd) { bd = d; best = p; }
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Knocked down by a car moving (vx, vz) m/s (three frame) at the hit. A tall pole sheared at its foot topples as a
+   * rod: the foot is kicked along with the car while the top lags, so after a fast hit the top swings back over the
+   * car (and may land on it); a slow push tips it forward. Real gravity: a 9.5 m lamp post takes about a second.
+   * Boxes and bins are thrown and roll.
+   */
+  knockDown(p: BreakablePole, vx: number, vz: number, onImpact?: (impulse: number, kind?: 'pole' | 'shop' | 'wall', wx?: number, wz?: number) => void) {
+    if (p.broken) return;
+    const ph = PROP_PHYS[p.kind];
+    if (ph.fall === 'tumble') { this.triggerPoleBreak(p, vx, vz, onImpact, 0.75); return; }
+    p.broken = true;
+    this.brokenPolesCount++;
+    this.extinguish(p);
+    const spd = Math.hypot(vx, vz), dirX = spd > 0.1 ? vx / spd : 1, dirZ = spd > 0.1 ? vz / spd : 0;
+    const back = spd > 8;                              // fast: foot kicked out, top falls back toward the car
+    const vb = Math.min(14, spd * 0.45);
+    const jitter = (Math.random() - 0.5) * 0.5;        // never quite straight
+    const fx = (back ? -dirX : dirX), fz = (back ? -dirZ : dirZ);
+    const c = Math.cos(jitter), s = Math.sin(jitter);
+    const tx = p.x, ty = p.z, tz = -p.y;
+    this.flyingPoles.push({
+      kind: p.kind, slot: p.slot,
+      x: tx, y: ty, z: tz, vx: 0, vy: 0, vz: 0, rx: 0, ry: p.yaw, rz: 0, wx: 0, wy: 0, wz: 0, groundY: ty, age: 0, bounced: false,
+      topple: { dx: fx * c - fz * s, dz: fx * s + fz * c, theta: 0.02, omega: Math.min(2.2, (1.5 * vb) / ph.L) + 0.15, vb, vbx: dirX, vbz: dirZ,
+        L: ph.L, mass: ph.mass, yaw: p.yaw, hitCar: false, settled: false },
+    });
+    this.emitSparks(tx, ty + 0.3, tz, vx, vz, 30);
+    onImpact?.(p.kind === 'hydrant' ? 85 : 155, 'pole', tx, tz);
+  }
+
+  private extinguish(p: BreakablePole) {
+    if (p.kind !== 'lamp') return;
+    (this.pools.instanceMatrix.array as Float32Array).fill(0, p.slot * 16, p.slot * 16 + 16);
+    this.pools.instanceMatrix.needsUpdate = true;
+    const tl = this.tileLights.get(p.tileKey);
+    if (tl && p.lightIdx !== undefined) tl.brokenLamps.add(p.lightIdx);
+  }
+
   /** Break a specific pole and launch it with 3D tumbling rigid-body motion. */
   private triggerPoleBreak(
     p: BreakablePole,
     vx: number,
     vz: number,
     onImpact?: (impulse: number, kind?: 'pole' | 'shop' | 'wall', wx?: number, wz?: number) => void,
+    throwK = 0.92,
   ) {
     if (p.broken) return;
     p.broken = true;
@@ -861,21 +954,16 @@ export class NycProps {
     const dirZ = spd > 0.1 ? vz / spd : 0;
 
     // Extinguish light pool & dynamic point light if this was a streetlamp
-    if (p.kind === 'lamp') {
-      (this.pools.instanceMatrix.array as Float32Array).fill(0, p.slot * 16, p.slot * 16 + 16);
-      this.pools.instanceMatrix.needsUpdate = true;
-      const tl = this.tileLights.get(p.tileKey);
-      if (tl && p.lightIdx !== undefined) tl.brokenLamps.add(p.lightIdx);
-    }
+    this.extinguish(p);
 
     const tx = p.x, ty = p.z, tz = -p.y;
     this.flyingPoles.push({
       kind: p.kind,
       slot: p.slot,
       x: tx, y: ty + 0.15, z: tz,
-      vx: dirX * Math.min(28, spd * 0.92) + (Math.random() - 0.5) * 3.0,
-      vy: 3.4 + Math.min(6.5, spd * 0.18),
-      vz: dirZ * Math.min(28, spd * 0.92) + (Math.random() - 0.5) * 3.0,
+      vx: dirX * Math.min(28, spd * throwK) + (Math.random() - 0.5) * 3.0,
+      vy: throwK < 0.9 ? 1.2 + Math.min(3, spd * 0.08) : 3.4 + Math.min(6.5, spd * 0.18),
+      vz: dirZ * Math.min(28, spd * throwK) + (Math.random() - 0.5) * 3.0,
       rx: 0, ry: p.yaw, rz: 0,
       wx: dirZ * (3.2 + Math.random() * 2.2),
       wy: (Math.random() - 0.5) * 2.5,
@@ -1018,7 +1106,7 @@ export class NycProps {
         const poles = this.tilePoles.get(key);
         if (poles) {
           for (const p of poles) {
-            if (p.broken) continue;
+            if (p.broken || this.solidPoles) continue;
             const pdx = p.x - cx, pdy = p.y - cy;
             if (pdx * pdx + pdy * pdy < (carR + p.radius) * (carR + p.radius)) {
               this.triggerPoleBreak(p, carVel.x, carVel.z, onImpact);
@@ -1057,6 +1145,62 @@ export class NycProps {
     }
   }
 
+  /**
+   * One step of a toppling pole: the foot slides (friction ~0.6 g), the rod pivots on it under gravity
+   * (theta'' = 3 g / 2L sin theta), it rests on the player's car while any point of the shaft is inside the car's hull
+   * (first touch dents the car: onLand), bounces faintly when it hits the street. Returns true when it has come to rest.
+   */
+  private stepTopple(fp: FlyingPole, dt: number): boolean {
+    const t = fp.topple!;
+    const LIE = Math.PI / 2 - 0.03;
+    if (!t.settled) {
+      t.vb = Math.max(0, t.vb - 6 * dt);
+      fp.x += t.vbx * t.vb * dt; fp.z += t.vbz * t.vb * dt;
+      const prevTheta = t.theta;
+      t.omega += ((3 * 9.81) / (2 * t.L)) * Math.sin(t.theta) * dt;
+      t.theta += t.omega * dt;
+      // resting on the car?
+      const cb = this.carBox;
+      // only a pole that has really tipped can land on the car, and only on its top (roof, bonnet, boot): right after
+      // the hit the car is still over the pole's foot, and a near-upright pole must not hang in it
+      if (cb && t.L > 2 && t.theta > 0.35) {
+        _inv.copy(cb.quat).invert();
+        for (let sd = 1.5; sd <= t.L; sd += 0.45) {
+          const st = Math.sin(t.theta), ct = Math.cos(t.theta);
+          _pos.set(fp.x + t.dx * st * sd - cb.pos.x, fp.y + ct * sd - cb.pos.y, fp.z + t.dz * st * sd - cb.pos.z).applyQuaternion(_inv);
+          const lx = _pos.x - cb.centre[0], ly = _pos.y - cb.centre[1], lz = _pos.z - cb.centre[2];
+          if (Math.abs(lx) < cb.half[0] + 0.08 && ly > 0 && ly < cb.half[1] + 0.08 && Math.abs(lz) < cb.half[2] + 0.08) {
+            if (!t.hitCar) {
+              t.hitCar = true;
+              // the rod's kinetic energy about its foot (I = m L^2 / 3); most of it goes into the car (a 420 kg lamp
+              // post falling onto a roof brings ~10 kJ)
+              const energy = 0.7 * 0.5 * ((t.mass * t.L * t.L) / 3) * t.omega * t.omega;
+              _pos.set(fp.x + t.dx * Math.sin(t.theta) * sd, fp.y + Math.cos(t.theta) * sd, fp.z + t.dz * Math.sin(t.theta) * sd);
+              this.emitSparks(_pos.x, _pos.y, _pos.z, t.dx * 3, t.dz * 3, 18);
+              this.onLand?.(_pos.x, _pos.y, _pos.z, energy);
+            }
+            t.theta = prevTheta; t.omega = 0;     // held up by the car until it drives out from under
+            break;
+          }
+        }
+      }
+      if (t.theta >= LIE) {
+        t.theta = LIE;
+        if (!fp.bounced && t.omega > 1) {
+          fp.bounced = true;
+          this.emitSparks(fp.x + t.dx * t.L * 0.85, fp.groundY + 0.1, fp.z + t.dz * t.L * 0.85, t.dx * 2, t.dz * 2, 16);
+          t.omega = -t.omega * 0.12;               // heavy: a small rebound, no bounce-around
+        } else t.omega = 0;
+        if (t.vb < 0.05 && Math.abs(t.omega) < 0.01) t.settled = true;
+      }
+    }
+    // pose: foot at (x, ground, z), tipped by theta toward (dx, dz), turned by its own yaw
+    _quat.setFromAxisAngle(_axis.set(t.dz, 0, -t.dx), t.theta).multiply(_quat2.setFromAxisAngle(_up, t.yaw));
+    _mat4.compose(_pos.set(fp.x, fp.groundY + Math.sin(t.theta) * 0.12, fp.z), _quat, _scale.set(1, 1, 1));
+    _mat4.toArray(this.sets[fp.kind].mesh.instanceMatrix.array as Float32Array, fp.slot * 16);
+    return t.settled || fp.age > 12;
+  }
+
   private stepPhysics(dt: number) {
     // 1. Flying / toppling broken metal poles
     if (this.flyingPoles.length) {
@@ -1064,10 +1208,15 @@ export class NycProps {
       for (let i = this.flyingPoles.length - 1; i >= 0; i--) {
         const fp = this.flyingPoles[i];
         fp.age += dt;
+        if (fp.topple) {
+          if (this.stepTopple(fp, dt)) this.flyingPoles.splice(i, 1);
+          touched.add(fp.kind);
+          continue;
+        }
         fp.x += fp.vx * dt;
         fp.y += fp.vy * dt;
         fp.z += fp.vz * dt;
-        fp.vy -= 17.5 * dt;
+        fp.vy -= (fp.kind === 'bus' || fp.kind === 'kiosk' || fp.kind === 'waste' ? 9.81 : 17.5) * dt;
         fp.rx += fp.wx * dt;
         fp.ry += fp.wy * dt;
         fp.rz += fp.wz * dt;
