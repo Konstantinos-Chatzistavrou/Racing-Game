@@ -229,6 +229,17 @@ TireForces magic_formula(const TireParams& p, double kappa, double tan_alpha, do
     double alpha = std::atan(tan_alpha);
     double fx0 = mf_pure_fx(p, kappa, fz, mu_scale, gamma, dpi);
     double fy0 = mf_pure_fy(p, alpha, fz, mu_scale, gamma, dpi);
+    // MF 6.1 turn slip (spin) reduction of the lateral force (eqs. 4.E64-4.E69, peak factor zeta_2, stiffness zeta_3):
+    //   B_yphi = pDyp1 (1 + pDyp2 dfz) cos(atan(pDyp3 tan alpha))
+    //   zeta_2 = cos(atan(B_yphi (R0 |phi| + pDyp4 sqrt(R0 |phi|))))     zeta_3 = cos(atan(pKyp1 R0^2 phi^2))
+    // Negligible at speed (phi ~ 1/R), real when parking or in a hairpin at walking pace.
+    if (op.phi != 0.0) {
+        const double rphi = p.radius * std::abs(op.phi);
+        const double byphi = p.pdyp1 * (1.0 + p.pdyp2 * dfz) * std::cos(std::atan(p.pdyp3 * tan_alpha));
+        const double zeta2 = std::cos(std::atan(byphi * (rphi + p.pdyp4 * std::sqrt(rphi))));
+        const double zeta3 = std::cos(std::atan(p.pkyp1 * rphi * rphi));
+        fy0 *= zeta2 * (0.5 + 0.5 * zeta3);   // peak and (approx.) slope
+    }
 
     // Combined slip (Pacejka MF 5.2 weighting functions Gxa, Gyk + kappa-induced side force SVyk):
     //   Gxa = cos(Cxa atan(Bxa alpha_S - Exa (Bxa alpha_S - atan(Bxa alpha_S)))) / cos(...)

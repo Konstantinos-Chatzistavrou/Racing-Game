@@ -64,3 +64,13 @@ De-branded: no real-world logos, brand names or trademarked signs. Neon signs us
 
 Trademarks mentioned in source asset names belong to their owners. No vehicle in this game
 represents or is endorsed by any real manufacturer.
+
+## Tyre data
+- **Fitted Magic Formula tyre, 245/40 R18** (PAC2002 property file `audi_Pac02Tire.tir`), from Project Chrono
+  (https://github.com/projectchrono/chrono, `data/vehicle/audi/json/`), Copyright (c) 2016, Project Chrono Development
+  Team, BSD-3-Clause (`data/tires/LICENSE-projectchrono.txt`). Stored unchanged as `data/tires/audi_245_40R18_pac2002.tir`;
+  converted into every car's tyre curves by `tools/tir2car.mjs` (sign conventions changed to ours, left-tyre-only and
+  mirror-asymmetric terms zeroed, peak friction and stiffness scaled per car).
+- MF 6.1 inflation-pressure and turn-slip coefficients: generic published values from H. B. Pacejka, *Tire and Vehicle
+  Dynamics*, 3rd ed. (Table 4.2 example tyre, and the MF 6.1 defaults).
+

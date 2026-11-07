@@ -262,7 +262,8 @@ async function main() {
   const audio = new GameAudio();
   audio.prepare();   // the audio device opens now (behind the loading screen), not on the first key press
   let damage = new DamageVisuals(visual, visualCfg, pw, scene);
-  const wireDamage = () => { damage.onImpact = (kj, glass) => audio.impact(kj, glass); };
+  let rumbleKj = 0;   // crash energy for the pad's rumble this frame
+  const wireDamage = () => { damage.onImpact = (kj, glass) => { audio.impact(kj, glass); rumbleKj = Math.max(rumbleKj, kj); }; };
   wireDamage();
   input.onAnyInput = () => audio.unlock();
   audio.muted = true;   // silent in the menus
@@ -1145,6 +1146,7 @@ async function main() {
       }
     }
     if (driving()) audio.update(car.out, car.out[OUT.speed]);
+    if (state === 'race') { input.rumble(now, car.out, rumbleKj); rumbleKj = 0; }
     if (remote) {
       remote.update(now, camera);
       if (party && driving()) { const out = remote.outgoing(now, pos, quat, car.body.linvel()); if (out) party.sendPose(out, paintInt()); }

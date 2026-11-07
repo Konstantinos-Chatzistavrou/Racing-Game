@@ -100,3 +100,13 @@ cmake -S core -B core/build && cmake --build core/build -j && ./core/build/rs_te
 Handling is matched to a Corvette C7 Z51: 60-0 mph 31.7 m (real 31.7-32.6 m), skidpad 1.04 g,
 0-60 mph 3.92 s. The WebAssembly build reproduces the native results exactly. Details in
 `docs/handling_reference.md` and `docs/web_port.md`.
+
+## Licence
+
+The game (code, data and our own assets) is free software under the **GNU Affero General Public License v3.0 or later**
+(`LICENSE`, SPDX `AGPL-3.0-or-later`). The Affero licence covers the web: anyone who plays a modified version over a
+network must be offered its source (the title screen links to it). Third-party material keeps its own licence and is
+listed in `CREDITS.md`: car models CC BY 4.0, map data ODbL (OpenStreetMap), the fitted tyre data BSD-3-Clause
+(Project Chrono). Code from GPL-3.0 / LGPL-3.0 / Apache-2.0 / MIT / BSD projects can be included; GPL-2.0-only code can't
+(not compatible with v3).
+

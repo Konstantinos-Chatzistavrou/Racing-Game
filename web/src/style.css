@@ -359,3 +359,5 @@ body.noreset #hud-reset, body.noreset [data-c="reset"] { display: none; }
 #spectate button:hover { background: #ffffff22; }
 body.spectating #dash, body.spectating #warn, body.spectating #laps, body.spectating #help, body.spectating #hud-reset, body.spectating #hud-cam { display: none; }
 body.spectating #board { top: 12px; }
+#menu .source-link { font-size: 11px; color: var(--dim); text-decoration: underline; text-underline-offset: 2px; pointer-events: auto; }
+#menu .source-link:hover { color: var(--fg); }

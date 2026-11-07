@@ -73,6 +73,9 @@ struct TireParams {
     double p_nominal_kpa = 220, p_cold_kpa = 188;   // 188 kPa cold -> ~220 kPa with the core at ~80 C
     double ppx1 = -0.3485, ppx2 = 0.37824, ppx3 = -0.09603, ppx4 = 0.06518;
     double ppy1 = -0.6255, ppy2 = -0.06523, ppy3 = -0.16666, ppy4 = 0.2811;
+    // MF 6.1 turn slip (spin): peak lateral force and cornering stiffness drop when the contact patch also rotates
+    // (tight turns at low speed, parking). Pacejka's default coefficients.
+    double pdyp1 = 0.4, pdyp2 = 0.0, pdyp3 = 0.0, pdyp4 = 0.0, pkyp1 = 1.0;
     // Thermal window: core/surface blend temperature with full grip (C), and the half-width of the window.
     double temp_optimal_c = 90, temp_window_c = 25;
 };
@@ -113,6 +116,16 @@ struct AxleParams {
     double kpi_deg = 7.0;             // deg, kingpin inclination angle
     double handbrake_torque = 0;      // N m per wheel
     bool driven = false;
+    // ---- suspension kinematics (double-wishbone-like defaults; dz = compression from static, m, + = bump)
+    double camber_gain2_rad_per_m2 = -4.0;  // quadratic camber curve: camber(dz) = static + g1 dz + g2 dz^2 (recovery grows in bump)
+    double static_toe_deg = 0.0;            // + = toe-in
+    double bump_steer_deg_per_m = 0.0;      // toe-in change per metre of bump (+ = toes in under bump)
+    double roll_centre_gain = -1.8;         // roll centre height change per metre of axle heave (drops ~1.8x the body)
+    double anti_pitch = 0.0;                // front: anti-dive (braking) / anti-lift (front drive); rear: anti-squat (drive)
+    double anti_lift_rear_braking = 0.0;    // rear: anti-lift under braking
+    // ---- dampers: digressive valving (firm at low shaft speed for body control, softer past the knee for bumps)
+    double damper_knee_mps = 0.13;
+    double damper_high_speed_ratio = 0.45;  // coefficient above the knee / below it
 };
 
 struct DiffParams {
@@ -146,6 +159,10 @@ struct AeroParams {
     double drag_area = 0.68;          // Cd * A, m^2
     double lift_area = 0.3;           // Cl * A (downforce positive), m^2
     double front_balance = 0.45;      // fraction of downforce on the front axle
+    // Ride-height sensitivity: underbody and diffuser work harder closer to the road; nose-down pitch moves the
+    // aero balance forward. Changes per metre of mean / front-minus-rear compression from static.
+    double ground_effect_per_m = 1.5;     // downforce * (1 + this * mean compression), clamped 0.6 .. 1.5
+    double pitch_balance_per_m = 1.0;     // front balance + this * (front - rear compression)
 };
 
 struct CarConfig {

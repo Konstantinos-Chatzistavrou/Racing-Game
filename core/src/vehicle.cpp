@@ -54,8 +54,12 @@ void Vehicle::reset_motion(double v, int gear) {
 // so the inner wheel turns more. `ackermann` blends from parallel (0) to ideal (1).
 double Vehicle::steer_angle(int w) const {
     const AxleParams& ax = cfg_.axle(w);
-    if (ax.max_steer_deg <= 0) return damage_.toe[w];
-    double d = input_.steer * ax.max_steer_deg * kPi / 180.0 + damage_.toe[w];
+    // Toe: static setting + bump steer (toe change with travel). Toe-in turns a left wheel right (negative angle) and a
+    // right wheel left. Rear axles usually toe in under bump (stable in a loaded corner).
+    const double toe_in = (ax.static_toe_deg + ax.bump_steer_deg_per_m * dz_[w]) * kPi / 180.0;
+    const double toe = (w % 2 == 0 ? -1.0 : 1.0) * toe_in;
+    if (ax.max_steer_deg <= 0) return damage_.toe[w] + toe;
+    double d = input_.steer * ax.max_steer_deg * kPi / 180.0 + damage_.toe[w] + toe;
     // Compliance steer: lateral force flexes bushings/rack and turns the wheels back toward
     // straight:  d_actual = d_cmd - c * Fy_axle.  A major source of road-car understeer.
     d -= ax.steer_compliance * prev_axle_fy_[w < 2 ? 0 : 1];
@@ -66,6 +70,13 @@ double Vehicle::steer_angle(int w) const {
     bool inner = (d > 0) == left_wheel;               // turning left: left wheel is inner
     double ideal = std::atan(L / (inner ? R - 0.5 * t : R + 0.5 * t));
     return sign(d) * lerp(std::abs(d), ideal, ax.ackermann);
+}
+
+double Vehicle::roll_centre(int w) const {
+    const AxleParams& ax = cfg_.axle(w);
+    const int l = w < 2 ? FL : RL;
+    const double heave = 0.5 * (dz_[l] + dz_[l + 1]);
+    return clamp(ax.roll_centre_height + ax.roll_centre_gain * heave, -0.1, 0.4);
 }
 
 std::array<WheelRay, 4> Vehicle::wheel_rays(const ChassisState& s) const {
@@ -132,12 +143,24 @@ VehicleOutput Vehicle::update(const ChassisState& s, const std::array<WheelConta
         double f = k * comp[w];
         double bump_start = cfg_.wheels[w].static_compression + ax.max_compression;
         if (comp[w] > bump_start) f += ax.bump_stop_rate * (comp[w] - bump_start);
-        f += (comp_rate[w] > 0 ? ax.damper_bump : ax.damper_rebound) * comp_rate[w];
+        {
+            // digressive damper: c below the knee speed, c * ratio above it (blow-off valving)
+            const double c = comp_rate[w] > 0 ? ax.damper_bump : ax.damper_rebound, v = std::abs(comp_rate[w]), knee = ax.damper_knee_mps;
+            f += sign(comp_rate[w]) * c * (v <= knee ? v : knee + ax.damper_high_speed_ratio * (v - knee));
+        }
         int other = w ^ 1;                              // FL<->FR, RL<->RR
         double other_comp = touching[other] ? comp[other] : 0.0;
         f += ax.anti_roll_rate * (comp[w] - other_comp);
+        // Anti-dive / anti-squat / anti-lift: the links' side-view geometry carries part of the longitudinal load
+        // transfer straight into the body (F = anti * Fx * h_cg / L along body up), so the springs see less of it and
+        // the body pitches less; the wheel's load is unchanged in the steady state. Front: braking (Fx < 0) pushes up
+        // (anti-dive), front drive pulls down (anti-lift). Rear: drive pushes up (anti-squat), braking pulls down.
+        const double hl = cfg_.cg_height / cfg_.wheelbase, fx = prev_fx_[w];
+        const double anti = w < 2 ? -ax.anti_pitch * fx : (fx > 0 ? ax.anti_pitch : ax.anti_lift_rear_braking) * fx;
+        f += anti * hl;
         susp_force[w] = std::max(0.0, f);               // a spring can push, not pull the ground
     }
+    for (int w = 0; w < 4; ++w) dz_[w] = touching[w] ? comp[w] - cfg_.wheels[w].static_compression : dz_[w] * 0.9;
 
     // ------------------------------------------------------------------ tyre kinematics
     struct Kin {
@@ -165,7 +188,9 @@ VehicleOutput Vehicle::update(const ChassisState& s, const std::array<WheelConta
         // Geometric (roll-centre) load transfer: the part of lateral load transfer that goes
         // through the suspension links instead of the springs:  dFz = Fy_axle * h_rc / track.
         // A leftward force (left turn) loads the right (outer) wheel. Uses last step's Fy.
-        double geo = prev_axle_fy_[w < 2 ? 0 : 1] * ax.roll_centre_height / ax.track;
+        // Roll centre migrates with axle heave (double wishbone: drops ~1.8x as far as the body).
+        const double rch = roll_centre(w);
+        double geo = prev_axle_fy_[w < 2 ? 0 : 1] * rch / ax.track;
         k.load = std::max(0.0, k.load + (w % 2 == 0 ? -geo : geo));
         k.mu = cfg_.grip_for_surface(c.surface) * tire_condition_[w].grip_factor(&cfg_.tire(w)) * damage_.grip[w];
         // Dynamic inclination / camber angle gamma in the tyre frame (+ = top tilted toward +left):
@@ -173,8 +198,8 @@ VehicleOutput Vehicle::update(const ChassisState& s, const std::array<WheelConta
         //   2. Static camber + suspension bump camber gain (negative = top tilted inward)
         //   3. Steering caster angle + kingpin inclination (caster leans outer steered wheel into turn)
         double roll_gamma = std::asin(clamp(dot(up, k.lat), -0.5, 0.5));
-        double susp_camber = ax.static_camber_deg * kPi / 180.0 +
-                             ax.camber_gain_rad_per_m * (comp[w] - cfg_.wheels[w].static_compression);
+        const double dz = comp[w] - cfg_.wheels[w].static_compression;
+        double susp_camber = ax.static_camber_deg * kPi / 180.0 + ax.camber_gain_rad_per_m * dz + ax.camber_gain2_rad_per_m2 * dz * dz;
         double caster = ax.caster_deg * kPi / 180.0, kpi = ax.kpi_deg * kPi / 180.0;
         double side = (w % 2 == 0) ? -1.0 : 1.0;   // FL/RL = -1 (left), FR/RR = +1 (right)
         k.gamma = clamp(roll_gamma - side * susp_camber + caster * std::sin(d) - side * kpi * (1.0 - std::cos(d)), -0.35, 0.35);
@@ -284,6 +309,7 @@ VehicleOutput Vehicle::update(const ChassisState& s, const std::array<WheelConta
             TireOperating op;
             op.slip_speed = std::hypot(v_sx, k.vy);           // contact patch sliding speed
             op.dpi = tire_condition_[w].dpi(tp);              // hot inflation pressure vs. nominal
+            op.phi = -yaw_rate / std::max(std::abs(k.vx), 0.5);       // turn slip: patch spin / rolling speed
             TireForces f = magic_formula(tp, kappa_[w], tan_alpha_[w], k.load, k.mu, k.gamma, op);
             fx_sum[w] += f.fx;
             fy_sum[w] += f.fy;
@@ -359,6 +385,14 @@ VehicleOutput Vehicle::update(const ChassisState& s, const std::array<WheelConta
         if (!touching[w]) continue;
         const Kin& k = kin[w];
         double fx = fx_sum[w] / n_sub, fy = fy_sum[w] / n_sub, mz = mz_sum[w] / n_sub;
+        prev_fx_[w] = fx;
+        if (w < 2 && cfg_.axle(w).max_steer_deg > 0) {
+            // Rack torque about the steering axis: the tyre's aligning moment plus the lateral force acting on the
+            // caster trail (R tan caster). This is what the driver feels through the wheel: it builds with cornering
+            // force and goes light as the front tyres pass their peak (pneumatic trail collapses) - the understeer cue.
+            const double trail = tp.radius * std::tan(cfg_.axle(w).caster_deg * kPi / 180.0);
+            out.steer_torque += mz - fy * trail;
+        }
         // Low-speed damping (below ~2 m/s): the relaxation-length model acts like an undamped
         // spring at standstill; real tyres have internal damping. Blends out with speed.
         double speed = std::hypot(k.vx, k.vy);
@@ -389,7 +423,7 @@ VehicleOutput Vehicle::update(const ChassisState& s, const std::array<WheelConta
         Vec3 f_susp = up * susp_force[w];
         Vec3 f_long = k.fwd * fx;
         Vec3 f_lat = k.lat * fy;
-        Vec3 p_lat = k.point + up * cfg_.axle(w).roll_centre_height;
+        Vec3 p_lat = k.point + up * roll_centre(w);
         force += f_susp + f_long + f_lat;
         axle_fy[w < 2 ? 0 : 1] += fy;
         torque += cross(k.point - s.position, f_susp + f_long) + cross(p_lat - s.position, f_lat) + k.normal * (0.15 * mz);
@@ -404,10 +438,14 @@ VehicleOutput Vehicle::update(const ChassisState& s, const std::array<WheelConta
     double v = length(s.velocity);
     force += s.velocity * (-0.5 * a.air_density * a.drag_area * damage_.aero_drag * v);
     double vx_body = dot(s.velocity, s.orientation.rotate({1, 0, 0}));
-    double down = 0.5 * a.air_density * a.lift_area * vx_body * vx_body;
+    // Ride height: lower = more underbody downforce; nose down (front compressed more) = balance forward.
+    const double dz_f = 0.5 * (dz_[FL] + dz_[FR]), dz_r = 0.5 * (dz_[RL] + dz_[RR]);
+    const double ground = clamp(1.0 + a.ground_effect_per_m * 0.5 * (dz_f + dz_r), 0.6, 1.5);
+    const double balance = clamp(a.front_balance + a.pitch_balance_per_m * (dz_f - dz_r), 0.05, 0.95);
+    double down = 0.5 * a.air_density * a.lift_area * ground * vx_body * vx_body;
     Vec3 p_front = s.position + s.orientation.rotate({cfg_.dist_cg_front, 0, 0});
     Vec3 p_rear = s.position + s.orientation.rotate({-cfg_.dist_cg_rear, 0, 0});
-    Vec3 f_front = up * (-down * a.front_balance), f_rear = up * (-down * (1 - a.front_balance));
+    Vec3 f_front = up * (-down * balance), f_rear = up * (-down * (1 - balance));
     force += f_front + f_rear;
     torque += cross(p_front - s.position, f_front) + cross(p_rear - s.position, f_rear);
 

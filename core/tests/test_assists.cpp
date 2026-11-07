@@ -284,3 +284,27 @@ RS_TEST(pedal_reverse) {
         test::check("throttle stops it, then drives forward in 1st+", c.gear() >= 2 && s->last.speed > 1.0);
     }
 }
+
+// Hands-off steering: with the keys released in a slide (rear out to the right -> the car's front axle travels left of
+// its heading), the front wheels caster round toward the direction of travel: a countersteer, built by physics.
+RS_TEST(self_aligning) {
+    CarConfig cfg = test::car();
+    Controls c(cfg);
+    VehicleOutput last;
+    last.speed = 20;
+    last.sideslip = 0.25;      // velocity points 14 deg left of the heading (car rotated right: rear stepping out)
+    last.yaw_rate = -0.6;      // still rotating right
+    RawInput raw;
+    raw.device = InputDevice::Keyboard;
+    raw.steer = 0;
+    DriverInput in;
+    for (int i = 0; i < 120; ++i) in = c.update(raw, last, 1.0 / 60.0);
+    std::printf("         hands-off steering in a slide: %.3f (+ = left)\n", in.steer);
+    test::check("released keys in a slide: wheels caster toward the travel direction (countersteer left)", in.steer > 0.05);
+    c.settings.self_aligning = false;
+    Controls c2(cfg);
+    c2.settings.self_aligning = false;
+    for (int i = 0; i < 120; ++i) in = c2.update(raw, last, 1.0 / 60.0);
+    test::check("self-aligning off: released keys centre the wheel", std::abs(in.steer) < 1e-6);
+}
+

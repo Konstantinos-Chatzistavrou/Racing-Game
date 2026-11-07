@@ -187,3 +187,26 @@ In Godot (`--autotest`): ABS full pedal from 100 km/h = 33.6 m (fixed 0.78 pedal
   160, 202 m; front discs 306 -> 967 C. HUD shows BRAKES HOT / FADING over 620 C.
 - Output buffer: [184+i] disc C, [188+i] tread surface C, [192+i] pressure kPa, [196+i] pad mu.
 
+## Fitted tyre data, suspension kinematics, aero ride height, turn slip, steering feel (2026-11-08)
+
+- **Tyre curves from a real fit**: every car's tyres take their curve shapes (C, E, slip/cornering stiffness, load and
+  camber sensitivity, aligning torque, vertical stiffness) from a fitted 245/40 R18 PAC2002 tyre (Project Chrono,
+  BSD-3, `data/tires/`), converted by `tools/tir2car.mjs` (ISO -> our sign conventions; left-tyre and mirror-asymmetric
+  terms zeroed; grip and stiffness scaled together per car so the peaks stay at the fitted ~10.9 deg / slip ratio
+  0.15; rear stiffness x1.16 for the 285 section). Peak grip stays the per-car calibration (C7 Z51 skidpad 1.03 g).
+  Open data searched (2026-11-08): no openly licensed MF 6.1/6.2 car fit exists (TNO files are copyrighted, MathWorks'
+  are MathWorks-only, FSAE TTC data may not be published); turn-slip and pressure terms use Pacejka's defaults.
+- **Suspension kinematics** (per axle, JSON overridable): quadratic camber curve, static toe + bump steer (rear toes in
+  under bump), roll centre migrating with heave (x -1.8 front, -1.5 rear), anti-dive 25 % / anti-squat 40 % / rear
+  anti-lift 15 % as link forces F = anti Fx h/L (test: braking dive -0.97 -> -0.86 deg, launch squat 0.54 -> 0.49 deg),
+  digressive dampers (knee 0.13 m/s, x0.45 above).
+- **Aero**: downforce x (1 + 2.0 * mean compression m), balance + 1.2 * (front - rear compression).
+- **MF 6.1 turn slip**: zeta_2 (peak) and zeta_3 (stiffness) from phi = -r / V_cx; matters only at parking speeds.
+- **Steering**: rack torque = sum front (Mz - Fy R tan caster) at buf[116] (force feedback; builds with load, goes light
+  past the front peak). Keyboard / gamepad with no input: the wheels caster toward zero front slip angle (the
+  countersteer in a slide), like a loosely held wheel. Gamepad rumble from front scrub, rear slide / wheelspin, ABS and
+  impacts (dual-rumble).
+- Not modelled, on purpose: chassis torsional flex (a road car's ~20-40 kNm/deg is >10x its suspension roll stiffness:
+  < ~5 % effect, and only with one wheel on a kerb). The limited-slip differential already existed (clutch pack:
+  preload + power / coast ramps).
+

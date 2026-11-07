@@ -1,5 +1,5 @@
 // Keyboard + gamepad -> core RawInput (shaping happens in the core's Controls, not here).
-import type { AssistToggles, RawInput } from './physics/core';
+import { OUT, type AssistToggles, type RawInput } from './physics/core';
 import type { TouchControls } from './touch';
 
 export class Input {
@@ -44,6 +44,39 @@ export class Input {
     });
     addEventListener('keyup', (e) => this.keys.delete(e.code));
     addEventListener('blur', () => this.keys.clear());
+  }
+
+  /**
+   * Gamepad rumble from the physics (Chrome dual-rumble pads: Xbox / DualShock / DualSense), once per frame:
+   *  - weak (high-frequency) motor: the front tyres scrubbing past their peak slip angle (understeer), ABS pulsing,
+   *    and the steering rack torque going light;
+   *  - strong (low-frequency) motor: the rear sliding or spinning up (oversteer, wheelspin), and crash impacts.
+   * Only while the pad is the active device. `impact` = kJ of a hit this frame (0 none).
+   */
+  private rumbleAt = 0;
+  private absPhase = 0;
+  rumble(now: number, out: Float64Array, impact = 0) {
+    if (this.source !== 'pad') return;
+    const pad = navigator.getGamepads?.().find((p) => p && p.connected) as (Gamepad & { vibrationActuator?: { playEffect(t: string, o: object): Promise<unknown> } }) | undefined;
+    const act = pad?.vibrationActuator;
+    if (!act || now - this.rumbleAt < 50) return;
+    this.rumbleAt = now;
+    const PEAK = 0.19;   // rad: where the fitted tyre's lateral force peaks (data/tires)
+    const sa = (i: number) => Math.abs(out[OUT.wheel(i) + 8]), sr = (i: number) => Math.abs(out[OUT.wheel(i) + 7]);
+    const contact = (i: number) => out[OUT.wheel(i) + 5] > 0.5;
+    const speed = Math.abs(out[OUT.speed]);
+    let weak = 0, strong = 0;
+    if (speed > 2) {
+      const front = Math.max(contact(0) ? sa(0) : 0, contact(1) ? sa(1) : 0) / PEAK;
+      const rearSlide = Math.max(contact(2) ? sa(2) : 0, contact(3) ? sa(3) : 0) / PEAK;
+      const spin = Math.max(sr(2), sr(3));
+      weak = Math.min(1, Math.max(0, (front - 0.75) * 1.6));
+      strong = Math.min(1, Math.max(0, (rearSlide - 0.9) * 1.2) + Math.max(0, (spin - 0.18) * 2));
+      if (out[OUT.abs] > 0.5) { this.absPhase = (this.absPhase + 1) % 2; weak = Math.max(weak, this.absPhase ? 0.7 : 0.15); }
+    }
+    if (impact > 0) strong = Math.max(strong, Math.min(1, 0.3 + impact / 120));
+    if (weak < 0.02 && strong < 0.02) return;
+    act.playEffect('dual-rumble', { startDelay: 0, duration: 70, weakMagnitude: weak, strongMagnitude: strong }).catch(() => {});
   }
 
   /** Call once per physics tick. Edge events (shifts) are delivered exactly once. */

@@ -32,6 +32,7 @@ struct TireCondition {
 struct TireOperating {
     double slip_speed = 0;        // |v_slip| m/s: friction falls with sliding speed (LMUV)
     double dpi = 0;               // relative inflation pressure change
+    double phi = 0;               // turn slip (spin) 1/m: -(yaw rate of the wheel) / V_cx (MF 6.1)
 };
 
 // kappa: longitudinal slip ratio (-), tan_alpha: tangent of the slip angle (-, + gives +Fy),

@@ -74,6 +74,7 @@ struct VehicleOutput {
     Vec3 force;                      // world, N, total excluding gravity, applied at the CG
     Vec3 torque;                     // world, N m, about the CG
     std::array<WheelOutput, 4> wheels;
+    double steer_torque = 0;         // N m about the steering axes (front Mz + Fy x mechanical trail): force feedback
     // chassis telemetry, body frame
     double speed = 0;                // m/s, forward component of velocity
     double sideslip = 0;             // rad, beta = atan(v_y / |v_x|) (0 when slow)
@@ -145,10 +146,13 @@ public:
 private:
     bool disc_init_ = false;
     std::array<double, 2> prev_axle_fy_{};
+    std::array<double, 4> prev_fx_{};       // last step's tyre Fx per wheel (anti-dive / anti-squat link forces)
+    std::array<double, 4> dz_{};            // suspension compression from static per wheel, m (+ = bump; kinematics)
     int last_gear_ = 1;                     // auto-clutch: detects gear changes
     double shift_timer_ = 0;  // last lateral force per axle (geometric load transfer)
 
     double steer_angle(int wheel) const;
+    double roll_centre(int wheel) const;      // roll centre height of the wheel's axle, m (migrates with heave)
 };
 
 }  // namespace rs

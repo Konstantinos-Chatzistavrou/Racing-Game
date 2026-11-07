@@ -128,7 +128,7 @@ EMSCRIPTEN_KEEPALIVE void rs_rays(int id) {
 // OUT buf[96..98] force, [99..101] torque (three world, apply at CG for one tick)
 //     buf[102] speed m/s  [103] rpm  [104] gear index  [105] sideslip rad  [106] stalled
 //     [107] throttle applied  [108] brake applied  [109] steer applied  [110..112] accel (body, core axes)
-//     [113] abs active  [114] tc active  [115] esc active
+//     [113] abs active  [114] tc active  [115] esc active  [116] steering rack torque N m (force feedback)
 //     buf[120 + 12 i]: wheel i centre xyz (three world), steer rad, spin rad, contact, load N,
 //                      slip ratio, slip angle rad, compression m, angular velocity rad/s, surface
 //     buf[168 + 4 i]:  wheel i self-aligning torque Mz (N m), camber rad, tread (core) temperature C, wear 0..1
@@ -185,6 +185,7 @@ EMSCRIPTEN_KEEPALIVE void rs_step(int id, double dt) {
     b[113] = (as.abs_active[0] || as.abs_active[1] || as.abs_active[2] || as.abs_active[3]) ? 1 : 0;
     b[114] = as.tc_cut;
     b[115] = as.esc_mode;
+    b[116] = c.out.steer_torque;
     for (int i = 0; i < 4; ++i) {
         const rs::WheelOutput& w = c.out.wheels[i];
         c.spin[i] = std::fmod(c.spin[i] + w.angular_velocity * dt, 2 * rs::kPi);

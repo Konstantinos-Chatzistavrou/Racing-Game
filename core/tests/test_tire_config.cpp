@@ -11,20 +11,23 @@ RS_TEST(tire) {
     const double deg = kPi / 180.0;
     test::check("Fy(0) == 0", std::abs(mf_pure_fy(p, 0, 4000, 1)) < 1e-6);
     test::check("Fy is odd: Fy(-a) == -Fy(a)", std::abs(mf_pure_fy(p, -5 * deg, 4000, 1) + mf_pure_fy(p, 5 * deg, 4000, 1)) < 1e-6);
-    // Find the lateral peak: performance road tyres peak at roughly 5-10 degrees of slip.
+    // Find the lateral peak. The tyre curves come from a fitted 245/40 R18 (data/tires, PAC2002): that tyre peaks at
+    // ~10.9 deg / slip ratio ~0.15 (measured road tyres: ~8-12 deg; race slicks lower). Grip and stiffness are scaled
+    // together per car (tools/tir2car.mjs), so the peaks stay there.
     double best = 0, best_a = 0;
     for (double a = 0; a < 20; a += 0.05) {
         double f = mf_pure_fy(p, a * deg, 4000, 1);
         if (f > best) { best = f; best_a = a; }
     }
-    test::check_range("lateral peak slip angle", best_a, 5, 10, "deg");
-    test::check_range("lateral peak mu at Fz0", best / 4000, 1.05, 1.25, "-");
+    test::check_range("lateral peak slip angle", best_a, 6, 12, "deg");
+    // extreme-performance summer tyres (the C7 Z51 reference runs Pilot Super Sports): ~1.2-1.35 at nominal load
+    test::check_range("lateral peak mu at Fz0", best / 4000, 1.05, 1.35, "-");
     double kbest = 0, kpk = 0;
     for (double k = 0; k < 0.5; k += 0.002) {
         double f = mf_pure_fx(p, k, 4000, 1);
         if (f > kbest) { kbest = f; kpk = k; }
     }
-    test::check_range("longitudinal peak slip ratio", kpk, 0.06, 0.15, "-");
+    test::check_range("longitudinal peak slip ratio", kpk, 0.08, 0.18, "-");
     // Load sensitivity: friction coefficient falls as load rises.
     double mu_lo = mf_pure_fy(p, best_a * deg, 2000, 1) / 2000, mu_hi = mf_pure_fy(p, best_a * deg, 8000, 1) / 8000;
     test::check("load sensitivity: mu(2 kN) > mu(8 kN)", mu_lo > mu_hi);

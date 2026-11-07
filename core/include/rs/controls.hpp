@@ -23,6 +23,10 @@ struct RawInput {
 struct ControlSettings {
     bool speed_sensitive_steering = true;
     bool countersteer_assist = false;
+    // Hands-off self-alignment (keyboard / gamepad, physical, on by default): with no steering input the front wheels
+    // are free to caster toward their own path (rack torque -> 0), the way a loosely held wheel spins into a slide.
+    bool self_aligning = true;
+    double self_align_rate = 3.0;        // steering units per second (how fast the caster pulls the wheel round)
     bool auto_gearbox = false;
     bool auto_clutch = true;
     // keyboard: digital keys become ramps (units per second)

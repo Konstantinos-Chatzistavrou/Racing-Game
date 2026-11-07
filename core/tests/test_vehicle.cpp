@@ -162,6 +162,33 @@ RS_TEST(braking) {
     test::check("fronts lock before rears (stable brake bias)", lock_f < lock_r);
 }
 
+// ---------------------------------------------------------------- anti-dive / anti-squat
+// The suspension links carry part of the longitudinal load transfer: the same braking pitches the body less with
+// anti-dive / anti-lift, the same launch squats less with anti-squat (the load transfer itself is unchanged).
+RS_TEST(anti_pitch) {
+    auto pitch_at = [](double anti_scale, double brake, double throttle) {
+        CarConfig cfg = test::car();
+        cfg.front.anti_pitch *= anti_scale;
+        cfg.rear.anti_pitch *= anti_scale;
+        cfg.rear.anti_lift_rear_braking *= anti_scale;
+        auto s = test::make_sim(cfg);
+        s->reset({}, 0, brake > 0 ? 25.0 : 8.0, brake > 0 ? -1 : 2);   // launch: rolling in 1st (gear index 2)
+        s->vehicle.assists().abs = true;
+        s->vehicle.assists().tc = true;
+        DriverInput in;
+        in.clutch = brake > 0 ? 1 : 0;
+        in.gear = brake > 0 ? 1 : 2;
+        for (int i = 0; i < (brake > 0 ? 240 : 120); ++i) { in.brake = brake; in.throttle = throttle; s->step(in); }
+        const Vec3 fwd = s->body.state.orientation.rotate({1, 0, 0});
+        return std::asin(clamp(fwd.z, -1.0, 1.0)) * 180.0 / kPi;   // + = nose up
+    };
+    const double dive0 = pitch_at(0, 0.9, 0), dive = pitch_at(1, 0.9, 0);
+    const double squat0 = pitch_at(0, 0, 1), squat = pitch_at(1, 0, 1);
+    std::printf("         braking pitch: no anti %.2f deg, with %.2f deg | launch pitch: no anti %.2f deg, with %.2f deg\n", dive0, dive, squat0, squat);
+    test::check("anti-dive: less nose-down under braking", dive0 < 0 && dive > dive0 && dive < 0);
+    test::check("anti-squat: less nose-up on launch", squat0 > 0 && squat < squat0 && squat > 0);
+}
+
 // ---------------------------------------------------------------- brake fade
 // Six back-to-back ABS stops from 200 km/h (no cooling lap between): each dumps ~700 kJ into each front disc. Street
 // pads fade above ~600 C: the last stop must be clearly longer than the first, the discs well past 600 C.

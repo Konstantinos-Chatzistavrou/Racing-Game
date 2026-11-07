@@ -36,7 +36,9 @@ DriverInput Controls::update(const RawInput& raw, const VehicleOutput& last, dou
 
     // ---- steering shaping per device
     double target = clamp(raw.steer, -1.0, 1.0);
-    switch (raw.device) {
+    // hands off (keyboard released / stick centred, rolling): the caster, not the centring ramp, moves the wheel (below)
+    const bool hands_off = s.self_aligning && raw.device != InputDevice::Wheel && std::abs(target) < 0.08 && v > 3.0;
+    if (!hands_off) switch (raw.device) {
         case InputDevice::Keyboard: {
             // Digital key -> ramp. Releasing returns to centre faster than turning in (like a
             // self-centring steering rack); reversing direction passes through centre quickly.
@@ -57,6 +59,15 @@ DriverInput Controls::update(const RawInput& raw, const VehicleOutput& last, dou
         case InputDevice::Wheel:
             steer_ = target;    // a real wheel is 1:1; no filtering, no speed scaling
             break;
+    }
+    // ---- hands off (keyboard released / stick centred): caster and aligning torque turn the front wheels toward the
+    // direction the front axle is travelling, i.e. zero front slip angle. In a slide that is the countersteer angle:
+    //   delta_free = atan2(v_y + r a, v_x)   (front axle velocity in the body frame; a = CG to front axle)
+    if (hands_off) {
+        const double lock = cfg_.front.max_steer_deg * kPi / 180.0 * max_steer_fraction(v);
+        const double vy = std::tan(last.sideslip) * v;
+        const double free_angle = std::atan2(vy + last.yaw_rate * cfg_.dist_cg_front, v);
+        steer_ = move_toward(steer_, clamp(free_angle / std::max(lock, 1e-3), -1.0, 1.0), s.self_align_rate * dt);
     }
     double steer = steer_;
     if (raw.device != InputDevice::Wheel) steer *= max_steer_fraction(v);

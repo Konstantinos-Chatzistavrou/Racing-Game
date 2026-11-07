@@ -38,6 +38,14 @@ AxleParams parse_axle(const json& j, const std::string& ctx) {
     a.caster_deg = num_or(j, "caster_deg", a.max_steer_deg > 0 ? 6.8 : 0.0);
     a.kpi_deg = num_or(j, "kpi_deg", a.max_steer_deg > 0 ? 7.0 : 0.0);
     a.handbrake_torque = num_or(j, "handbrake_torque_nm", 0);
+    a.camber_gain2_rad_per_m2 = num_or(j, "camber_gain2_deg_per_m2", a.camber_gain2_rad_per_m2 * 180.0 / kPi) * kPi / 180.0;
+    a.static_toe_deg = num_or(j, "static_toe_deg", a.static_toe_deg);
+    a.bump_steer_deg_per_m = num_or(j, "bump_steer_deg_per_m", a.bump_steer_deg_per_m);
+    a.roll_centre_gain = num_or(j, "roll_centre_gain", a.roll_centre_gain);
+    a.anti_pitch = num_or(j, "anti_pitch", a.anti_pitch);
+    a.anti_lift_rear_braking = num_or(j, "anti_lift_braking", a.anti_lift_rear_braking);
+    a.damper_knee_mps = num_or(j, "damper_knee_mps", a.damper_knee_mps);
+    a.damper_high_speed_ratio = num_or(j, "damper_high_speed_ratio", a.damper_high_speed_ratio);
     return a;
 }
 
@@ -107,6 +115,11 @@ TireParams parse_tire(const json& j, const std::string& ctx) {
         t.qbz9 = num_or(al, "qBz9", t.qbz9); t.qbz10 = num_or(al, "qBz10", t.qbz10);
         t.qdz6 = num_or(al, "qDz6", t.qdz6); t.qdz7 = num_or(al, "qDz7", t.qdz7); t.qdz8 = num_or(al, "qDz8", t.qdz8); t.qdz9 = num_or(al, "qDz9", t.qdz9);
         t.ssz1 = num_or(al, "sSz1", t.ssz1); t.ssz2 = num_or(al, "sSz2", t.ssz2); t.ssz3 = num_or(al, "sSz3", t.ssz3); t.ssz4 = num_or(al, "sSz4", t.ssz4);
+    }
+    if (j.contains("turn_slip")) {   // MF 6.1 turn slip (tools/tir2car.mjs copies it from files that have it)
+        const json& ts = j.at("turn_slip");
+        t.pdyp1 = num_or(ts, "pDyp1", t.pdyp1); t.pdyp2 = num_or(ts, "pDyp2", t.pdyp2);
+        t.pdyp3 = num_or(ts, "pDyp3", t.pdyp3); t.pdyp4 = num_or(ts, "pDyp4", t.pdyp4); t.pkyp1 = num_or(ts, "pKyp1", t.pkyp1);
     }
     t.relax_x = num(j, "relaxation_length_long_m", ctx);
     t.relax_y = num(j, "relaxation_length_lat_m", ctx);
@@ -188,6 +201,8 @@ CarConfig parse_car_config(const std::string& text) {
     c.aero.lift_area = num(a, "downforce_area_m2", "aero");
     c.aero.front_balance = num(a, "front_balance", "aero");
     c.aero.air_density = num_or(a, "air_density", 1.225);
+    c.aero.ground_effect_per_m = num_or(a, "ground_effect_per_m", c.aero.ground_effect_per_m);
+    c.aero.pitch_balance_per_m = num_or(a, "pitch_balance_per_m", c.aero.pitch_balance_per_m);
 
     for (auto it = j.at("surface_grip").begin(); it != j.at("surface_grip").end(); ++it)
         c.surface_grip.push_back({it.key(), it.value().get<double>()});
