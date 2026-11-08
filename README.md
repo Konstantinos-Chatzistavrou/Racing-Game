@@ -109,9 +109,14 @@ exhaust tips), Driver (the helmet and suit you own) and Tune (performance upgrad
 part; every change applies at once (uniforms only, no shader compiles). The driver is drawn in the seat; their gear is
 your avatar in a party lobby and in your car on the other players' screens.
 
-**Credits and the Shop**: races pay by finishing position (more for longer races; a DNF pays nothing), free roam
-pays per km driven. The Shop sells cars, upgrade stages and driver gear (helmets and suits); the Garage shows the cars you own and fits
-what you bought. A new player starts with the Vela GT and 5,000 Cr.
+**The Shop**: single player shows what each level unlocks; online sells cars, upgrade stages and driver gear (helmets
+and suits) for credits once your online level allows them. A DNF earns nothing.
+
+**Two careers.** *Single player*: XP from races and free roam; levels unlock cars, upgrade stages and driver gear
+for free. *Online*: XP and credits come only from **ranked party races** (6+ players who actually race, at most 2 per
+network), kept and checked by the online service (`cloud/`, Cloudflare free plan; see `cloud/README.md`), which times
+every ranked race itself. Each career has its own car, upgrades and gear; paint and visual parts are shared. The Garage
+and Shop switch between them.
 
 **Race rules** (Settings): **Full Realism** (default) or **Respawns**. In Full Realism there is no reset in a race
 (AI or party): a wrecked car, 5 s on its roof, or 30 s stuck is a DNF, and you spectate the remaining cars (◀ ▶ or

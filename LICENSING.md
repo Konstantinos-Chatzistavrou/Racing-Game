@@ -21,7 +21,7 @@ advantage needs written permission from the copyright holder.
 
 **AGPL-3.0-or-later (software)**
 - `core/` (C++ physics), `web/src/`, `web/wasm/`, `web/tools/`, `web/index.html`, `web/*.json`, `web/*.ts`
-- `server/`, `tools/`, `assets_source/scripts/`, `godot_ext/` (our code; `godot-cpp` keeps its MIT licence),
+- `cloud/` (online service), `server/`, `tools/`, `assets_source/scripts/`, `godot_ext/` (our code; `godot-cpp` keeps its MIT licence),
   `game/` scripts and scenes, `archive/` code
 - `data/schema/`, `vercel.json`, `.gitignore`
 

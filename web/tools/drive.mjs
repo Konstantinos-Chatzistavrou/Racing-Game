@@ -331,9 +331,8 @@ try {
     await click('[data-act=as-preset][data-v=beginner]'); await click('[data-act=settings-back]');
     await click('[data-act=shop-open]'); await sleep(300); await shot('a3_shop.png');
     console.log('shop', await g(`[...document.querySelectorAll('.scard')].map((c) => c.querySelector('b').textContent + ': ' + c.querySelector('button').textContent)`));
-    console.log('buy kestrel (expect: not enough)', await click('[data-act=buy-car][data-v=kestrel_gt]'), await g(`document.querySelector('.pnote')?.textContent`), await g(`document.querySelector('.wallet-pill')?.textContent`));
-    console.log('buy tyres S1', await click('[data-act=buy-mod][data-k=tyres][data-v="1"]'), await g(`document.querySelector('.pnote')?.textContent`), await g(`document.querySelector('.wallet-pill')?.textContent`));
-    await click('[data-act=garage-open]'); await sleep(1500);
+    // (the shop's career gates are covered by the "careers" scenario)
+    await click('[data-act=home]'); await sleep(300); await click('[data-act=garage-open]'); await sleep(1500);
     console.log('garage cars', await g(`[...document.querySelectorAll('.car b')].map((e) => e.textContent)`), 'locked pips', await g(`document.querySelectorAll('.pip.locked').length`));
     await shot('a4_garage.png');
     await click('[data-act=play]'); await sleep(400); await click('[data-act=laps][data-v="1"]'); await click('[data-act=start-race]');

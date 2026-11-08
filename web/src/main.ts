@@ -557,7 +557,7 @@ async function main() {
   });
   let frameNo = 0;
   g.__game = { city, nyc, ai, visual, audio, rig, damage, trace, input, renderer, camera, scene, post,
-    get car() { return car; }, get core() { return core; }, get state() { return state; }, menu: () => menu, sel,
+    get car() { return car; }, get core() { return core; }, get state() { return state; }, ticksNow: () => ticks, menu: () => menu, sel,
     get party() { return party; }, get remote() { return remote; }, streetProps, obstacles, standings: () => standings(), get lap() { return lap; },
     bench: (soak = false) => runBench(soak),
     setPreset: (name: PresetName) => { setPreset(PRESET_ORDER.indexOf(name)); setExtra(); },
@@ -1230,7 +1230,8 @@ async function main() {
     while (acc >= DT && steps < 24) {
       prevPos.copy(physPos);
       prevQuat.copy(physQuat);
-      car.tick(state === 'race' ? input.poll() : IDLE, input.assists);
+      const script = (g.__game as { script?: ((tick: number) => RawInput) | null }).script;   // dev / replay: inputs by tick
+      car.tick(script ? script(ticks) : state === 'race' ? input.poll() : IDLE, input.assists);
       if (inShowroom) { car.body.setLinvel({ x: 0, y: Math.min(0, car.body.linvel().y), z: 0 }, true); car.body.setAngvel({ x: 0, y: 0, z: 0 }, true); settledShowroom++; }   // parked for the showroom
       ai.tick(DT, car.body.translation());
       remote?.tick(now - (acc - DT) * 1000, DT);   // other players' bodies at this tick's time
