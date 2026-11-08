@@ -84,6 +84,14 @@ export class InstanceSet {
     this.dirty = true;
   }
 
+  /** Copy of one instance's matrix (16 floats). */
+  getSlot(slot: number) { return (this.mesh.instanceMatrix.array as Float32Array).slice(slot * 16, slot * 16 + 16); }
+  /** Put a saved matrix back into a slot (after hideSlot). */
+  setSlot(slot: number, m: Float32Array) {
+    (this.mesh.instanceMatrix.array as Float32Array).set(m, slot * 16);
+    this.dirty = true;
+  }
+
   remove(key: string) {
     const slots = this.tiles.get(key);
     if (!slots) return;

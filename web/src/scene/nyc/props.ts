@@ -15,6 +15,7 @@ import * as THREE from 'three/webgpu';
 import { attribute, instancedBufferAttribute, instanceIndex, hash, uv, float, vec3, vec4, mix, smoothstep, fract, mod, step, select, length, positionView,
   positionWorld, cameraProjectionMatrix, cameraViewMatrix, positionGeometry, sin, cos, bumpMap } from 'three/tsl';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { barkMaterial, buildTree, leafMaterial } from './trees';
 import { InstanceSet, NycSigns, nycTime, writeMatrix, SIGN_LIGHT } from './signage';
 
 export interface PropsData {
@@ -131,6 +132,8 @@ export const TREE_SPECIES = [
   { id: 'linden', w: 0.11 },   // littleleaf linden: dense symmetric pyramid-oval
 ] as const;
 export type TreeSpecies = typeof TREE_SPECIES[number]['id'];
+/** photoreal tree range (m around the camera) and its capacity per species */
+const NEAR_R = 80, NEAR_CAP = 90;
 export function speciesOf(x: number, y: number): TreeSpecies {
   const h = Math.abs(Math.sin(x * 12.9898 + y * 78.233) * 43758.5453) % 1;
   let acc = 0;
@@ -540,6 +543,11 @@ export class NycProps {
   private tileLights = new Map<string, TileLights>();
   private tilePoles = new Map<string, BreakablePole[]>();
   private tileTrees = new Map<string, { set: string; slot: number; x: number; y: number; z: number; scale: number }[]>();
+  /** near-range photoreal trees: per species two instanced meshes; the trees currently drawn there (key set:slot) */
+  private nearTrees: Partial<Record<TreeSpecies, { bark: THREE.InstancedMesh; leaves: THREE.InstancedMesh }>> = {};
+  private nearNow = new Map<string, { set: string; slot: number; tile: string; m: Float32Array }>();
+  private nearAt = 0;
+  private camPos = new THREE.Vector3();
   /** Poles and trees are solid Rapier colliders (obstacles.ts): no proximity break here. */
   solidPoles = false;
   /** Player's car, for falling poles landing on it (set every frame by main). */
@@ -571,6 +579,20 @@ export class NycProps {
     // one instanced mesh per species (capacity ~ census share; 19,000 in all)
     const treeMat = treeMaterial();
     for (const sp of TREE_SPECIES) mk(`tree_${sp.id}`, treeGeo(sp.id), treeMat, Math.round(19000 * sp.w));
+    // photoreal near range (trees.ts): bark + leaf cards per species; the trees around the camera are moved here
+    for (const sp of TREE_SPECIES) {
+      const g = buildTree(sp.id);
+      const mkNear = (geo: THREE.BufferGeometry, mat: THREE.Material, nm: string) => {
+        const m = new THREE.InstancedMesh(geo, mat, NEAR_CAP);
+        m.name = nm; m.frustumCulled = false; m.castShadow = false; m.receiveShadow = true;
+        m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        m.instanceMatrix.array.fill(0);
+        m.count = 1;   // one degenerate instance: the pipeline compiles with the rest (warm), not at the first near tree
+        this.root.add(m); this.meshes.push(m);
+        return m;
+      };
+      this.nearTrees[sp.id] = { bark: mkNear(g.bark, barkMaterial(g.bark_kind), `nyc_tree_${sp.id}_bark`), leaves: mkNear(g.leaves, leafMaterial(), `nyc_tree_${sp.id}_leaves`) };
+    }
     const phaseA = new THREE.InstancedBufferAttribute(new Float32Array(900 * 2), 2);
     const phaseB = new THREE.InstancedBufferAttribute(new Float32Array(900 * 2), 2);
     mk('signalR', signalGeo(1), signalMaterial(phaseA), 900, 2, phaseA);
@@ -662,6 +684,40 @@ export class NycProps {
         s.light.position.set(s.px, s.pz, -s.py); s.light.color.copy(s.pc); s.light.distance = s.prange;
         s.target = 1; s.cur = 1; s.light.intensity = s.base;
       }
+    }
+  }
+
+  /**
+   * Every 250 ms: the trees within NEAR_R of the camera (nearest first, NEAR_CAP per species) are drawn photoreal; their
+   * low-poly instances are hidden (matrix saved) and restored when they leave the range.
+   */
+  private updateNearTrees() {
+    const now = performance.now();
+    if (now - this.nearAt < 250) return;
+    this.nearAt = now;
+    this.camera.getWorldPosition(this.camPos);
+    const cx = this.camPos.x, cy = -this.camPos.z, r2 = NEAR_R * NEAR_R;
+    const cand: { d: number; set: string; slot: number; tile: string }[] = [];
+    const alive = new Set<string>();
+    for (const [tile, list] of this.tileTrees) for (const t of list) {
+      const k = `${t.set}:${t.slot}`;
+      alive.add(k);
+      const d = (t.x - cx) ** 2 + (t.y - cy) ** 2;
+      if (d < r2) cand.push({ d, set: t.set, slot: t.slot, tile });
+    }
+    cand.sort((a, b) => a.d - b.d);
+    const want = new Map<string, { set: string; slot: number; tile: string }>(), per = new Map<string, number>();
+    for (const c of cand) { const n = per.get(c.set) ?? 0; if (n < NEAR_CAP) { per.set(c.set, n + 1); want.set(`${c.set}:${c.slot}`, c); } }
+    for (const [k, t] of this.nearNow) if (!want.has(k)) { if (alive.has(k)) this.sets[t.set].setSlot(t.slot, t.m); this.nearNow.delete(k); }
+    for (const [k, c] of want) if (!this.nearNow.has(k)) { const m = this.sets[c.set].getSlot(c.slot); this.sets[c.set].hideSlot(c.slot); this.nearNow.set(k, { ...c, m }); }
+    for (const sp of TREE_SPECIES) {
+      const N = this.nearTrees[sp.id]!, set = `tree_${sp.id}`;
+      const arr = N.bark.instanceMatrix.array as Float32Array, arr2 = N.leaves.instanceMatrix.array as Float32Array;
+      let i = 0;
+      for (const t of this.nearNow.values()) if (t.set === set && i < NEAR_CAP) { arr.set(t.m, i * 16); arr2.set(t.m, i * 16); i++; }
+      N.bark.count = N.leaves.count = Math.max(1, i);
+      if (!i) { arr.fill(0, 0, 16); arr2.fill(0, 0, 16); }
+      N.bark.instanceMatrix.needsUpdate = N.leaves.instanceMatrix.needsUpdate = true;
     }
   }
 
@@ -779,6 +835,8 @@ export class NycProps {
   }
 
   removeTile(key: string) {
+    for (const [k, t] of this.nearNow) if (t.tile === key) this.nearNow.delete(k);   // its slots are freed: nothing to restore
+    this.nearAt = 0;
     for (const s of Object.values(this.sets)) s.remove(key);
     this.steamSet.remove(key);
     this.signs.removeTile(key);
@@ -1256,6 +1314,7 @@ export class NycProps {
   ) {
     this.time += dt;
     nycTime.value = this.time;
+    this.updateNearTrees();
     this.flush();
     if (carPos && carVel && dt > 0) {
       this.checkCollisions(carPos, carVel, onImpact);

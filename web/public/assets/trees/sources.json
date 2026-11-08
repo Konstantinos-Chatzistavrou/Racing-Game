@@ -1,0 +1,15 @@
+{
+ "source": "ambientCG (CC0 1.0, https://ambientcg.com/license)",
+ "leaves": {
+  "plane": "LeafSet010",
+  "locust": "LeafSet002",
+  "pear": "LeafSet022",
+  "oak": "LeafSet016",
+  "linden": "LeafSet004"
+ },
+ "barks": {
+  "plane": "Bark009",
+  "furrowed": "Bark001",
+  "ridged": "Bark004"
+ }
+}
