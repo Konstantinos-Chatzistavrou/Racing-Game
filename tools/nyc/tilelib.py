@@ -12,7 +12,13 @@ import numpy as np
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 D = os.environ.get("NYC_DATA") or os.path.join(ROOT, "assets_source/downloads/nyc")
 if not os.path.isdir(os.path.join(D, "derived")):   # git worktrees do not have the (gitignored) data: use the main checkout's
-    D = "/home/user/Downloads/Racing Game/assets_source/downloads/nyc"
+    import subprocess   # the main checkout is the parent of git's common directory
+    try:
+        common = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=ROOT,
+                                capture_output=True, text=True, check=True).stdout.strip()
+        D = os.path.join(os.path.dirname(common), "assets_source/downloads/nyc")
+    except (OSError, subprocess.CalledProcessError):
+        pass
 DERIVED = os.path.join(D, "derived")
 OUT_TILES = os.path.join(ROOT, "web/public/assets/nyc/tiles")
 TILE = 256.0
