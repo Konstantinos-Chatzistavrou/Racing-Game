@@ -118,16 +118,28 @@ function lampGeo() {
 }
 
 /**
- * Multi-branch NYC street tree (London Plane / Honey Locust):
- * - Granite sidewalk tree-pit border + cast-iron hoop guard + dark soil bed
- * - Buttressed lower trunk + 5 primary scaffold limbs + 10 secondary forks
- * - 22 layered organic foliage boughs with lower-canopy streetlight subsurface translucency (`glow`)
+ * New York street trees: the five most planted species of the 2015 NYC Street Tree Census, weighted by their share
+ * among these five (London planetree 12.7 %, honeylocust 9.9 %, Callery pear 9.0 %, pin oak 7.0 %, littleleaf linden
+ * 4.6 % of all street trees). Each has its own silhouette and leaf colour; a tree's species comes from a hash of its
+ * position, so it is the same on every visit. ~800-1150 triangles each (the old single model was ~1700).
  */
-function treeGeo() {
-  const k = new Kit();
-  const barkDark: RGB = [0.052, 0.040, 0.030];
-  const barkMid: RGB = [0.068, 0.054, 0.040];
-  // Sidewalk tree pit granite border + dark mulch bed + cast-iron tree guard
+export const TREE_SPECIES = [
+  { id: 'plane', w: 0.29 },    // London planetree: broad round crown on spreading limbs, mottled cream / olive bark
+  { id: 'locust', w: 0.23 },   // honeylocust: airy vase, fine light leaves, branches show through
+  { id: 'pear', w: 0.21 },     // Callery pear: dense upright teardrop, glossy mid green
+  { id: 'oak', w: 0.16 },      // pin oak: central leader, narrowing tiers, drooping lower branches, dark green
+  { id: 'linden', w: 0.11 },   // littleleaf linden: dense symmetric pyramid-oval
+] as const;
+export type TreeSpecies = typeof TREE_SPECIES[number]['id'];
+export function speciesOf(x: number, y: number): TreeSpecies {
+  const h = Math.abs(Math.sin(x * 12.9898 + y * 78.233) * 43758.5453) % 1;
+  let acc = 0;
+  for (const sp of TREE_SPECIES) { acc += sp.w; if (h < acc) return sp.id; }
+  return TREE_SPECIES[0].id;
+}
+
+/** Sidewalk tree pit: granite border, mulch, cast-iron guard (NYC Parks standard). */
+function treePit(k: Kit) {
   k.box(1.55, 0.08, 1.55, 0, 0.04, 0, [0.18, 0.18, 0.17], 0);
   k.box(1.35, 0.09, 1.35, 0, 0.05, 0, [0.035, 0.026, 0.020], 0);
   for (const s of [-0.68, 0.68]) {
@@ -136,34 +148,74 @@ function treeGeo() {
     k.cyl(0.02, 0.02, 0.36, s, 0, s, DARK, 0, 4);
     k.cyl(0.02, 0.02, 0.36, s, 0, -s, DARK, 0, 4);
   }
-  // Buttressed trunk (0..2.9 m)
-  k.cyl(0.26, 0.19, 1.1, 0, 0, 0, barkDark, 0, 6);
-  k.limb(0.19, 0.145, 0, 1.05, 0, 0.08, 2.85, -0.05, barkMid, 0, 6);
+}
+const ring = (n: number, r: number, off = 0) => Array.from({ length: n }, (_, i) => { const a = (i / n) * Math.PI * 2 + off; return [Math.cos(a) * r, Math.sin(a) * r] as const; });
 
-  // 4 primary ascending scaffold limbs + 4 secondary forks + 12 crinkled flat-tiered leaf sprays (~6x fewer vertices!)
-  const scaffolds: [number, number, number, number, number, number][] = [
-    [1.45, 4.8, 0.50, 2.50, 6.5, 1.05],
-    [-1.35, 4.6, 0.90, -2.35, 6.4, 1.60],
-    [0.40, 5.0, -1.45, 0.85, 6.8, -2.45],
-    [-1.05, 4.9, -1.15, -1.85, 6.7, -2.00],
-  ];
-  for (let i = 0; i < scaffolds.length; i++) {
-    const [mx, my, mz, tx, ty, tz] = scaffolds[i];
-    k.limb(0.115, 0.075, 0.06, 2.65, -0.04, mx, my, mz, barkMid, 0, 5);
-    k.limb(0.072, 0.042, mx, my, mz, tx, ty, tz, barkMid, 0, 4);
-    const fx = mx * 1.18 - mz * 0.62;
-    const fy = my + 1.45;
-    const fz = mz * 1.18 + mx * 0.62;
-    k.limb(0.062, 0.032, mx, my - 0.15, mz, fx, fy, fz, barkMid, 0, 4);
-
-    k.ico(0.86, mx * 1.18, my + 0.42, mz * 1.18, 1.42, 0.50, 1.32, [0.022, 0.048, 0.020], 0.16, 0);
-    k.ico(0.92, tx * 1.04, ty + 0.22, tz * 1.04, 1.44, 0.52, 1.34, [0.019, 0.044, 0.018], 0.08, 0);
-    k.ico(0.82, fx * 1.04, fy + 0.24, fz * 1.04, 1.38, 0.48, 1.36, [0.016, 0.038, 0.016], 0.06, 0);
+function treeGeo(sp: TreeSpecies) {
+  const k = new Kit();
+  treePit(k);
+  const bark: RGB = [0.052, 0.040, 0.030], barkMid: RGB = [0.068, 0.054, 0.040];
+  if (sp === 'plane') {
+    // mottled bark: cream and olive patches
+    const p1: RGB = [0.13, 0.12, 0.09], p2: RGB = [0.085, 0.085, 0.065];
+    k.cyl(0.25, 0.2, 1.0, 0, 0, 0, p2, 0, 7);
+    k.limb(0.2, 0.16, 0, 0.95, 0, 0.05, 2.6, 0.02, p1, 0, 7);
+    const leaf: RGB = [0.020, 0.046, 0.018];
+    for (const [i, [cx, cz]] of ring(5, 1.0, 0.3).entries()) {
+      k.limb(0.12, 0.08, 0.04, 2.5, 0.02, cx * 1.9, 4.6, cz * 1.9, i % 2 ? p1 : p2, 0, 5);
+      k.limb(0.08, 0.045, cx * 1.9, 4.6, cz * 1.9, cx * 3.0, 6.0, cz * 3.0, p1, 0, 4);
+      k.ico(1.35, cx * 2.9, 6.1, cz * 2.9, 1.1, 0.85, 1.1, leaf, 0.12, 1);
+    }
+    for (const [cx, cz] of ring(5, 1.8, 0.93)) k.ico(1.28, cx, 7.3, cz, 1.05, 0.9, 1.05, [0.022, 0.050, 0.020], 0.03, 1);
+    k.ico(1.5, 0, 6.3, 0, 1.0, 0.8, 1.0, [0.016, 0.038, 0.015], 0, 1);
+    k.ico(1.2, 0.3, 8.2, -0.2, 1.0, 0.85, 1.0, [0.024, 0.054, 0.022], 0, 1);
+    k.ico(1.05, -0.6, 7.9, 0.6, 1.0, 0.85, 1.0, [0.022, 0.050, 0.020], 0, 1);
+  } else if (sp === 'locust') {
+    k.cyl(0.2, 0.15, 1.0, 0, 0, 0, bark, 0, 6);
+    k.limb(0.15, 0.12, 0, 0.95, 0, 0, 2.3, 0, bark, 0, 6);
+    const leaf: RGB = [0.034, 0.052, 0.015];
+    for (const [i, [cx, cz]] of ring(4, 1.0, 0.4).entries()) {
+      k.limb(0.09, 0.055, 0, 2.2, 0, cx * 2.0, 5.1, cz * 2.0, barkMid, 0, 5);
+      k.limb(0.05, 0.03, cx * 2.0, 5.1, cz * 2.0, cx * 3.0, 6.8, cz * 3.0, barkMid, 0, 4);
+      k.limb(0.04, 0.025, cx * 1.5, 4.3, cz * 1.5, cx * 2.6 - cz * 0.9, 5.6, cz * 2.6 + cx * 0.9, barkMid, 0, 4);
+      void i;
+    }
+    // airy: small sprays with gaps, the branches stay visible
+    for (const [i, [cx, cz]] of ring(7, 2.7, 0.2).entries()) k.ico(0.72, cx, 6.3 + (i % 2) * 0.6, cz, 1.25, 0.6, 1.25, leaf, 0.1, 1);
+    for (const [cx, cz] of ring(5, 1.5, 0.7)) k.ico(0.7, cx, 7.3, cz, 1.2, 0.6, 1.2, [0.038, 0.058, 0.017], 0.02, 1);
+    k.ico(0.68, 0, 7.9, 0, 1.2, 0.6, 1.2, [0.038, 0.058, 0.017], 0, 1);
+  } else if (sp === 'pear') {
+    k.cyl(0.18, 0.15, 1.6, 0, 0, 0, bark, 0, 6);
+    for (const [cx, cz] of ring(4, 0.9, 0.5)) k.limb(0.09, 0.05, 0, 1.5, 0, cx, 4.6, cz, barkMid, 0, 4);
+    const leaf: RGB = [0.024, 0.052, 0.024];
+    k.ico(1.45, 0, 3.6, 0, 1.25, 1.0, 1.25, [0.020, 0.045, 0.021], 0.12, 1);
+    for (const [cx, cz] of ring(4, 1.1, 0.0)) k.ico(1.25, cx, 4.8, cz, 1.0, 1.05, 1.0, leaf, 0.05, 1);
+    for (const [cx, cz] of ring(3, 0.8, 0.6)) k.ico(1.15, cx, 6.2, cz, 1.0, 1.05, 1.0, leaf, 0, 1);
+    k.ico(1.0, 0, 7.3, 0, 1.0, 1.1, 1.0, [0.026, 0.056, 0.026], 0, 1);
+    k.ico(0.7, 0.1, 8.2, 0, 1.0, 1.1, 1.0, [0.028, 0.060, 0.028], 0, 1);
+  } else if (sp === 'oak') {
+    k.cyl(0.21, 0.17, 1.0, 0, 0, 0, bark, 0, 6);
+    k.limb(0.17, 0.05, 0, 0.95, 0, 0.05, 9.4, 0, barkMid, 0, 6);   // central leader
+    const leaf: RGB = [0.017, 0.038, 0.016];
+    for (const [cx, cz] of ring(4, 1.0, 0.2)) k.limb(0.075, 0.035, 0, 3.0, 0, cx * 2.6, 2.6, cz * 2.6, barkMid, 0, 4);   // drooping
+    for (const [cx, cz] of ring(4, 1.0, 0.98)) k.limb(0.06, 0.03, 0, 5.0, 0, cx * 2.1, 5.6, cz * 2.1, barkMid, 0, 4);
+    for (const [cx, cz] of ring(4, 2.3, 0.2)) k.ico(1.1, cx, 3.2, cz, 1.2, 0.72, 1.2, leaf, 0.12, 1);
+    for (const [cx, cz] of ring(4, 1.75, 0.98)) k.ico(1.05, cx, 5.2, cz, 1.15, 0.78, 1.15, leaf, 0.03, 1);
+    for (const [cx, cz] of ring(3, 1.05, 0.4)) k.ico(0.95, cx, 7.0, cz, 1.1, 0.85, 1.1, [0.019, 0.042, 0.018], 0, 1);
+    k.ico(0.8, 0, 8.6, 0, 1.0, 0.95, 1.0, [0.020, 0.044, 0.019], 0, 1);
+    k.ico(0.5, 0, 9.5, 0, 1.0, 1.0, 1.0, [0.021, 0.046, 0.020], 0, 1);
+  } else {
+    // littleleaf linden
+    k.cyl(0.2, 0.16, 1.0, 0, 0, 0, bark, 0, 6);
+    k.limb(0.16, 0.12, 0, 0.95, 0, 0, 2.2, 0, bark, 0, 6);
+    for (const [cx, cz] of ring(4, 1.0, 0.3)) k.limb(0.08, 0.04, 0, 2.1, 0, cx * 1.3, 5.2, cz * 1.3, barkMid, 0, 4);
+    const leaf: RGB = [0.026, 0.054, 0.022];
+    k.ico(1.4, 0, 5.0, 0, 1.0, 1.0, 1.0, [0.020, 0.044, 0.018], 0, 1);
+    for (const [cx, cz] of ring(5, 2.0, 0.1)) k.ico(1.15, cx, 3.9, cz, 1.05, 0.85, 1.05, leaf, 0.12, 1);
+    for (const [cx, cz] of ring(4, 1.5, 0.75)) k.ico(1.05, cx, 5.7, cz, 1.0, 0.9, 1.0, leaf, 0.03, 1);
+    for (const [cx, cz] of ring(3, 0.9, 0.2)) k.ico(0.9, cx, 7.3, cz, 1.0, 0.95, 1.0, [0.028, 0.058, 0.024], 0, 1);
+    k.ico(0.75, 0, 8.5, 0, 1.0, 1.0, 1.0, [0.030, 0.060, 0.025], 0, 1);
   }
-  // Open crown apex sprays
-  k.limb(0.09, 0.045, 0.06, 2.75, -0.03, 0.22, 7.6, 0.18, barkMid, 0, 5);
-  k.ico(1.02, 0.0, 7.65, 0.0, 1.48, 0.54, 1.42, [0.021, 0.048, 0.020], 0.04, 0);
-  k.ico(0.88, 0.75, 8.35, -0.45, 1.35, 0.50, 1.30, [0.026, 0.058, 0.024], 0.02, 0);
   return k.build();
 }
 
@@ -321,7 +373,7 @@ function treeMaterial() {
   const col = attribute('color', 'vec3');
   const subsurf = attribute('glow', 'float');
   const hInst = hash(instanceIndex);
-  const speciesTint = mix(vec3(0.78, 1.04, 0.74), vec3(1.15, 0.96, 0.68), smoothstep(0.2, 0.85, hInst));
+  const speciesTint = mix(vec3(0.9, 1.02, 0.88), vec3(1.08, 0.98, 0.9), smoothstep(0.2, 0.85, hInst));   // per tree; species have their own colours
   // Multi-scale 3D leaf-cluster shadowing so each bough has deep interior shadow pockets and crisp outer leaf tufts
   const macroClump = sin(positionWorld.x.mul(9.5).add(positionWorld.y.mul(8.2))).mul(cos(positionWorld.z.mul(10.3).sub(positionWorld.y.mul(7.1))));
   const microLeaf = sin(positionWorld.x.mul(27.0)).mul(cos(positionWorld.y.mul(31.0))).mul(sin(positionWorld.z.mul(25.0)));
@@ -487,7 +539,7 @@ export class NycProps {
   private lights: Slot[] = [];
   private tileLights = new Map<string, TileLights>();
   private tilePoles = new Map<string, BreakablePole[]>();
-  private tileTrees = new Map<string, { slot: number; x: number; y: number; z: number; scale: number }[]>();
+  private tileTrees = new Map<string, { set: string; slot: number; x: number; y: number; z: number; scale: number }[]>();
   /** Poles and trees are solid Rapier colliders (obstacles.ts): no proximity break here. */
   solidPoles = false;
   /** Player's car, for falling poles landing on it (set every frame by main). */
@@ -516,7 +568,9 @@ export class NycProps {
       return s;
     };
     mk('lamp', lampGeo(), litMaterial(5.0, 0.45, 0.35), 6000);
-    mk('tree', treeGeo(), treeMaterial(), 14000);
+    // one instanced mesh per species (capacity ~ census share; 19,000 in all)
+    const treeMat = treeMaterial();
+    for (const sp of TREE_SPECIES) mk(`tree_${sp.id}`, treeGeo(sp.id), treeMat, Math.round(19000 * sp.w));
     const phaseA = new THREE.InstancedBufferAttribute(new Float32Array(900 * 2), 2);
     const phaseB = new THREE.InstancedBufferAttribute(new Float32Array(900 * 2), 2);
     mk('signalR', signalGeo(1), signalMaterial(phaseA), 900, 2, phaseA);
@@ -643,7 +697,7 @@ export class NycProps {
         for (let i = list.length - 1; i >= 0; i--) {
           const tr = list[i];
           if (this.isInsideAnyBuilding(tr.x, tr.y)) {
-            this.sets.tree.hideSlot(tr.slot);
+            this.sets[tr.set].hideSlot(tr.slot);
             list.splice(i, 1);
           }
         }
@@ -678,28 +732,15 @@ export class NycProps {
     (this.pools.instanceMatrix.array as Float32Array).set(S.lamp.mesh.instanceMatrix.array as Float32Array);
     this.pools.instanceMatrix.needsUpdate = true;
 
-    const rawTreeRows: number[][] = [...(d.tree ?? [])];
-    if (d.lamp && d.lamp.length > 1) {
-      for (let i = 0; i < d.lamp.length - 1; i++) {
-        const l0 = d.lamp[i], l1 = d.lamp[i + 1];
-        const yaw = l0[2] ?? 0;
-        const dyaw = Math.abs(yaw - (l1[2] ?? 0));
-        const dx = l1[0] - l0[0], dy = l1[1] - l0[1];
-        // Mast arm points into street along (cos(yaw), sin(yaw)); curb runs along (-sin(yaw), cos(yaw))
-        const crossCurb = Math.abs(dx * Math.cos(yaw) + dy * Math.sin(yaw));
-        const alongCurb = Math.abs(-dx * Math.sin(yaw) + dy * Math.cos(yaw));
-        if (dyaw < 0.12 && crossCurb < 1.0 && alongCurb >= 18 && alongCurb <= 38) {
-          const tx = (l0[0] + l1[0]) * 0.5 - Math.cos(yaw) * 0.95;
-          const ty = (l0[1] + l1[1]) * 0.5 - Math.sin(yaw) * 0.95;
-          const rot = ((Math.abs(tx * 1.7 + ty * 2.3)) % 6.283);
-          const sc = 0.88 + ((Math.abs(tx * 3.1 + ty * 1.3)) % 0.24);
-          rawTreeRows.push([tx, ty, rot, sc]);
-        }
-      }
+    // trees come from the tile data only (OSM street trees + the generator's), each drawn as its census species
+    const treeRows = (d.tree ?? []).filter((r) => !this.isInsideAnyBuilding(r[0], r[1]));
+    const trees: { set: string; slot: number; x: number; y: number; z: number; scale: number }[] = [];
+    for (const sp of TREE_SPECIES) {
+      const rows = treeRows.filter((r) => speciesOf(r[0], r[1]) === sp.id), set = `tree_${sp.id}`;
+      const slots = S[set].add(key, rows, (r, m, mo) => writeMatrix(m, mo, r[0], r[1], z, r[2], r[3], r[3] * (0.9 + 0.2 * ((r[2] * 7) % 1)), r[3]));
+      slots.forEach((slot, i) => trees.push({ set, slot, x: rows[i][0], y: rows[i][1], z, scale: rows[i][3] ?? 1 }));
     }
-    const treeRows = rawTreeRows.filter((r) => !this.isInsideAnyBuilding(r[0], r[1]));
-    const treeSlots = S.tree.add(key, treeRows, (r, m, mo) => writeMatrix(m, mo, r[0], r[1], z, r[2], r[3], r[3] * (0.9 + 0.2 * ((r[2] * 7) % 1)), r[3]));
-    this.tileTrees.set(key, treeSlots.map((slot, i) => ({ slot, x: treeRows[i][0], y: treeRows[i][1], z, scale: treeRows[i][3] ?? 1 })));
+    this.tileTrees.set(key, trees);
     for (const [set, side, kName] of [[S.signalR, 1, 'signalR'], [S.signalL, -1, 'signalL']] as [InstanceSet, number, BreakableKind][]) {
       const sigRows = d.signal?.filter((r) => r[3] === side);
       const slots = set.add(key, sigRows, (r, m, mo, ex, eo) => {
