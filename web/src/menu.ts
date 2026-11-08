@@ -210,9 +210,9 @@ export class Menu {
     const earned = last && (last.xp || last.cr) ? `<div class="earned">+${fmtXp(last.xp)}${last.cr ? ` · +${fmt(last.cr)}` : ''} <span class="dim">${esc(last.reason)}</span>${last.levelUp ? ` <b class="lvup">LEVEL ${last.levelUp}</b>` : ''}</div>` : '';
     return `${this.tuning ? '<div class="cover"><div class="card center"><div class="spin"></div><p>Calibrating WebGPU pipeline…</p><span class="dim">Optimizing resolution &amp; reflections for this display.</span></div></div>' : ''}
       <div class="title">
-        <div class="kicker">1:1 NEW YORK CITY // PACEJKA MF 6.1</div>
+        <div class="kicker">OPEN-WORLD STREET RACING // PACEJKA MF 6.1</div>
         <div class="logo">OPEN<span>GRID</span></div>
-        <div class="sub">1:1 Midtown Manhattan · Active vehicle: <b>${esc(curCar.name)}</b></div>
+        <div class="sub">Active vehicle: <b>${esc(curCar.name)}</b></div>
         <div class="careers">${this.careerCard('sp')}${this.careerCard('mp')}</div>
         ${earned}
         ${invite}
@@ -458,7 +458,7 @@ export class Menu {
       <div class="mode-cards">
         <div class="mcard">
           <div class="mcard-top"><span class="micon">🏁</span><b>Race</b><span class="dim">6-car grid · you vs 5 rivals</span></div>
-          <p class="dim">Start mid-pack through Midtown. Rivals take their own lines and fight for position. Finish ahead of them all.</p>
+          <p class="dim">Start mid-pack through the city. Rivals take their own lines and fight for position. Finish ahead of them all.</p>
           <div class="opts"><span class="dim">RULES</span><span class="pill ${sel.realism ? 'gold' : ''}">${sel.realism ? 'FULL REALISM' : 'RESPAWNS'}</span><span class="dim small-note">change on the main menu</span></div>
           <div class="opts"><span class="dim">LAPS</span>${laps}</div>
           <button class="primary huge" data-act="start-race">▶ Start Race · ${sel.laps} Lap${sel.laps > 1 ? 's' : ''}</button>

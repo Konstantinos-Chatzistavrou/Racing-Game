@@ -468,9 +468,19 @@ def init_world():
     global _W, _BUCKETS
     if _W is not None:
         return
-    _W = tl.World(layers=("buildings",))
+    _W = tl.World(layers=("buildings", "roads"))
     _BUCKETS = {}
+    # drawn carriageways (same widths as ground.py): low structures lying mostly on a road are left out (a racing map
+    # cannot have a 4 m block across a street; e.g. a viaduct footprint at 639,-692 that was 100 % road)
+    from ground import road_width
+    from shapely.strtree import STRtree
+    roads = [g.buffer(road_width(d) / 2, cap_style=2) for d, g in zip(_W.items["roads"], _W.geoms["roads"])
+             if not d.get("tunnel") and d["hw"] not in ("footway", "path", "cycleway", "steps", "pedestrian", "service")]
+    rtree = STRtree(roads)
     for i, g in enumerate(_W.geoms["buildings"]):
+        h = float(_W.items["buildings"][i]["h"])
+        if 2.5 <= h < 8 and g.area > 0 and sum(g.intersection(roads[k]).area for k in rtree.query(g)) / g.area > 0.35:
+            continue
         c = g.centroid
         _BUCKETS.setdefault(tl.tile_of(c.x, c.y), []).append(i)
 

@@ -543,6 +543,45 @@ try {
       console.log(name, '+2.5s', await after(1300)); await shot(`p_${name}_c.png`);
     }
   }
+  if (scenario === 'spots') {
+    // Look at given places (?menu=1): SPOTS="label:px:py:cx:cy:yaw;..." game frame metres (x east, y north): the car at
+    // (cx, cy) facing yaw (three.js yaw), the object of interest at (px, py) ahead. One screenshot each.
+    const click = (q) => evaluate(`(() => { const e = document.querySelector('${q}'); if (!e) return 'MISSING ${q}'; e.click(); return 'ok'; })()`);
+    for (let i = 0; i < 90 && (await evaluate(`window.__game.menu().tuning`)); i++) await sleep(500);
+    await click('[data-act=play]'); await sleep(400); await click('[data-act=start-free]'); await sleep(5000);
+    for (const [k, spot] of (process.env.SPOTS ?? '').split(';').filter(Boolean).entries()) {
+      const [label, , , cx, cy, yaw] = spot.split(':');
+      await evaluate(`(() => { const g = window.__game, y = ${Number(yaw)}; g.car.body.setEnabled(false);
+        g.car.body.setTranslation({ x: ${Number(cx)}, y: 0.55, z: ${-Number(cy)} }, true);
+        g.car.body.setRotation({ x: 0, y: Math.sin(y / 2), z: 0, w: Math.cos(y / 2) }, true); return 1; })()`);
+      await sleep(Number(process.env.WAIT ?? 2200));
+      await shot(`s_${String(k).padStart(2, '0')}_${label}.png`);
+    }
+  }
+  if (scenario === 'tour') {
+    // Street inspection (?menu=1): free roam, the car placed every STEP m along the circuit facing the route, the city
+    // streamed in, a screenshot each stop (chase camera). FROM / TO limit the stretch (m).
+    const click = (q) => evaluate(`(() => { const e = document.querySelector('${q}'); if (!e) return 'MISSING ${q}'; e.click(); return 'ok'; })()`);
+    for (let i = 0; i < 90 && (await evaluate(`window.__game.menu().tuning`)); i++) await sleep(500);
+    await click('[data-act=play]'); await sleep(400); await click('[data-act=start-free]'); await sleep(5000);
+    const step = Number(process.env.STEP ?? 80), from = Number(process.env.FROM ?? 0), to = Number(process.env.TO ?? 3190);
+    for (let s = from, k = 0; s < to; s += step, k++) {
+      const where = await evaluate(`(() => { const g = window.__game, r = g.routeSamples ?? null; return r ? 1 : 0; })()`);
+      if (!where) { console.log('no route access'); break; }
+      const info = await evaluate(`(() => { const g = window.__game, R = g.routeSamples; let acc = 0;
+        for (let i = 0; i < R.length; i++) { const a = R[i], b = R[(i + 1) % R.length], d = Math.hypot(b.x - a.x, b.y - a.y);
+          if (acc + d >= ${s}) { const t = (${s} - acc) / d, x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
+            g.car.body.setEnabled(false);
+            g.car.body.setTranslation({ x, y: 0.55, z: -y }, true);
+            const yaw = Math.atan2(Math.cos(a.heading), -Math.sin(a.heading));
+            g.car.body.setRotation({ x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) }, true);
+            return JSON.stringify({ s: ${s}, i, x: +x.toFixed(1), y: +y.toFixed(1) }); }
+          acc += d; } return 'end'; })()`);
+      await sleep(Number(process.env.WAIT ?? 1800));
+      await shot(`t_${String(k).padStart(2, '0')}_${s}.png`);
+      console.log('stop', info);
+    }
+  }
   if (scenario === 'follow') {
     // Ride along behind a rival (FOLLOW=<index>, default 0) for a race: the player car is placed 13 m behind it every frame,
     // so the camera and the city streaming follow the AI line through the corners. Screenshots every 2.5 s.
@@ -559,8 +598,8 @@ try {
       await sleep(2500);
       console.log(`t+${((i + 1) * 2.5).toFixed(1)}s`, await evaluate(`JSON.stringify(window.__game.ai.cars.map((c) => Math.round(c.v * 3.6) + '@' + Math.round(c.s)))`),
         await evaluate(`(() => { const g = window.__game, c = g.ai.cars[${Number(process.env.FOLLOW ?? 0)}], t = g.car.body.translation();
-          return JSON.stringify({ aiY: +c.pos.y.toFixed(2), rootY: +c.root.position.y.toFixed(2), groundTall: g.ai.ground(c.pos.x, c.pos.z, c.pos.y + 50, 100)?.toFixed(2), playerY: +t.y.toFixed(2),
-            groundAtPlayer: g.ai.ground(t.x, t.z, t.y + 50, 100)?.toFixed(2) }); })()`));
+          return JSON.stringify({ aiY: +c.pos.y.toFixed(2), rootY: +c.root.position.y.toFixed(2), groundTall: g.ai.groundAt(c.pos.x, c.pos.z, c.pos.y + 50, 100)?.toFixed(2), playerY: +t.y.toFixed(2),
+            groundAtPlayer: g.ai.groundAt(t.x, t.z, t.y + 50, 100)?.toFixed(2) }); })()`));
       await shot(`f_${String(i).padStart(2, '0')}.png`);
     }
   }

@@ -18,6 +18,7 @@ from shapely.strtree import STRtree
 
 sys.path.insert(0, os.path.dirname(__file__))
 import tilelib as T
+from ground import road_width
 
 MASK = (1 << 64) - 1
 
@@ -45,7 +46,10 @@ TREE_GAP = 1.7
 
 
 def eff_width(d):
-    return max(float(d.get("width") or 0.0), MIN_WIDTH.get(d["hw"], 0.0))
+    """Kerb-to-kerb width: exactly the ground generator's (ground.road_width), so props stand where the drawn kerb is.
+    (MIN_WIDTH was narrower than what ground.py draws for avenues and primaries, 14-16 m vs 18-22 m: lamps, trees,
+    hydrants, shelters and steam stacks "0.9 m behind the kerb" stood ~1 m inside the rendered road.)"""
+    return road_width(d)
 
 
 def point_at(pts, dist):
@@ -353,19 +357,15 @@ def gen_tile(world, ix, iy, debug=False):
                     O["hydrant"].append([hx, hy, hf(iid, sa, sb, 22) * 6.283])
         if rb <= 4 and ra >= 2:
             steam_cand.append((hf(iid, 31), px, py, ta, tb, wa, wb))
-        if hf(iid, 41) < 0.12 and mid_zone:
-            cx, cy = px + (wb + 6) * ta[0] + (wa - 1.2) * tb[0], py + (wb + 6) * ta[1] + (wa - 1.2) * tb[1]
-            for j in range(4):
-                qx, qy = cx + j * 1.6 * ta[0] + 0.3 * hf(iid, j, 1), cy + j * 1.6 * ta[1]
-                if t.inside(qx, qy):
-                    O["cone"].append([qx, qy])
-    # steam stacks: a few per Midtown tile (orange and white striped pipes at the kerb)
+        # (no cone rows across the lanes at intersections: a racing map keeps the carriageways clear; cones stand by
+        # construction sheds on the sidewalk instead, gen_buildings)
+    # steam stacks: at most one per Midtown tile, on the kerb edge just outside the carriageway (never in a lane)
     steam_cand.sort()
-    nsteam = (1 + int(hf(seed0, 51) * 3)) if mid_zone else (1 if hf(seed0, 52) < 0.25 else 0)
+    nsteam = (1 if hf(seed0, 51) < 0.6 else 0) if mid_zone else 0
     for h, px, py, ta, tb, wa, wb in steam_cand[:nsteam]:
         sa, sb = (1 if hf(seed0, 53) > 0.5 else -1), (1 if hf(seed0, 54) > 0.5 else -1)
-        sx, sy = px + sa * (wb + 9.0) * ta[0] + sb * (wa - 1.3) * tb[0], py + sa * (wb + 9.0) * ta[1] + sb * (wa - 1.3) * tb[1]
-        if t.inside(sx, sy) and not t.blocked(sx, sy, clear=-1.5, bld=True):
+        sx, sy = px + sa * (wb + 9.0) * ta[0] + sb * (wa + 0.7) * tb[0], py + sa * (wb + 9.0) * ta[1] + sb * (wa + 0.7) * tb[1]
+        if t.inside(sx, sy) and not t.blocked(sx, sy, clear=0.3, bld=True):
             O["steam"].append([sx, sy, 3.2 + hf(seed0, 55) * 1.2])
 
     # parks, plazas ------------------------------------------------------------------------------------------------------------------
@@ -470,6 +470,13 @@ def gen_tile(world, ix, iy, debug=False):
 
     # buildings: scaffolding sheds, signs ---------------------------------------------------------------------------------------------
     gen_buildings(t, tile_box, mid_zone)
+
+    # final sweep: nothing free-standing on a carriageway (OSM trees / hydrants / shelters are mapped where the source put
+    # them, which is sometimes on the road we draw; signal poles at odd crossings). Lamps were placed against the kerb
+    # already; building-attached kinds (scaffold, sign, kiosk) stay.
+    for k, clear in (("tree", 0.4), ("hydrant", 0.3), ("bench", 0.3), ("bus_stop", 0.3), ("waste", 0.3),
+                     ("subway_entrance", 0.3), ("signal", 0.0), ("steam", 0.3), ("cone", 0.3)):
+        O[k] = [v for v in O[k] if not t.blocked(v[0], v[1], clear=clear, bld=False)]
 
     # caps (budget ~1500 per tile)
     caps = {"lamp": 420, "tree": 900, "signal": 64, "hydrant": 48, "bench": 70, "bus_stop": 14, "subway_entrance": 14, "steam": 6,
@@ -578,6 +585,13 @@ def gen_buildings(t, tile_box, mid_zone):
                 px, py = mx + ex * s + nx * 1.9, my + ey * s + ny * 1.9
                 if t.inside(px, py) and not t.blocked(px, py, clear=0.0, bld=False):
                     O["scaffold"].append([px, py, math.atan2(ey, ex)])
+            # a couple of cones at one end of some sheds, on the sidewalk
+            if n and hf(bid, 81) < 0.25:
+                for j in range(2):
+                    s = n * 2.0 + 0.8 + j * 0.9
+                    qx, qy = mx + ex * s + nx * (1.6 + 0.2 * j), my + ey * s + ny * (1.6 + 0.2 * j)
+                    if t.inside(qx, qy) and not t.blocked(qx, qy, clear=0.4, bld=True):
+                        O["cone"].append([qx, qy])
 
 
 def round_json(O):

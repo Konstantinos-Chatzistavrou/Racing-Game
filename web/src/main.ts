@@ -198,7 +198,7 @@ async function main() {
     surfaces: core.info.surfaces,
     debug: params.get('nycdebug') === '1',
     fogDensity: num('fog', 0.0024),
-    onProgress: (f) => say(`Loading 1:1 New York City… ${Math.round(f * 100)}%`, 20 + f * 55),
+    onProgress: (f) => say(`Loading the city… ${Math.round(f * 100)}%`, 20 + f * 55),
   }) : null;
   if (nyc) {
     await nyc.ready();
@@ -557,7 +557,7 @@ async function main() {
   });
   let frameNo = 0;
   g.__game = { city, nyc, ai, visual, audio, rig, damage, trace, input, renderer, camera, scene, post,
-    get car() { return car; }, get core() { return core; }, get state() { return state; }, ticksNow: () => ticks, menu: () => menu, sel,
+    get car() { return car; }, get core() { return core; }, get state() { return state; }, ticksNow: () => ticks, routeSamples: route.samples, menu: () => menu, sel,
     get party() { return party; }, get remote() { return remote; }, streetProps, obstacles, standings: () => standings(), get lap() { return lap; },
     bench: (soak = false) => runBench(soak),
     setPreset: (name: PresetName) => { setPreset(PRESET_ORDER.indexOf(name)); setExtra(); },
