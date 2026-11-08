@@ -24,7 +24,8 @@ import { drawEarly } from './scene/nyc/breach';
 
 interface RouteSample { x: number; y: number; z: number; width_left: number; width_right: number }
 
-const G = 9.81, WHEEL_R = 0.34, STEP = 2;     // lane resolution, m
+const G = 9.81, WHEEL_R = 0.34;
+export const STEP = 2;     // lane resolution, m
 const PAINTS = [0x15181d, 0x0c1a33, 0xb8bcc2, 0x6b0f12, 0x1f3d2b];   // gunmetal, deep blue, silver, oxblood, racing green
 /** Rival names and skills (fraction of the car's grip they use). Spread so a decent driver beats some and has to work for the rest. */
 export const RIVALS = [
@@ -50,7 +51,7 @@ export function limitsOf(phys: any): CarLimits {
 }
 
 /** The route as a closed, smoothed driving line every 2 m: centre (ground height), right vector, room either side, curvature. */
-class Lane {
+export class Lane {
   readonly pts: THREE.Vector3[];
   readonly right: THREE.Vector3[] = [];
   readonly wl: number[] = [];
@@ -170,7 +171,7 @@ export class AiTraffic {
   mode: AiMode = 'off';
   /** race: cars wait on the grid until go() */
   held = true;
-  private lane: Lane;
+  readonly lane: Lane;
   private a = new THREE.Vector3();
   private b = new THREE.Vector3();
   private of = new THREE.Vector3();
@@ -350,6 +351,7 @@ export class AiTraffic {
   }
 
   /** Static ground under (x, z) from height top down len m, ignoring every car and piece of debris (dynamic + kinematic bodies). */
+  groundAt(x: number, z: number, top: number, len = 60) { return this.ground(x, z, top, len); }
   private ground(x: number, z: number, top: number, len = 60): number | null {
     this.ray.origin = { x, y: top, z };
     const hit = this.pw.world.castRay(this.ray, len, true,

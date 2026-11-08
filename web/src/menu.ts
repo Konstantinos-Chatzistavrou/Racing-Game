@@ -9,12 +9,14 @@ import { FINISHES, MODS, MOD_KEYS, SWATCHES, applyMods, modsOf, paintOf, saveSel
 import { formatLap } from './hud';
 import { MAX_MEMBERS, cleanCode, type Party, type PartyMode } from './party';
 import type { ControlsUi } from './controls-menu';
+import { PRESET_INFO, applyPreset, matchPreset, type AssistSettings, type Preset } from './assists';
+import { MOD_PRICES, Wallet, fmt } from './wallet';
 
 export type Gfx = 'auto' | 'max' | 'ultra' | 'high' | 'medium' | 'low';
-export type Screen = 'none' | 'title' | 'garage' | 'modes' | 'lobby' | 'pause' | 'results' | 'busy' | 'controls';
+export type Screen = 'none' | 'title' | 'garage' | 'modes' | 'lobby' | 'pause' | 'results' | 'busy' | 'controls' | 'settings' | 'shop';
 /** One line of the race standings. fin: finish time (s) or -1; d: distance covered (m); dnf: out of the race. */
 export interface Standing { name: string; you: boolean; fin: number; d: number; best: number; ai: boolean; dnf?: boolean; why?: string }
-export interface ResultData { total: number; best: number; laps: number[]; laps_target: number; standings: Standing[]; routeLength: number; online: boolean }
+export interface ResultData { total: number; best: number; laps: number[]; laps_target: number; standings: Standing[]; routeLength: number; online: boolean; /** credits paid for this race */ earned?: number }
 
 export interface MenuHooks {
   /** a visual choice changed (car, paint, finish): main updates the preview */
@@ -43,6 +45,8 @@ export interface MenuHooks {
   partyRejoin(): void;
   /** our name changed */
   partyMe(): void;
+  /** driving assists changed (settings screen) */
+  assists(): void;
   /** results screen: watch the cars still racing */
   spectate(): void;
 }
@@ -83,6 +87,12 @@ export class Menu {
   /** the Controls screen (main sets it up: it needs the input and force-feedback objects) */
   ctl: ControlsUi | null = null;
   private controlsFrom: Screen = 'title';
+  /** credits / owned cars and upgrades, and the driving assists (main sets them up) */
+  wallet!: Wallet;
+  assists!: AssistSettings;
+  private settingsFrom: Screen = 'title';
+  private shopNote = '';
+  private shopCar = '';
 
   constructor(readonly sel: Selection, private cars: CatalogCar[], private physics: Record<string, unknown>, private hooks: MenuHooks) {
     this.root.addEventListener('click', (e) => this.click(e));
@@ -129,7 +139,7 @@ export class Menu {
     const rightScroll = this.root.querySelector('.g-right')?.scrollTop ?? 0;
     const html = {
       none: () => '', title: () => this.title(), garage: () => this.garage(), modes: () => this.modes(), lobby: () => this.lobby(),
-      pause: () => this.pause(), controls: () => this.ctl?.html() ?? '', results: () => (this.lastResults ? this.results(this.lastResults) : ''),
+      pause: () => this.pause(), controls: () => this.ctl?.html() ?? '', settings: () => this.settings(), shop: () => this.shop(), results: () => (this.lastResults ? this.results(this.lastResults) : ''),
       busy: () => `<div class="card center"><div class="spin"></div><p>${esc(this.busyText)}</p></div>`,
     }[this.screen]();
     this.root.innerHTML = html;
@@ -160,41 +170,100 @@ export class Menu {
 
   // ---- screens ---------------------------------------------------------------------------------
   private title() {
-    const g = (k: Gfx, label: string) => `<button class="chip ${this.gfx === k ? 'on' : ''}" data-act="gfx" data-v="${k}">${label}</button>`;
     const curCar = this.car();
     const dis = this.tuning ? 'disabled' : '';
     const invite = this.invite && !this.party ? `<div class="invite"><span>🏁 You're invited to party <b>${esc(this.invite)}</b></span>
         <button class="primary" data-act="invite" ${dis}>Join Party</button><button class="small" data-act="noinvite" aria-label="Dismiss">✕</button></div>` : '';
+    const w = this.wallet;
+    const earned = w.lastEarned ? `<div class="earned">+${fmt(w.lastEarned)} <span class="dim">${esc(w.lastReason)}</span></div>` : '';
     return `${this.tuning ? '<div class="cover"><div class="card center"><div class="spin"></div><p>Calibrating WebGPU pipeline…</p><span class="dim">Optimizing resolution &amp; reflections for this display.</span></div></div>' : ''}
       <div class="title">
         <div class="kicker">1:1 NEW YORK CITY // PACEJKA MF 6.1</div>
         <div class="logo">OPEN<span>GRID</span></div>
-        <div class="sub">1:1 Midtown Manhattan · Active vehicle: <b>${esc(curCar.name)}</b></div>
+        <div class="sub">1:1 Midtown Manhattan · Active vehicle: <b>${esc(curCar.name)}</b> · <span class="credits">${fmt(w.credits)}</span></div>
+        ${earned}
         ${invite}
-        <div class="btnrow">
+        <div class="title-btns">
           <button class="primary huge" data-act="play" ${dis}>▶ Play</button>
           <button class="huge" data-act="garage-open" ${dis}>⚙ Garage</button>
+          <button class="huge" data-act="shop-open" ${dis}>🛒 Shop</button>
+          <button class="huge" data-act="settings-open" ${dis}>☰ Settings</button>
         </div>
-        <div class="gfx-panel">
-          <div class="gfx"><span class="dim">DRIVING</span><button class="chip ${this.sel.realism ? 'on' : ''}" data-act="realism" data-v="1">Full Realism</button><button class="chip ${this.sel.realism ? '' : 'on'}" data-act="realism" data-v="0">Respawns</button></div>
-          <div class="dim note">${this.sel.realism ? RULES.realism : RULES.respawn}</div>
-        </div>
-        <div class="gfx-panel">
-          <div class="gfx"><span class="dim">GRAPHICS</span>${g('auto', 'Auto')}${g('max', 'Max')}${g('ultra', 'Ultra')}${g('high', 'High')}${g('medium', 'Medium')}${g('low', 'Low')}</div>
-          <div class="dim note">${esc(this.gfxNote || 'WebGPU Clustered Forward+ · 240 Hz Physics')}</div>
-        </div>
-        <div class="btnrow util-row">
-          <button class="small" data-act="bench" ${dis}>⏱ Benchmark</button>
-          <button class="small" data-act="soak" ${dis}>🔥 Soak Test</button>
-          <button class="small" data-act="controls-open" ${dis}>🎮 Controls</button>
-        </div>
+        <div class="dim note">${esc(this.gfxNote || 'WebGPU Clustered Forward+ · 240 Hz Physics')} · Assists: ${this.assists.preset[0].toUpperCase() + this.assists.preset.slice(1)}</div>
         <a class="source-link dim" href="https://github.com/Konstantinos-Chatzistavrou/Racing-Game" target="_blank" rel="noopener">Source code · code AGPL-3.0 · assets CC BY-NC 4.0</a>
       </div>`;
   }
 
+  private settings() {
+    const a = this.assists, inSession = this.settingsFrom === 'pause';
+    const chip = (act: string, v: string, label: string, on: boolean) => `<button class="chip ${on ? 'on' : ''}" data-act="${act}" data-v="${v}">${label}</button>`;
+    const row = (label: string, chips: string, note: string) => `<div class="srow2"><span class="dim">${label}</span><div class="chips">${chips}</div><small class="dim">${note}</small></div>`;
+    const presets = (['beginner', 'intermediate', 'expert', 'custom'] as Preset[]).map((p) => chip('as-preset', p, p[0].toUpperCase() + p.slice(1), a.preset === p)).join('');
+    const assists = `
+      <div class="chips">${presets}</div><div class="dim note">${PRESET_INFO[a.preset]}</div>
+      ${row('ABS', chip('as-abs', 'off', 'Off', a.abs === 'off') + chip('as-abs', 'weak', 'Weak', a.abs === 'weak') + chip('as-abs', 'default', 'Default', a.abs === 'default'), 'Stops the wheels locking under braking. Weak lets them slip further first.')}
+      ${row('TRACTION', [0, 1, 2, 3, 4, 5].map((n) => chip('as-tc', String(n), n ? String(n) : 'Off', a.tc === n)).join(''), 'Cuts power when the rear wheels spin. 5 steps in earliest.')}
+      ${row('STABILITY', chip('as-esc', '0', 'Off', !a.stability) + chip('as-esc', '1', 'On', a.stability), 'Brakes single wheels to stop a spin or a slide wide.')}
+      ${row('COUNTERSTEER', chip('as-cs', 'off', 'Off', a.countersteer === 'off') + chip('as-cs', 'weak', 'Weak', a.countersteer === 'weak') + chip('as-cs', 'strong', 'Strong', a.countersteer === 'strong'), 'Steers into a slide for you when the rear steps out (keyboard and controller).')}
+      ${row('GEARBOX', chip('as-gb', 'auto', 'Automatic', a.gearbox === 'auto') + chip('as-gb', 'manual', 'Manual', a.gearbox === 'manual'), 'Manual: Q / E, bumpers or paddles.')}
+      ${row('DRIVING LINE', chip('as-line', 'off', 'Off', a.line === 'off') + chip('as-line', 'braking', 'Braking zones', a.line === 'braking') + chip('as-line', 'full', 'Full', a.line === 'full'), 'The racing line on the road: blue = keep going, yellow = ease off, red = brake.')}
+      <div class="dim note">Assists never change the car: same physics and tyres for everyone; they only help with your inputs. Keys 1 / 2 / 3 / 5 switch ABS / traction / stability / gearbox while driving.</div>`;
+    const g = (k: Gfx, label: string) => chip('gfx', k, label, this.gfx === k);
+    const more = inSession ? '<div class="dim note">Race rules, graphics and tests can be changed from the main menu.</div>' : `
+      <h3>Race rules</h3>
+      <div class="chips">${chip('realism', '1', 'Full Realism', this.sel.realism)}${chip('realism', '0', 'Respawns', !this.sel.realism)}</div>
+      <div class="dim note">${this.sel.realism ? RULES.realism : RULES.respawn}</div>
+      <h3>Graphics</h3>
+      <div class="chips">${g('auto', 'Auto')}${g('max', 'Max')}${g('ultra', 'Ultra')}${g('high', 'High')}${g('medium', 'Medium')}${g('low', 'Low')}</div>
+      <div class="dim note">${esc(this.gfxNote || 'Auto tunes resolution and effects for this device once.')}</div>
+      <h3>Performance tests</h3>
+      <div class="chips"><button class="small" data-act="bench">⏱ Benchmark</button><button class="small" data-act="soak">🔥 Soak Test</button></div>`;
+    return `<div class="lobby-screen"><div class="card lobby-card settings-card">
+      <div class="lobby-head"><button data-act="settings-back" class="back-btn">← Back</button><div><div class="kicker">OPTIONS</div><h2>Settings</h2></div></div>
+      <h3>Driving assists</h3>${assists}
+      <h3>Controls</h3><div class="chips"><button data-act="controls-open">🎮 Controllers, wheels &amp; keyboard…</button></div>
+      ${more}
+      <div class="lobby-foot"><span></span><button data-act="settings-back" class="primary">Done</button></div>
+    </div></div>`;
+  }
+
+  private shop() {
+    const w = this.wallet;
+    const cars = this.cars.map((c) => {
+      const st = statsOf(this.physics[c.id]), owned = w.owns(c.id), price = w.price(c), short = price - w.credits;
+      const btn = owned ? `<button class="small" data-act="shop-drive" data-v="${c.id}">${c.id === this.sel.car ? '✓ Driving' : 'Drive'}</button>`
+        : `<button class="${short > 0 ? '' : 'primary'} small" data-act="buy-car" data-v="${c.id}" ${short > 0 ? 'disabled' : ''}>${short > 0 ? `Need ${fmt(short)} more` : `Buy · ${fmt(price)}`}</button>`;
+      return `<div class="scard ${owned ? 'owned' : ''}">
+        <div class="car-head"><b>${esc(c.name)}</b><i class="car-badge">${owned ? 'OWNED' : fmt(price)}</i></div>
+        <span class="dim">${esc(c.tag)}</span>
+        <div class="mini"><em>${Math.round(st.power)} kW</em><em>${Math.round(st.mass)} kg</em><em>${st.grip.toFixed(2)} µ</em></div>
+        ${btn}</div>`;
+    }).join('');
+    const ownedCars = this.cars.filter((c) => w.owns(c.id));
+    if (!w.owns(this.shopCar)) this.shopCar = this.sel.car;
+    const carChips = ownedCars.map((c) => `<button class="chip ${c.id === this.shopCar ? 'on' : ''}" data-act="shop-car" data-v="${c.id}">${esc(c.name)}</button>`).join('');
+    const ups = MOD_KEYS.map((k) => {
+      const m = MODS[k], have = w.stage(this.shopCar, k);
+      const stages = [1, 2, 3].map((n) => n <= have ? `<button class="pip on" disabled>${m.levels[n]} ✓</button>`
+        : `<button class="pip buy" data-act="buy-mod" data-k="${k}" data-v="${n}" ${w.modCost(this.shopCar, k, n) > w.credits ? 'disabled' : ''}>${m.levels[n]}<small>${fmt(w.modCost(this.shopCar, k, n))}</small></button>`).join('');
+      return `<div class="mod"><div><b>${m.label}</b><span class="dim">${m.hint}</span></div><div class="pips">${stages}</div></div>`;
+    }).join('');
+    return `<div class="lobby-screen"><div class="card lobby-card shop-card">
+      <div class="lobby-head"><button data-act="home" class="back-btn">← Main Menu</button><div><div class="kicker">SPEND YOUR CREDITS</div><h2>Shop</h2></div><div class="wallet-pill">${fmt(w.credits)}</div></div>
+      ${this.shopNote ? `<div class="pnote ${this.shopNote.startsWith('✓') ? '' : 'bad'}">${esc(this.shopNote)}</div>` : ''}
+      <h3>Cars</h3><div class="shop-cars">${cars}</div>
+      <h3>Upgrades <small class="dim">(fit and remove them in the Garage)</small></h3>
+      <div class="chips">${carChips}</div>
+      ${ups}
+      <div class="dim note">Earn credits by racing (more for a better finish and longer races) and by driving in free roam (${fmt(400)} per km).</div>
+      <div class="lobby-foot"><button data-act="garage-open">⚙ Garage</button><button class="primary" data-act="play">Play ▶</button></div>
+    </div></div>`;
+  }
+
   private garage() {
     const sel = this.sel;
-    const cards = this.cars.map((c) => {
+    const w = this.wallet;
+    const cards = this.cars.filter((c) => w.owns(c.id)).map((c) => {
       const st = statsOf(this.physics[c.id]);
       return `<button class="car ${c.id === sel.car ? 'on' : ''}" data-act="car" data-v="${c.id}">
         <div class="car-head"><b>${esc(c.name)}</b><i class="car-badge">${c.id === sel.car ? 'SELECTED' : 'SELECT'}</i></div>
@@ -208,7 +277,10 @@ export class Menu {
     const mods = modsOf(sel);
     const rows = MOD_KEYS.map((k) => {
       const m = MODS[k];
-      const pips = m.levels.map((l, i) => `<button class="pip ${i <= mods[k] && mods[k] > 0 ? 'on' : ''} ${i === mods[k] ? 'cur' : ''}" data-act="mod" data-k="${k}" data-v="${i}" title="${l}">${i === 0 ? 'STK' : 'S' + i}</button>`).join('');
+      const own = w.stage(sel.car, k);
+      const pips = m.levels.map((l, i) => i > own
+        ? `<button class="pip locked" data-act="shop-open" title="${l}: buy in the Shop (${MOD_PRICES[k][i - 1].toLocaleString('en-US')} Cr)">🔒</button>`
+        : `<button class="pip ${i <= mods[k] && mods[k] > 0 ? 'on' : ''} ${i === mods[k] ? 'cur' : ''}" data-act="mod" data-k="${k}" data-v="${i}" title="${l}">${i === 0 ? 'STK' : 'S' + i}</button>`).join('');
       return `<div class="mod"><div><b>${m.label}</b><span class="dim">${m.levels[mods[k]]}</span></div><div class="pips">${pips}</div><small class="dim">${m.hint}</small></div>`;
     }).join('');
     const base = statsOf(this.physics[sel.car] as never), now = statsOf(applyMods(this.physics[sel.car], mods));
@@ -232,7 +304,8 @@ export class Menu {
           <button class="chip" data-act="cam" data-v="3.14,0.14,6.0">Front</button>
         </div>
       </div>
-      <div class="g-left panel"><h3>Vehicles (${this.cars.length})</h3>${cards}</div>
+      <div class="g-left panel"><h3>Your cars (${this.cars.filter((c) => w.owns(c.id)).length}/${this.cars.length})</h3>${cards}
+        ${this.cars.some((c) => !w.owns(c.id)) ? '<button class="small more-cars" data-act="shop-open">🛒 More cars in the Shop</button>' : ''}</div>
       <div class="g-right panel">
         <h3>Paint &amp; Finish</h3>
         <div class="sws">${sw}<label class="sw custom" title="Custom colour"><input id="custom" type="color" value="${paint}" /></label></div>
@@ -337,11 +410,11 @@ export class Menu {
     const btns = online
       ? `<button class="primary" data-act="resume">▶ Resume Driving</button>
          ${p!.isHost ? '<button data-act="plobby">↩ End Session · Everyone to Lobby</button>' : '<button data-act="quit">↩ Back to Lobby</button>'}
-         <button data-act="controls-open">🎮 Controls</button>
+         <button data-act="settings-open">☰ Assists &amp; Controls</button>
          <button data-act="pleave">${p!.isHost ? 'Close Party' : 'Leave Party'}</button>`
       : `<button class="primary" data-act="resume">▶ Resume Driving</button>
          <button data-act="restart">↻ Restart ${this.sel.mode === 'race' ? 'Race' : 'Session'}</button>
-         <button data-act="controls-open">🎮 Controls</button>
+         <button data-act="settings-open">☰ Assists &amp; Controls</button>
          <button data-act="quit">← Quit to Main Menu</button>`;
     return `<div class="card center pause-card">
       <div class="kicker">${online ? 'PARTY SESSION · OTHERS KEEP DRIVING' : 'SESSION PAUSED'}</div>
@@ -377,6 +450,7 @@ export class Menu {
       <h2>${me?.dnf ? `Did not finish${me.why ? ' · ' + esc(me.why) : ''}` : ranked.length > 1 ? `You finished ${ord(pos)}` : 'Race Complete'}</h2>
       <div class="big ${pos === 1 && !me?.dnf ? 'win' : ''}">${me?.dnf ? 'DNF' : ranked.length > 1 ? `P${pos}<small> / ${ranked.length}</small>` : formatLap(r.total)}</div>
       <div class="dim">${me?.dnf ? `${r.laps.length} of ${r.laps_target} laps` : `${formatLap(r.total)} · ${r.laps_target} lap${r.laps_target > 1 ? 's' : ''}`} · Best lap <b class="best-inline">${formatLap(r.best)}</b></div>
+      ${r.earned ? `<div class="earned center">+${fmt(r.earned)} <span class="dim">· ${fmt(this.wallet.credits)} total</span></div>` : ''}
       ${table}
       <div class="rows">${rows}</div>
       <div class="btns">${btns}</div>
@@ -401,12 +475,20 @@ export class Menu {
     if (['play', 'garage-open', 'start-race', 'start-free', 'pstart', 'invite', 'prejoin'].includes(act)) this.askFullscreen();
     const v = b.dataset.v ?? '', sel = this.sel;
     if (act === 'controls-open') { this.controlsFrom = this.screen; this.show('controls'); return; }
+    if (act === 'settings-open') { this.settingsFrom = this.screen; this.show('settings'); return; }
+    if (act === 'settings-back') { this.show(this.settingsFrom); return; }
+    if (act.startsWith('as-')) { this.assistClick(act, v); return; }
     if (act === 'c-back') { this.ctl?.leave(); this.show(this.controlsFrom); return; }
     if (act.startsWith('c-') && this.ctl?.click(act, v)) return;
     switch (act) {
-      case 'play': this.show('modes'); break;
+      case 'play': this.wallet.lastEarned = 0; this.show('modes'); break;
       case 'garage-open': this.show('garage'); this.hooks.preview(); break;
-      case 'home': this.show('title'); break;
+      case 'home': this.wallet.lastEarned = 0; this.show('title'); break;
+      case 'shop-open': this.shopNote = ''; this.shopCar = sel.car; this.show('shop'); break;
+      case 'shop-car': this.shopCar = v; this.render(); break;
+      case 'shop-drive': sel.car = v; this.shopCar = v; this.save(); this.render(); this.hooks.preview(); break;
+      case 'buy-car': this.shopNote = this.wallet.buyCar(v); if (this.wallet.owns(v)) this.shopCar = v; this.render(); break;
+      case 'buy-mod': this.shopNote = this.wallet.buyMod(this.shopCar, b.dataset.k as ModKey, Number(v)) || `✓ ${MODS[b.dataset.k as ModKey].levels[Number(v)]} bought. Fit it in the Garage.`; this.render(); break;
       case 'modes': this.show('modes'); break;
       case 'quit-modes': this.lastResults = null; this.hooks.quit('modes'); break;
       case 'lobby': this.partyNote = ''; this.show('lobby'); break;
@@ -442,6 +524,22 @@ export class Menu {
       case 'pshare': if (this.party) navigator.share?.({ title: 'OpenGrid party', text: `Join my OpenGrid party (code ${this.party.code})`, url: this.party.link }).catch(() => {}); break;
     }
   }
+  private assistClick(act: string, v: string) {
+    const a = this.assists;
+    if (act === 'as-preset') applyPreset(a, v as Preset);
+    else {
+      if (act === 'as-abs') a.abs = v as typeof a.abs;
+      if (act === 'as-tc') a.tc = Number(v);
+      if (act === 'as-esc') a.stability = v === '1';
+      if (act === 'as-cs') a.countersteer = v as typeof a.countersteer;
+      if (act === 'as-gb') a.gearbox = v as typeof a.gearbox;
+      if (act === 'as-line') a.line = v as typeof a.line;
+      matchPreset(a);
+    }
+    this.hooks.assists();
+    this.render();
+  }
+
   private copyLink() {
     if (!this.party) return;
     const link = this.party.link;

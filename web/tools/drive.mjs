@@ -214,6 +214,46 @@ try {
     await key('keyDown', 'KeyW', 'w'); await sleep(600); console.log('keyboard   ', await st()); await key('keyUp', 'KeyW', 'w');
     console.log('ffb status ', await evaluate(`window.__game.ffb.status`));
   }
+  if (scenario === 'assists') {
+    // Settings / assists / shop / credits (run with ?menu=1, a fresh profile = a new player): title has 4 buttons,
+    // Beginner preset reaches the core (b[93..95]), the driving line shows in a race, a race pays credits, the shop
+    // sells a car and an upgrade, the garage lists only owned cars.
+    const click = (q) => evaluate(`(() => { const e = document.querySelector('${q}'); if (!e) return 'MISSING ${q}'; e.click(); return 'ok'; })()`);
+    const g = (e) => evaluate(`JSON.stringify(${e})`);
+    for (let i = 0; i < 90 && (await evaluate(`window.__game.menu().tuning`)); i++) await sleep(500);
+    console.log('title buttons', await g(`[...document.querySelectorAll('.title-btns button')].map((b) => b.dataset.act)`), await g(`document.querySelector('.credits')?.textContent`));
+    await shot('a1_title.png');
+    await click('[data-act=settings-open]'); await sleep(300);
+    console.log('preset', await click('[data-act=as-preset][data-v=beginner]')); await sleep(200); await shot('a2_settings.png');
+    console.log('toggles', await g(`window.__game.input.assists`));
+    await click('[data-act=as-tc][data-v="2"]'); console.log('tc2 -> preset', await g(`window.__game.menu().assists.preset`), await g(`window.__game.input.assists.tcSlip`));
+    await click('[data-act=as-preset][data-v=beginner]'); await click('[data-act=settings-back]');
+    await click('[data-act=shop-open]'); await sleep(300); await shot('a3_shop.png');
+    console.log('shop', await g(`[...document.querySelectorAll('.scard')].map((c) => c.querySelector('b').textContent + ': ' + c.querySelector('button').textContent)`));
+    console.log('buy touring', await click('[data-act=buy-car][data-v=vela_touring]'), await g(`document.querySelector('.pnote')?.textContent`), await g(`document.querySelector('.wallet-pill')?.textContent`));
+    console.log('buy tyres S1', await click('[data-act=buy-mod][data-k=tyres][data-v="1"]'), await g(`document.querySelector('.pnote')?.textContent`), await g(`document.querySelector('.wallet-pill')?.textContent`));
+    await click('[data-act=garage-open]'); await sleep(1500);
+    console.log('garage cars', await g(`[...document.querySelectorAll('.car b')].map((e) => e.textContent)`), 'locked pips', await g(`document.querySelectorAll('.pip.locked').length`));
+    await shot('a4_garage.png');
+    await click('[data-act=play]'); await sleep(400); await click('[data-act=laps][data-v="1"]'); await click('[data-act=start-race]');
+    await sleep(6000); await evaluate(`(window.__game.input.hold = false, 1)`);
+    await key('keyDown', 'KeyW', 'w'); await sleep(4000); await key('keyUp', 'KeyW', 'w');
+    await shot('a5_line.png');
+    console.log('race', await g(`{ state: window.__game.state, kmh: Math.round(window.__game.car.out[102] * 3.6) }`));
+    // jump to the results: finish by DNF (realism default) is slow; quit through the pause menu pays nothing, so use the results path
+    await evaluate(`(window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape' })), 1)`); await sleep(400);
+    console.log('pause has settings', await g(`!!document.querySelector('[data-act=settings-open]')`));
+    await click('[data-act=settings-open]'); await sleep(200); console.log('in-session settings hides graphics', await g(`!document.querySelector('[data-act=gfx]')`));
+    await click('[data-act=settings-back]'); await sleep(200);
+    await click('[data-act=quit]'); await sleep(1500);
+    await click('[data-act=play]'); await sleep(300); await click('[data-act=start-free]'); await sleep(5000);
+    await evaluate(`(window.__game.input.hold = false, 1)`);
+    await key('keyDown', 'KeyW', 'w'); await sleep(8000); await key('keyUp', 'KeyW', 'w');
+    await evaluate(`(window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape' })), 1)`); await sleep(400);
+    await click('[data-act=quit]'); await sleep(1500);
+    console.log('free roam pay', await g(`document.querySelector('.earned')?.textContent`), await g(`document.querySelector('.credits')?.textContent`));
+    await shot('a6_title_earned.png');
+  }
   if (scenario === 'dnf') {
     // Full realism (title setting) race: flip the car -> 'ROLLED OVER · OUT IN n s' -> DNF after 5 s -> spectating the rivals
     // (switch car), Results -> 'Did not finish'. Then Respawns: R works in a race.
@@ -221,7 +261,7 @@ try {
     const st = () => evaluate(`JSON.stringify({ state: window.__game.state, warn: document.getElementById('warn').textContent, spec: document.getElementById('spectate').hidden ? null : document.getElementById('spectate').textContent.replace(/\s+/g, ' '),
       resetBtn: getComputedStyle(document.getElementById('hud-reset')).display })`);
     for (let i = 0; i < 90 && (await evaluate(`window.__game.menu().tuning`)); i++) await sleep(500);
-    console.log('realism chip', await click('[data-act=realism][data-v="1"]'));
+    await click('[data-act=settings-open]'); console.log('realism chip', await click('[data-act=realism][data-v="1"]')); await click('[data-act=settings-back]');
     await click('[data-act=play]'); await sleep(400); await click('[data-act=laps][data-v="1"]'); await click('[data-act=start-race]');
     await sleep(6000); console.log('racing', await st());
     await evaluate(`(() => { const b = window.__game.car.body, t = b.translation(); b.setTranslation({ x: t.x, y: t.y + 1.5, z: t.z }, true); b.setRotation({ x: 0, y: 0, z: 1, w: 0 }, true); return 1; })()`);
@@ -229,10 +269,10 @@ try {
     await sleep(4500); console.log('out', await st()); await shot('d2_spectate.png');
     await click('#spectate [data-sp="1"]'); await sleep(1500); console.log('next', await st()); await shot('d3_spectate_next.png');
     await click('#spectate [data-sp="res"]'); await sleep(800);
-    console.log('results', await evaluate(`JSON.stringify({ state: window.__game.state, h2: document.querySelector('#menu h2')?.textContent, rows: [...document.querySelectorAll('.srow')].map((e) => e.textContent.replace(/\s+/g, ' ').trim()) })`));
+    console.log('results', await evaluate(`JSON.stringify({ state: window.__game.state, h2: document.querySelector('#menu h2')?.textContent, earned: document.querySelector('.earned')?.textContent, rows: [...document.querySelectorAll('.srow')].map((e) => e.textContent.replace(/\s+/g, ' ').trim()) })`));
     await shot('d4_results.png');
     await click('[data-act=quit]'); await sleep(1000);
-    await click('[data-act=realism][data-v="0"]'); await click('[data-act=play]'); await sleep(400); await click('[data-act=start-race]');
+    await click('[data-act=settings-open]'); await click('[data-act=realism][data-v="0"]'); await click('[data-act=settings-back]'); await click('[data-act=play]'); await sleep(400); await click('[data-act=start-race]');
     await sleep(6000);
     const before = await evaluate(`JSON.stringify(window.__game.car.body.translation())`);
     await evaluate(`(() => { const b = window.__game.car.body, t = b.translation(); b.setTranslation({ x: t.x + 6, y: t.y + 1.5, z: t.z }, true); b.setRotation({ x: 0, y: 0, z: 1, w: 0 }, true); return 1; })()`);

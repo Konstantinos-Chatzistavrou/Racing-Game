@@ -37,6 +37,8 @@ export class Input {
   onLights = () => {};
   onGarage = () => {};
   onPause = () => {};
+  /** an assist quick key (1 2 3 5) changed input.assists */
+  onAssistKey = () => {};
   /** the active device changed (HUD help line, menus) */
   onDevice = () => {};
   /** set by the controls menu while it calibrates: game actions from pads / wheels are off */
@@ -56,10 +58,10 @@ export class Input {
         case 'KeyH': this.onHud(); break;
         case 'KeyL': this.onLights(); break;
         case 'KeyG': this.onGarage(); break;
-        case 'Digit1': this.assists.abs = !this.assists.abs; break;
-        case 'Digit2': this.assists.tc = !this.assists.tc; break;
-        case 'Digit3': this.assists.esc = !this.assists.esc; break;
-        case 'Digit5': this.assists.autoGearbox = !this.assists.autoGearbox; break;
+        case 'Digit1': this.assists.abs = !this.assists.abs; this.onAssistKey(); break;
+        case 'Digit2': this.assists.tc = !this.assists.tc; this.onAssistKey(); break;
+        case 'Digit3': this.assists.esc = !this.assists.esc; this.onAssistKey(); break;
+        case 'Digit5': this.assists.autoGearbox = !this.assists.autoGearbox; this.onAssistKey(); break;
       }
       if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
     });

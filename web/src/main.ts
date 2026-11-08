@@ -27,6 +27,9 @@ import { TouchControls, wantsTouch } from './touch';
 import { ForceFeedback } from './ffb';
 import { ControlsUi } from './controls-menu';
 import { MenuNav } from './menu-nav';
+import { fromToggles, loadAssists, saveAssists, toToggles } from './assists';
+import { FREE_ROAM_PER_KM, Wallet } from './wallet';
+import { DrivingLine } from './driving-line';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { RemoteCars } from './net';
 import { Party, cleanCode, type Progress } from './party';
@@ -154,6 +157,10 @@ async function main() {
     loadRapier(),
   ]);
   const sel = loadSelection(catalog, params);
+  // credits, owned cars and upgrades. Dev server tests (?car=..., ?unlockall=1) own everything.
+  const wallet = new Wallet(catalog, sel, import.meta.env.DEV && (params.get('unlockall') === '1' || params.has('car')));
+  // driving assists (Settings): levels of the core's existing aids
+  const assistSet = loadAssists();
   const visualPathOf = (id: string) => catalog.find((c) => c.id === id)?.visual ?? DEFAULT_VISUAL;
   const shapeOf = (cfg: CarVisualConfig): CarShape => {
     const cb = cfg.collision_box;
@@ -266,6 +273,10 @@ async function main() {
   audio.prepare();   // the audio device opens now (behind the loading screen), not on the first key press
   let damage = new DamageVisuals(visual, visualCfg, pw, scene);
   let rumbleKj = 0;   // crash energy for the pad's rumble this frame
+  let racePaid = false;   // this race's payout is in the wallet
+  let freeRoamM = 0;      // metres driven in free roam this session (paid on leaving)
+  toToggles(assistSet, input.assists);
+  input.onAssistKey = () => { fromToggles(assistSet, input.assists); toToggles(assistSet, input.assists); saveAssists(assistSet); };
   const wireDamage = () => { damage.onImpact = (kj, glass) => { audio.impact(kj, glass); rumbleKj = Math.max(rumbleKj, kj); }; };
   wireDamage();
   input.onAnyInput = () => audio.unlock();
@@ -317,7 +328,7 @@ async function main() {
     raceCar = race.addCar(car.body.translation());
     aiRace = ai.mode === 'race' ? ai.cars.map((c) => ({ idx: race.addCar(c.pos), lap: null, fin: -1 })) : [];
     raceT0 = ticks * DT;
-    lapTimes = []; raceFinishedAt = -1; lap = null;
+    lapTimes = []; raceFinishedAt = -1; lap = null; racePaid = false;
     myDnf = ''; rolledT = stuckT = 0; hud.outWarn = '';
     hud.resetLaps();
     remoteProg.clear();
@@ -352,7 +363,7 @@ async function main() {
     input.touch = new TouchControls({
       reset: () => input.onReset(),
       camera: () => rig.toggle(),
-      toggleGearbox: () => (input.assists.autoGearbox = !input.assists.autoGearbox),
+      toggleGearbox: () => { input.assists.autoGearbox = !input.assists.autoGearbox; input.onAssistKey(); return input.assists.autoGearbox; },
       unlockAudio: () => audio.unlock(),
       garage: () => { if (driving()) quitSession(party ? 'lobby' : 'title'); },
       recentre: () => input.recentreTilt(),
@@ -648,8 +659,13 @@ async function main() {
     partyRejoin: () => { if (party?.phase === 'driving') void startSession('online', true); },
     partyMe: () => party?.updateMe(meForParty()),
     spectate: () => enterSpectate(),
+    assists: () => { toToggles(assistSet, input.assists); saveAssists(assistSet); },
   });
   menu.gfx = gfx;
+  menu.wallet = wallet;
+  menu.assists = assistSet;
+  const drivingLine = new DrivingLine(scene, ai);
+  drivingLine.setCar(applyMods(physics[sel.car], modsOf(sel)));
   // every input device: force feedback (WebHID wheels), the Controls screen, pad / keyboard menu navigation
   const ffb = new ForceFeedback();
   const forwardGears = () => Math.max(1, ((physics[sel.car] as { drivetrain?: { gear_ratios?: number[] } })?.drivetrain?.gear_ratios?.length ?? 8) - 2);
@@ -828,6 +844,7 @@ async function main() {
     core = new CoreCar(coreJson());
     car = new CarBody(pw, core, shape, visual.cg);
     rig.setTarget(car.body, core.info.redline);
+    drivingLine.setCar(applyMods(physics[sel.car], modsOf(sel)));
   };
 
   /** The garage car's own model (if its catalog entry has one): swapped in, physics + damage rebuilt. Serialised. */
@@ -961,6 +978,8 @@ async function main() {
 
   /** End the session: back to the title, the game modes, or (party) the lobby. */
   function quitSession(to: 'title' | 'modes' | 'lobby') {
+    if (freeRoamM > 50) wallet.earn(freeRoamM / 1000 * FREE_ROAM_PER_KM, `free roam · ${(freeRoamM / 1000).toFixed(1)} km`);
+    freeRoamM = 0;
     if (remote) party?.sendGone();
     remote?.clear(); remote = null;
     hideSpectate();
@@ -984,8 +1003,15 @@ async function main() {
     const total = lapTimes.reduce((a, b) => a + b, 0);
     hideSpectate();
     rig.setTarget(car.body, core.info.redline);
-    menu.showResults({ total, best: lapTimes.length ? Math.min(...lapTimes) : 0, laps: lapTimes, laps_target: raceLaps(), standings: standings(),
-      routeLength: lap?.routeLength ?? route.length_m, online: sel.mode === 'online' });
+    const st = standings();
+    let earned = 0;
+    if (!racePaid) {
+      racePaid = true;
+      const ranked = rank(st), pos = ranked.findIndex((x) => x.you) + 1;
+      earned = wallet.earn(Wallet.racePayout(pos, raceLaps(), !!myDnf, lapTimes.length), myDnf ? 'race · DNF' : `race · P${pos} of ${ranked.length}`);
+    }
+    menu.showResults({ total, best: lapTimes.length ? Math.min(...lapTimes) : 0, laps: lapTimes, laps_target: raceLaps(), standings: st,
+      routeLength: lap?.routeLength ?? route.length_m, online: sel.mode === 'online', earned });
     if (party) party.sendProgress({ d: lap?.distance ?? 0, lap: lap?.laps ?? 0, fin: lap?.finished ? total : -1, best: lap?.best ?? 0, dnf: myDnf ? 1 : 0 });
   }
 
@@ -1171,6 +1197,8 @@ async function main() {
       wheel: input.wheelPos, wheelVel: input.wheelVel, impactKj: state === 'race' ? rumbleKj : 0 }, input.settings);
     if (state === 'race') { input.rumble(now, car.out, rumbleKj); rumbleKj = 0; }
     if (state === 'paused' && !menu.ctl?.calibrating) input.menuPoll();
+    if (state === 'race' && raceLaps() === 0) freeRoamM += Math.min(Math.abs(car.out[OUT.speed]), 90) * frame;
+    drivingLine.update(assistSet.line, state === 'race' || state === 'countdown', pos, car.out[OUT.speed]);
     menuNav.paused = !!menu.ctl?.calibrating;
     menuNav.update(now);
     if (menu.screen === 'controls') menu.ctl?.tick();

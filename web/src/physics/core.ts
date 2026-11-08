@@ -35,7 +35,11 @@ export interface RawInput {
   /** H-pattern shifter: gear index the lever is in (0 R, 1 N, 2 1st ...); undefined / -99 = no shifter */
   directGear?: number;
 }
-export interface AssistToggles { abs: boolean; tc: boolean; esc: boolean; autoGearbox: boolean }
+export interface AssistToggles {
+  abs: boolean; tc: boolean; esc: boolean; autoGearbox: boolean;
+  /** strengths (assists.ts levels): ABS / TC wheel-slip targets, countersteer gain; 0 / absent = core default / off */
+  absSlip?: number; tcSlip?: number; countersteer?: number;
+}
 
 export interface CarInfo {
   mass: number; inertia: [number, number, number]; cgHeight: number;
@@ -100,6 +104,7 @@ export class CoreCar {
     b[80] = raw.steer; b[81] = raw.throttle; b[82] = raw.brake; b[83] = raw.clutch; b[84] = raw.handbrake;
     b[85] = raw.shiftUp ? 1 : 0; b[86] = raw.shiftDown ? 1 : 0; b[87] = raw.device;
     b[88] = +assists.abs; b[89] = +assists.tc; b[90] = +assists.esc; b[91] = +assists.autoGearbox;
+    b[93] = assists.absSlip ?? 0; b[94] = assists.tcSlip ?? 0; b[95] = assists.countersteer ?? 0;
     b[92] = raw.directGear ?? -99;
     mod!._rs_step(this.id, dt);
     return b;

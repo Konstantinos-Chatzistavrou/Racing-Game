@@ -93,7 +93,20 @@ slowly under its own weight and can land on your car.
 less is a hard crash. Breaking through costs most of your speed, wrecks the car, opens a hole into a furnished shop, deli,
 apartment or lobby, and brings the ceiling down on top of you.
 
-**Driving** (title screen): **Full Realism** (default) or **Respawns**. In Full Realism there is no reset in a race
+The title screen has four buttons: **Play**, **Garage**, **Shop** and **Settings**.
+
+**Settings → Driving assists**: presets (Beginner, Intermediate, Expert, Custom) or each aid on its own: ABS (Off / Weak /
+Default), traction control (Off, 1-5), stability control, countersteer assist (Off / Weak / Strong), gearbox (Automatic /
+Manual) and a **driving line** on the road (Off / Braking zones / Full; blue = keep going, yellow = ease off, red = brake,
+from your current speed). The assists are levels of the physics core's own driver aids: the car, tyres and physics are
+the same for everyone. They can be changed from the pause menu too; keys 1 / 2 / 3 / 5 switch ABS / TC / stability /
+gearbox while driving. Settings also holds the race rules, graphics, controls and the performance tests.
+
+**Credits and the Shop**: races pay by finishing position (more for longer races; a DNF still pays a little), free roam
+pays per km driven. The Shop sells cars and upgrade stages; the Garage shows the cars you own and fits the upgrades you
+bought. A new player starts with the Vela GT and 35,000 Cr.
+
+**Race rules** (Settings): **Full Realism** (default) or **Respawns**. In Full Realism there is no reset in a race
 (AI or party): a wrecked car, 5 s on its roof, or 30 s stuck is a DNF, and you spectate the remaining cars (◀ ▶ or
 A / D to switch, Results to end). Respawns: R puts you back on the road, repaired. Free roam always allows R.
 

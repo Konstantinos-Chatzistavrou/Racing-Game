@@ -127,6 +127,7 @@ EMSCRIPTEN_KEEPALIVE void rs_rays(int id) {
 //                  shift_up (edge), shift_down (edge), device (0 kb, 1 pad, 2 wheel)
 //     buf[88..91]: settings: abs, tc, esc, auto_gearbox (0/1)
 //     buf[92]: H-pattern shifter gear index (0 R, 1 N, 2 1st ...), -99 = no shifter
+//     buf[93]: ABS slip target (0 = default 0.10)  [94] TC slip target (0 = default 0.10)  [95] countersteer gain (0 = off)
 // OUT buf[96..98] force, [99..101] torque (three world, apply at CG for one tick)
 //     buf[102] speed m/s  [103] rpm  [104] gear index  [105] sideslip rad  [106] stalled
 //     [107] throttle applied  [108] brake applied  [109] steer applied  [110..112] accel (body, core axes)
@@ -164,6 +165,11 @@ EMSCRIPTEN_KEEPALIVE void rs_step(int id, double dt) {
     a.tc = b[89] > 0.5;
     a.esc = b[90] > 0.5;
     c.controls->settings.auto_gearbox = b[91] > 0.5;
+    // assist strengths (the menu's levels; 0 = the core's defaults): ABS / TC slip targets, countersteer gain (0 = off)
+    a.abs_slip_target = b[93] > 0 ? b[93] : 0.10;
+    a.tc_slip_target = b[94] > 0 ? b[94] : 0.10;
+    c.controls->settings.countersteer_assist = b[95] > 0;
+    if (b[95] > 0) c.controls->settings.countersteer_gain = b[95];
     raw.direct_gear = int(std::lround(b[92]));       // H-pattern shifter gear index, -99 = none
     // No input cut-off when totaled: the car always stays drivable (limp home, see damage.hpp).
 

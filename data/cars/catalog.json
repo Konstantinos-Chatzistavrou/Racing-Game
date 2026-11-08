@@ -1,9 +1,10 @@
 {
   "schema": "garage_catalog/1",
-  "notes": "Cars offered in the garage. The Vela cars share the Vela GT body (data/cars/vela_gt.visual.json); an entry with its own \"visual\" brings its own model. Physics = data/cars/*.json.",
+  "notes": "Cars offered in the shop (price in credits) and garage. The Vela cars share the Vela GT body (data/cars/vela_gt.visual.json); an entry with its own \"visual\" brings its own model. Physics = data/cars/*.json.",
   "cars": [
     {
       "id": "vela_touring",
+      "price": 30000,
       "name": "Vela GT Touring",
       "tag": "Relaxed grand tourer. Easy to place, forgiving at the limit.",
       "physics": "cars/vela_touring.json",
@@ -11,6 +12,7 @@
     },
     {
       "id": "vela_gt",
+      "price": 45000,
       "name": "Vela GT",
       "tag": "The balanced rear-drive coupe. Where every lap starts.",
       "physics": "cars/vela_gt.json",
@@ -18,6 +20,7 @@
     },
     {
       "id": "vela_gtr",
+      "price": 95000,
       "name": "Vela GT-R",
       "tag": "More power, stickier tyres, extra downforce. Rewards a clean line.",
       "physics": "cars/vela_gtr.json",
@@ -25,6 +28,7 @@
     },
     {
       "id": "kestrel_gt",
+      "price": 140000,
       "name": "Kestrel GT",
       "tag": "Track-bred coupe with its own body: long nose, big wing, a hard-edged aero kit.",
       "physics": "cars/kestrel_gt.json",
@@ -33,6 +37,7 @@
     },
     {
       "id": "harrier_gt",
+      "price": 160000,
       "name": "Harrier GT",
       "tag": "Wide, planted touring-car coupe. Big grip, short tail, loud aero.",
       "physics": "cars/harrier_gt.json",

@@ -389,3 +389,28 @@ body.spectating #board { top: 12px; }
 #touch .tilt-only { display: none; }
 #touch.tilt .tilt-only { display: inline-block; }
 #touch.tilt .steer { display: none; }
+
+/* ---- title buttons, credits, settings, shop ---------------------------------------------------- */
+#menu .title-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: min(460px, 100%); }
+#menu .title-btns button { width: 100%; }
+#menu .title-btns button:not(.primary) { background: var(--panel); border-color: var(--line2); font-weight: 800; letter-spacing: .04em; }
+#menu .credits { color: var(--warn); font-weight: 800; font-variant-numeric: tabular-nums; }
+#menu .earned { font-weight: 800; color: var(--ok); font-variant-numeric: tabular-nums; }
+#menu .earned.center { text-align: center; margin: 6px 0 2px; font-size: 18px; }
+#menu .wallet-pill { margin-left: auto; padding: 8px 14px; border-radius: 999px; background: #ffb54722; color: var(--warn); font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
+#menu .settings-card, #menu .shop-card { width: min(820px, 100%); }
+#menu[data-screen="settings"], #menu[data-screen="shop"] { background: #04060ac8; }
+#menu .srow2 { display: grid; grid-template-columns: 120px 1fr; gap: 4px 12px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
+#menu .srow2 > .dim:first-child { font-size: 10px; font-weight: 700; letter-spacing: .2em; }
+#menu .srow2 small { grid-column: 2; font-size: 11px; }
+#menu .settings-card .chips { margin: 4px 0; }
+#menu .shop-cars { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+#menu .scard { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; background: var(--panel2); border: 1px solid var(--line); border-radius: var(--r); font-size: 12px; }
+#menu .scard.owned { border-color: #3ddc8460; }
+#menu .scard > .dim { line-height: 1.35; flex: 1; }
+#menu .scard button { align-self: stretch; }
+#menu .pip.buy { display: flex; flex-direction: column; gap: 2px; padding: 6px 2px; font-size: 10px; }
+#menu .pip.buy small { font-size: 9px; color: var(--warn); font-weight: 700; }
+#menu .pip.locked { opacity: .55; }
+#menu .more-cars { width: 100%; margin-top: 4px; }
+@media (max-width: 640px) { #menu .srow2 { grid-template-columns: 1fr; } #menu .srow2 small { grid-column: 1; } }
