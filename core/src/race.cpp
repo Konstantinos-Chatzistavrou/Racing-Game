@@ -9,6 +9,7 @@ int RaceTracker::add_car(const Vec3& start) {
     Route::Projection pr = route_.project(start);
     p.hint = pr.index;
     p.last_s = pr.s;
+    p.last_pos = start;
     // Cars on the grid behind the start line start with a small negative distance.
     p.distance = route_.delta(0.0, pr.s);
     cars_.push_back(p);
@@ -18,7 +19,10 @@ int RaceTracker::add_car(const Vec3& start) {
 void RaceTracker::update(int car, const Vec3& pos, double time) {
     RaceProgress& p = cars_[car];
     if (p.finished || p.dnf) return;
-    Route::Projection pr = route_.project(pos, p.hint);
+    const double travel = std::hypot(pos.x - p.last_pos.x, pos.y - p.last_pos.y);
+    p.last_pos = pos;
+    Route::Projection pr = route_.project_near(pos, p.hint, p.last_s, travel);   // stays on its own leg where the route doubles back
+    if (pr.index < 0) pr = route_.project(pos, p.hint);
     double ds = route_.delta(p.last_s, pr.s);
     if (std::abs(ds) > 40.0) {                  // lost track (e.g. teleport/reset): re-acquire
         pr = route_.project(pos);

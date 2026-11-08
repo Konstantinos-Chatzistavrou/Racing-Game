@@ -231,3 +231,20 @@ RS_TEST(race) {
     race.rank();
     test::check("DNF cars rank behind running cars", race.progress(c).position > race.progress(b).position);
 }
+
+// ---------------------------------------------------------------- race tracker where the route doubles back
+// The NYC circuit has a U-turn (samples 107-109: -119 deg -> +51 deg) where both legs run a few metres apart. A car on
+// the inside was projected onto the other leg, the 80 m jump was taken for a reset and ~160 m of the lap were lost.
+RS_TEST(race_uturn) {
+    Route r = Route::load(test::data_path("tracks/nyc_route.json"));
+    for (double lane : {-3.5, 0.0, 3.5}) {
+        RaceTracker race(r, 1);
+        auto pos = [&](double s) { RouteSample q = r.at(s); return Vec3{q.p.x - std::sin(q.heading) * lane, q.p.y + std::cos(q.heading) * lane, 0}; };
+        int c = race.add_car(pos(0.5));
+        double t = 0;
+        for (int i = 1; i < 240 * 120 && !race.progress(c).finished; ++i) { t = i / 240.0; race.update(c, pos(0.5 + 36 * t), t); }
+        char what[96];
+        std::snprintf(what, sizeof what, "lap tracked %+.1f m off the centreline (%.1f s, theory %.1f s)", lane, race.progress(c).finish_time, r.length() / 36);
+        test::check(what, race.progress(c).finished && std::abs(race.progress(c).finish_time - r.length() / 36) < 0.5);
+    }
+}

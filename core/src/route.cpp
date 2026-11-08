@@ -91,6 +91,35 @@ Route::Projection Route::project(const Vec3& p, int hint) const {
     return best;
 }
 
+Route::Projection Route::project_near(const Vec3& p, int hint, double last_s, double travel) const {
+    const int n = (int)s_.size();
+    Projection best;
+    best.index = -1;
+    if (hint < 0 || n < 2) return best;
+    const double back = std::min(1.0, travel * 0.5 + 0.05), ahead = travel * 1.5 + 15.0;
+    double best_d2 = 1e300;
+    for (int k = hint - 60; k <= hint + 60; ++k) {
+        int i = closed_ ? ((k % n) + n) % n : std::max(0, std::min(n - 1, k));
+        int j = closed_ ? (i + 1) % n : std::min(n - 1, i + 1);
+        if (i == j) continue;
+        Vec3 a = s_[i].p, b = s_[j].p;
+        Vec3 ab{b.x - a.x, b.y - a.y, 0}, ap{p.x - a.x, p.y - a.y, 0};
+        double len2 = dot(ab, ab);
+        double t = len2 > 0 ? clamp(dot(ap, ab) / len2, 0.0, 1.0) : 0.0;
+        double seg = std::sqrt(len2), s = wrap(s_[i].s + t * seg), ds = delta(last_s, s);
+        if (ds < -back || ds > ahead) continue;
+        Vec3 q = ap - ab * t;
+        double d2 = dot(q, q);
+        if (d2 < best_d2) {
+            best_d2 = d2;
+            best.s = s;
+            best.index = i;
+            best.lateral = (ab.x * ap.y - ab.y * ap.x) / std::max(seg, 1e-9);
+        }
+    }
+    return best;
+}
+
 RouteSample Route::at(double s) const {
     s = wrap(s);
     // binary search for the segment containing s

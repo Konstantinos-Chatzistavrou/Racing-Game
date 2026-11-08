@@ -16,6 +16,7 @@ struct RaceProgress {
     int position = 0;             // 1 = leading
     int hint = -1;                // route search hint
     double last_s = 0;
+    Vec3 last_pos{};              // for the distance moved between updates (route projection window)
     double stuck_time = 0;        // s spent upside down / immobile
     bool dnf = false;             // out of the race: no restarts (street race / multiplayer rules)
     std::string dnf_reason;       // "totaled (engine|cabin|wheels)", "rolled over", "stuck"

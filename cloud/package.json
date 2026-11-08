@@ -1,0 +1,24 @@
+{
+  "name": "opengrid-cloud",
+  "private": true,
+  "type": "module",
+  "description": "OpenGrid online service: accounts, online career (XP, credits, purchases) and server-timed ranked race rooms. Cloudflare Workers + D1 + Durable Objects (free plan).",
+  "license": "AGPL-3.0-or-later",
+  "scripts": {
+    "dev": "wrangler dev --local --port 8787",
+    "db:local": "wrangler d1 migrations apply opengrid --local",
+    "db:remote": "wrangler d1 migrations apply opengrid --remote",
+    "deploy": "wrangler deploy",
+    "test": "node test/sim.mjs"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261108.1",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.158.0"
+  },
+  "allowScripts": {
+    "workerd@1.20261104.1": true,
+    "esbuild@0.28.2": true,
+    "sharp@0.35.5": true
+  }
+}

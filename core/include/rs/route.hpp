@@ -30,6 +30,12 @@ public:
     // Closest point on the route. hint >= 0 limits the search to a window around it (fast,
     // and avoids jumping to another street that happens to pass close by).
     Projection project(const Vec3& p, int hint = -1) const;
+    // Continuity-aware projection for tracking a moving car: only segments whose arc length lies between a little
+    // behind last_s (min(1, travel/2 + 0.05) m) and travel x 1.5 + 15 m ahead of it are candidates (travel = distance
+    // moved since the last update); the laterally nearest of those wins. Where the route runs back alongside itself (a
+    // U-turn) the plain nearest segment can be the other leg, and a car on that side lost ~80-190 m per lap. Returns
+    // index -1 when no candidate fits (re-acquire with project()).
+    Projection project_near(const Vec3& p, int hint, double last_s, double travel) const;
     RouteSample at(double s) const;       // linear interpolation, wraps if closed
     Vec3 tangent(double s) const;
     Vec3 left(double s) const;            // horizontal unit vector to the left of travel

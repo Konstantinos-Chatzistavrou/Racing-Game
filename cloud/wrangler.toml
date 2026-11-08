@@ -1,0 +1,23 @@
+# OpenGrid online service (Cloudflare Workers free plan). Deploy: npm run db:remote && npm run deploy
+# Secrets (never in this file): `wrangler secret put IP_SALT` and `wrangler secret put VERIFIER_KEY`.
+name = "opengrid"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "opengrid"
+database_id = "00000000-0000-0000-0000-000000000000"   # replaced by the real id after `wrangler d1 create opengrid`
+migrations_dir = "migrations"
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "RaceRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RaceRoom"]
+
+[vars]
+# web origins allowed to call the service (comma separated)
+ALLOWED_ORIGINS = "*"   # the API uses bearer tokens (no cookies), so any web origin may call it
