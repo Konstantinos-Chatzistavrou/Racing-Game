@@ -122,11 +122,19 @@ async function main() {
 
   const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 260);
   camera.layers.enable(DEBRIS_LAYER);   // parts broken off the car (damage.ts): main view only, not the reflection probe
+  // Resize (window drag, fullscreen): at most once per frame, and never a preset change (that rebuilds pipelines =
+  // seconds of shader compiles); the render scale keeps the pixel count the GPU was tuned for (syncToSize).
+  let resizeQueued = false;
   addEventListener('resize', () => {
-    renderer.setSize(innerWidth, innerHeight);
-    camera.aspect = innerWidth / innerHeight;
-    camera.updateProjectionMatrix();
-    syncToSize();
+    if (resizeQueued) return;
+    resizeQueued = true;
+    requestAnimationFrame(() => {
+      resizeQueued = false;
+      renderer.setSize(innerWidth, innerHeight);
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      syncToSize();
+    });
   });
   addEventListener('keydown', (e) => {
     if (e.code !== 'KeyF' || e.repeat || e.ctrlKey || e.metaKey || e.altKey || (e.target as HTMLElement).tagName === 'INPUT') return;
@@ -475,23 +483,23 @@ async function main() {
     try { localStorage.setItem(SCALE_KEY, String(scale)); } catch { /* storage blocked */ }
   };
   /**
-   * Window or fullscreen size changed: the settled scale and preset are per size. Take the ones stored for the new
-   * size, else the ~0.9 MP-render guess (never the old size's scale: a windowed 1.0 would render 2.5x the pixels
-   * at 1080p fullscreen). Not while the graphics are pinned (URL, or a fixed High/Medium/Low).
+   * Window or fullscreen size changed. The PRESET stays (changing it builds new pipelines: seconds of shader compiles,
+   * the old 10 s fullscreen freeze). The render scale keeps the pixel count the GPU was tuned for: a 1.0 scale tuned in
+   * a 1280x800 window becomes ~0.7 at 1920x1080 fullscreen. A scale stored for the new size wins (tuned there before).
    */
-  let lastSize = `${innerWidth}x${innerHeight}`;
+  let lastSize = `${innerWidth}x${innerHeight}`, lastPixels = innerWidth * innerHeight;
   function syncToSize() {
     const k = `${innerWidth}x${innerHeight}`;
     if (k === lastSize) return;
-    lastSize = k;
+    const px = innerWidth * innerHeight, ratio = Math.sqrt(lastPixels / Math.max(1, px));
+    lastSize = k; lastPixels = px;
     SCALE_KEY = `nr.scale.v4.${k}`; PRESET_KEY = `nr.preset.v4.${k}`;
+    try { localStorage.setItem(PRESET_KEY, post.preset); } catch { /* storage blocked */ }
     if (!adaptive) return;
-    let sc = NaN, pr: string | null = null;
-    try { sc = Number(localStorage.getItem(SCALE_KEY) ?? NaN); pr = localStorage.getItem(PRESET_KEY); } catch { /* storage blocked */ }
+    let sc = NaN;
+    try { sc = Number(localStorage.getItem(SCALE_KEY) ?? NaN); } catch { /* storage blocked */ }
     stored = sc;
-    applyScale(sc >= MIN_SCALE && sc <= maxScale ? sc : startScale());
-    if (pr && PRESET_ORDER.includes(pr as PresetName)) { presetIdx = PRESET_ORDER.indexOf(pr as PresetName); post.preset = pr as PresetName; }
-    else { setPreset(PRESET_ORDER.indexOf(defaultPreset)); }
+    applyScale(sc >= MIN_SCALE && sc <= maxScale ? sc : scale * ratio);
     setExtra();
   }
   const startTuning = (full: boolean) => {

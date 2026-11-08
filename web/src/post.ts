@@ -83,10 +83,13 @@ class ScaledSMAA extends SMAANode {
  * full canvas size and the fragment finds its tile from screenUV (0..1, resolution independent),
  * which also matches the compute pass's tile -> NDC mapping exactly.
  */
+const FIXED_GRID = [1920, 1088] as const;   // drawing-buffer size the cluster grid is built for (multiple of the 32 px tile)
+
 export class ScaledClusteredLighting extends ClusteredLighting {
   createNode(lights: THREE.Light[] = []) {
     type CL = {
-      create(w: number, h: number): void; tileSize: number; zSlices: number;
+      create(w: number, h: number): void; tileSize: number; zSlices: number; _bufferSize: unknown;
+      updateProgram(r: unknown): void; setSize(w: number, h: number): unknown;
       _screenClusterIndex: THREE.Node; _cameraNear: THREE.Node<'float'>; _cameraFar: THREE.Node<'float'>;
     };
     const node = super.createNode(lights) as unknown as CL;
@@ -102,6 +105,11 @@ export class ScaledClusteredLighting extends ClusteredLighting {
         return int(tile.x).add(int(tile.y).mul(NX)).add(int(zSlice).mul(NX * NY));
       })().toVar();
     };
+    // One grid for every canvas size: tiles are found from screenUV, so the grid need not follow the drawing buffer,
+    // and rebuilding it recompiles every lit material (measured: 4 s frozen when going fullscreen). 60 x 34 tiles
+    // (a 1080p layout; tiles stretch a little on other aspects and sizes, the light lists stay exact).
+    node.updateProgram = () => { if (node._bufferSize === null || node._bufferSize === undefined) node.create(FIXED_GRID[0], FIXED_GRID[1]); };
+    node.setSize = () => node;
     return node as unknown as ReturnType<ClusteredLighting['createNode']>;
   }
 }

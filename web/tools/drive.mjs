@@ -214,6 +214,28 @@ try {
     await key('keyDown', 'KeyW', 'w'); await sleep(600); console.log('keyboard   ', await st()); await key('keyUp', 'KeyW', 'w');
     console.log('ffb status ', await evaluate(`window.__game.ffb.status`));
   }
+  if (scenario === 'resize') {
+    // Going fullscreen (run with ?menu=1): the window jumps from 1280x800 to 1920x1080. Frame times are recorded from
+    // before the change until 12 s after: how long until the picture is smooth again, the worst frame, the preset.
+    for (let i = 0; i < 90 && (await evaluate(`window.__game.menu().tuning`)); i++) await sleep(500);
+    await sleep(1500);
+    await evaluate(`(() => { window.__ft = []; let p = performance.now(); const f = (t) => { window.__ft.push([t, t - p]); p = t; if (window.__ft.length < 2000) requestAnimationFrame(f); }; requestAnimationFrame(f); return 1; })()`);
+    await sleep(1000);
+    const t0 = await evaluate(`performance.now()`);
+    const extra0 = await evaluate(`document.getElementById('perf')?.textContent ?? ''`);
+    await send('Emulation.setDeviceMetricsOverride', { width: 1920, height: 1080, deviceScaleFactor: 1, mobile: false });
+    await sleep(12000);
+    const ft = await evaluate(`window.__ft`);
+    const after = ft.filter(([t]) => t >= t0);
+    let smoothAt = -1;
+    for (let i = 0; i + 15 < after.length; i++) if (after.slice(i, i + 15).every(([, d]) => d < 50)) { smoothAt = after[i][0] - t0; break; }
+    const worst = Math.max(...after.map(([, d]) => d));
+    const long = after.filter(([, d]) => d > 100).map(([t, d]) => `${Math.round(t - t0)}:${Math.round(d)}`);
+    console.log(`resize: smooth again after ${Math.round(smoothAt)} ms, worst frame ${Math.round(worst)} ms, frames > 100 ms: ${long.join(' ')}`);
+    console.log('before', extra0.replace(/\n/g, ' | '));
+    console.log('after ', (await evaluate(`document.getElementById('perf')?.textContent ?? ''`)).replace(/\n/g, ' | '));
+    await shot('r1_after_resize.png');
+  }
   if (scenario === 'assists') {
     // Settings / assists / shop / credits (run with ?menu=1, a fresh profile = a new player): title has 4 buttons,
     // Beginner preset reaches the core (b[93..95]), the driving line shows in a race, a race pays credits, the shop
