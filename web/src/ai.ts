@@ -17,7 +17,7 @@ import * as THREE from 'three/webgpu';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { GROUP_CAR, GROUP_VIEW, type PhysicsWorld } from './physics/world';
 import { materialsOf } from './scene/city';
-import { mergeStaticMeshes } from './scene/merge';
+import { mergeSpinningWheels, mergeStaticMeshes } from './scene/merge';
 import { createContactShadow, setupCarMaterials, type CarVisualConfig } from './scene/car';
 import { assetUrl, loadGLTF } from './scene/loaders';
 import { drawEarly } from './scene/nyc/breach';
@@ -147,6 +147,9 @@ export class Lane {
   }
 }
 
+/** rivals' small parts (AiCar.detail) are drawn within this distance of the camera */
+const DETAIL_M = 30;
+
 interface AiCar {
   name: string;
   root: THREE.Group;
@@ -155,6 +158,10 @@ interface AiCar {
   body: RAPIER.RigidBody;
   wheels: { node: THREE.Object3D; rest: THREE.Quaternion }[];
   light: THREE.SpotLight | null;
+  /** small parts drawn only near the camera (interior, brake discs, calipers, exhaust, plate, underbody) and whether they are shown */
+  detail: THREE.Object3D[]; detailOn: boolean;
+  /** merged wheel meshes (merge.ts mergeSpinningWheels): userData.spin = wheel angle */
+  spinners: THREE.Mesh[];
   /** arc length, speed, lateral offset (+ = right of the line), lateral target, preferred line */
   s: number; v: number; lat: number; latTarget: number; line: number;
   vprof: number[]; aGrip: number;
@@ -224,6 +231,21 @@ export class AiTraffic {
         });
       }
       if (new URLSearchParams(location.search).get('merge') !== '0') mergeStaticMeshes(model, wheels.map((w) => w.node));   // ~89 meshes -> one per material (the wheels spin: kept)
+      // Draw calls per rival (46 meshes, each costs CPU in three's WebGPU backend, measured as most of a race frame):
+      //  - headlight shadows: only the outer shell and the tyres cast (45 -> 12 casters); interior, lights, discs, calipers,
+      //    exhaust, plate and underbody all sit inside that silhouette, so the shadow is the same;
+      //  - beyond DETAIL_M the parts hidden by the night, the fog and tinted glass are not drawn (46 -> 30 draws).
+      // the four wheels: one mesh per material, spun in the vertex shader (merge.ts); ?merge=0 keeps the separate nodes
+      const spinners = wheels.length === 4 && new URLSearchParams(location.search).get('merge') !== '0' ? mergeSpinningWheels(model, wheels.map((w) => w.node)) : [];
+      const detail: THREE.Object3D[] = [];
+      const casters: THREE.Mesh[] = [];
+      model.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (!m.isMesh) return;
+        if (/^merged_(paint|trim|carbon|rubber)$|_tyre_\d$|^wheels_tyre/.test(m.name)) casters.push(m);
+        if (/^interior|_disc$|^exhaust_tips|^plate$|mirror_glass|^underbody_merged|^wheels_disc$/.test(m.name)) detail.push(m);
+      });
+      if (casters.length >= 4 && !black) model.traverse((o) => { if ((o as THREE.Mesh).isMesh) o.castShadow = casters.includes(o as THREE.Mesh); });
       const root = new THREE.Group();
       root.name = `ai_${i}`;
       root.add(model);
@@ -250,7 +272,7 @@ export class AiTraffic {
         .setFriction(0.3).setRestitution(0).setCollisionGroups(GROUP_CAR), body);
       const aLat = rival.skill * 0.82 * lim.mu * G, aBrake = rival.skill * 0.85 * lim.muX * G;
       const car: AiCar = {
-        name: rival.name, root, model, shadow, body, wheels, light,
+        name: rival.name, root, model, shadow, body, wheels: spinners.length ? [] : wheels, spinners, light, detail, detailOn: true,
         s: 0, v: 0, lat: rival.line, latTarget: rival.line, line: rival.line,
         vprof: ai.lane.profile(aLat, aBrake, 75), aGrip: rival.skill * 0.6 * lim.muX * G,   // driven wheels carry ~60 % of the weight
         spin: 0, y: 0, yTick: 0, parked: false,
@@ -454,8 +476,12 @@ export class AiTraffic {
       c.root.position.lerpVectors(c.prevPos, c.pos, alpha);
       c.root.quaternion.slerpQuaternions(c.prevQuat, c.quat, alpha);
       // hide the model in the fog (lights stay: changing the light set recompiles materials)
-      c.model.visible = c.root.position.distanceToSquared(camera.position) < 230 * 230;
+      const d2 = c.root.position.distanceToSquared(camera.position);
+      c.model.visible = d2 < 230 * 230;
+      const near = d2 < (c.detailOn ? DETAIL_M + 4 : DETAIL_M) ** 2;   // hysteresis: no flicker at the edge
+      if (near !== c.detailOn) { c.detailOn = near; for (const o of c.detail) o.visible = near; }
       for (const w of c.wheels) w.node.quaternion.setFromAxisAngle(X, c.spin).multiply(w.rest);
+      for (const m of c.spinners) m.userData.spin = c.spin;
     }
   }
 }

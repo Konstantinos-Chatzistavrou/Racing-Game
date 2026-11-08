@@ -247,7 +247,8 @@ export class Post {
   async warmupFrames() {
     const keep = this.preset;
     const frame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
-    for (const name of ['max', 'ultra', 'high'] as PresetName[]) { this.preset = name; this.render(); await frame(); }
+    // every preset: the in-race fallback (phones: medium -> low) must never build pipelines with a car on screen (6.5 s measured)
+    for (const name of PRESET_ORDER) { this.preset = name; this.render(); await frame(); }
     this.preset = keep;
   }
 }

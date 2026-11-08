@@ -20,6 +20,17 @@
 // BEFORE the instance transform), so an update only copies 16 floats per drawn instance.
 import * as THREE from 'three/webgpu';
 
+/**
+ * Upload rules of three.js WebGPU (r186), measured 2026-11-08 in a 6-car race (3.2 MB and ~2,100 buffer writes per frame):
+ *  - an attribute with DynamicDrawUsage is re-uploaded WHOLE at every draw that uses it, changed or not (Attributes.update);
+ *  - an InstancedMesh whose matrices fit a uniform buffer (<= 1024 instances = 64 KiB) reads them from a uniform array,
+ *    which is re-uploaded every frame too (Buffer.update() is always true).
+ * So instance buffers stay StaticDrawUsage (uploaded only after needsUpdate, honouring updateRanges) and every instanced
+ * mesh gets at least INSTANCE_MIN slots, which puts its matrices in a vertex buffer. The extra slots are never drawn.
+ */
+export const INSTANCE_MIN = 1025;
+export const instanceSlots = (n: number) => Math.max(n, INSTANCE_MIN);
+
 export interface PropAssetJson {
   lod: [number, number]; draw: number; radius: number; count: number;
   data: number[];   // rows of 5: x, y, z, yaw, sx (three.js coordinates)
@@ -80,10 +91,9 @@ export class CityInstances {
         const mats = new Float32Array(n * 16);
         const a = new THREE.Matrix4();
         for (let i = 0; i < n; i++) a.fromArray(place, i * 16).multiply(deq).toArray(mats, i * 16);
-        const attr = new THREE.InstancedBufferAttribute(new Float32Array(n * 16), 16);
-        attr.setUsage(THREE.DynamicDrawUsage);
+        const attr = new THREE.InstancedBufferAttribute(new Float32Array(instanceSlots(n) * 16), 16);   // static: see INSTANCE_MIN
         const meshes = prims.map((src) => {
-          const im = new THREE.InstancedMesh(src.geometry, src.material, n);
+          const im = new THREE.InstancedMesh(src.geometry, src.material, instanceSlots(n));
           im.instanceMatrix = attr;
           im.count = 0;
           im.frustumCulled = false;   // culled here, per instance

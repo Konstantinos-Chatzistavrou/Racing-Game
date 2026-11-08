@@ -10,6 +10,7 @@ import {
   mod, hash, clamp, texture,
 } from 'three/tsl';
 import { getSignAtlasTexture } from './signAtlas';
+import { instanceSlots } from '../instancing';
 
 /** Shared night-time clock (seconds) driving every procedural animation of the New York props. Advanced by NycProps.update. */
 export const nycTime = uniform(0);
@@ -38,21 +39,23 @@ export class InstanceSet {
   private free: number[] = [];
   private high = 0;
   private dirty = true;
+  /** slot range written since the last flush (uploaded alone: one tree swapped must not re-send 5,000 matrices) */
+  private lo = Infinity;
+  private hi = -1;
+  private touch(s: number) { if (s < this.lo) this.lo = s; if (s > this.hi) this.hi = s; }
   private warned = false;
   dropped = 0;
 
   constructor(geometry: THREE.BufferGeometry, material: THREE.Material, readonly capacity: number, private extraStride = 0, name = 'nyc', extraAttr?: THREE.InstancedBufferAttribute) {
-    this.mesh = new THREE.InstancedMesh(geometry, material, capacity);
+    this.mesh = new THREE.InstancedMesh(geometry, material, instanceSlots(capacity));   // static usage, vertex-buffer matrices (instancing.ts)
     this.mesh.name = name;
     this.mesh.frustumCulled = false;
     this.mesh.castShadow = false;
     this.mesh.receiveShadow = false;
-    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.mesh.instanceMatrix.array.fill(0);
     this.mesh.count = 1;
     if (extraStride) {
       this.extra = extraAttr ?? new THREE.InstancedBufferAttribute(new Float32Array(capacity * extraStride), extraStride);
-      this.extra.setUsage(THREE.DynamicDrawUsage);
     } else this.extra = null;
   }
 
@@ -70,6 +73,7 @@ export class InstanceSet {
       else if (this.high < this.capacity) s = this.high++;
       else { this.dropped++; if (!this.warned) { this.warned = true; console.warn(`nyc ${this.mesh.name}: capacity ${this.capacity} reached`); } continue; }
       fill(row, m, s * 16, ex, s * this.extraStride);
+      this.touch(s);
       slots.push(s);
     }
     this.tiles.set(key, slots);
@@ -81,14 +85,19 @@ export class InstanceSet {
   hideSlot(slot: number) {
     const m = this.mesh.instanceMatrix.array as Float32Array;
     m.fill(0, slot * 16, slot * 16 + 16);
+    this.touch(slot);
     this.dirty = true;
   }
+
+  /** A slot's matrix was written directly into mesh.instanceMatrix: upload it at the next flush(). */
+  markSlot(slot: number) { this.touch(slot); this.dirty = true; }
 
   /** Copy of one instance's matrix (16 floats). */
   getSlot(slot: number) { return (this.mesh.instanceMatrix.array as Float32Array).slice(slot * 16, slot * 16 + 16); }
   /** Put a saved matrix back into a slot (after hideSlot). */
   setSlot(slot: number, m: Float32Array) {
     (this.mesh.instanceMatrix.array as Float32Array).set(m, slot * 16);
+    this.touch(slot);
     this.dirty = true;
   }
 
@@ -96,7 +105,7 @@ export class InstanceSet {
     const slots = this.tiles.get(key);
     if (!slots) return;
     const m = this.mesh.instanceMatrix.array as Float32Array;
-    for (const s of slots) { m.fill(0, s * 16, s * 16 + 16); this.free.push(s); }
+    for (const s of slots) { m.fill(0, s * 16, s * 16 + 16); this.free.push(s); this.touch(s); }
     this.tiles.delete(key);
     this.dirty = true;
   }
@@ -110,8 +119,15 @@ export class InstanceSet {
       this.free = [...set];
     }
     this.mesh.count = Math.max(1, this.high);
-    this.mesh.instanceMatrix.needsUpdate = true;
-    if (this.extra) this.extra.needsUpdate = true;
+    if (this.hi >= this.lo) {
+      const im = this.mesh.instanceMatrix;
+      im.addUpdateRange(this.lo * 16, (this.hi - this.lo + 1) * 16); im.needsUpdate = true;
+      if (this.extra) {
+        const st = this.extraStride;
+        this.extra.addUpdateRange(this.lo * st, (this.hi - this.lo + 1) * st); this.extra.needsUpdate = true;
+      }
+    }
+    this.lo = Infinity; this.hi = -1;
   }
 
   dispose() { this.mesh.geometry.dispose(); (this.mesh.material as THREE.Material).dispose(); this.mesh.dispose(); }

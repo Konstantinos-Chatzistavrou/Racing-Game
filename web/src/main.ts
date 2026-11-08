@@ -76,10 +76,12 @@ async function main() {
   // The canvas always runs at baseRatio; `scale` is the RENDER scale of the scene and the passes
   // before the sharpening upscale (post.ts). It used to be the canvas pixel ratio, which the browser
   // then stretched bilinearly (soft) and whose change reconfigured the whole canvas.
-  const baseRatio = Math.min(devicePixelRatio, 1);
   // Graphics: 'auto' tunes resolution + preset behind a cover in the title menu and steps down preset/scale
   // if high-speed driving drops FPS; high/medium/low are fixed. ?scale / ?quality (test tools) pin on top of that.
   const isTouch = wantsTouch();
+  // Phones: the canvas follows the panel (up to 2x CSS px) and `scale` picks the pixels actually rendered, sharpened up to
+  // the panel in post.ts. A 1x canvas (915 x 412 on a 2.6x phone) was stretched by the browser: every texture looked unloaded.
+  const baseRatio = Math.min(devicePixelRatio, isTouch ? 2 : 1);
   const GFX_KEY = 'nr.gfx.v4';
   const GFX_SCALE = { max: 1, ultra: 1, high: 1, medium: 0.85, low: 0.7 } as const;
   let gfx: Gfx = 'auto';
@@ -87,16 +89,17 @@ async function main() {
   let adaptive = gfx === 'auto' && !params.has('scale');
   const maxScale = 1;
   const targetPixels = isTouch ? 0.72e6 : 0.9e6;
-  const guessScale = () => Math.min(maxScale, Math.max(0.5, Math.round(Math.sqrt(targetPixels / (innerWidth * innerHeight * Math.min(devicePixelRatio, 1) ** 2)) * 10) / 10));
-  let SCALE_KEY = `nr.scale.v4.${innerWidth}x${innerHeight}`;
+  const MIN_RENDER = isTouch ? 0.35 : 0.5;   // lowest render scale (a 2x phone canvas at 0.5 was the old 1x picture)
+  const guessScale = () => Math.min(maxScale, Math.max(MIN_RENDER, Math.round(Math.sqrt(targetPixels / (innerWidth * innerHeight * baseRatio ** 2)) * 10) / 10));
+  let SCALE_KEY = `nr.scale.v5.${innerWidth}x${innerHeight}`;
   let stored = NaN;
   try { stored = Number(localStorage.getItem(SCALE_KEY) ?? NaN); } catch { /* storage blocked */ }
-  let scale = params.has('scale') ? num('scale', 1) : gfx !== 'auto' ? GFX_SCALE[gfx] : stored >= 0.5 && stored <= maxScale ? stored : guessScale();
+  let scale = params.has('scale') ? num('scale', 1) : gfx !== 'auto' ? (isTouch ? Math.min(GFX_SCALE[gfx], guessScale()) : GFX_SCALE[gfx]) : stored >= MIN_RENDER && stored <= maxScale ? stored : guessScale();
   renderer.setPixelRatio(baseRatio);
   renderer.setSize(innerWidth, innerHeight);
   // Quality preset (post.ts PRESETS), lowered by the adaptive system BEFORE the scale; stored like it.
   const defaultPreset: PresetName = isTouch ? 'medium' : 'ultra';
-  let PRESET_KEY = `nr.preset.v4.${innerWidth}x${innerHeight}`;
+  let PRESET_KEY = `nr.preset.v5.${innerWidth}x${innerHeight}`;
   let presetPinned = PRESET_ORDER.includes(params.get('quality') as PresetName) || gfx !== 'auto';
   let storedPreset: string | null = null;
   try { storedPreset = localStorage.getItem(PRESET_KEY); } catch { /* storage blocked */ }
@@ -411,7 +414,11 @@ async function main() {
   // --- post-processing ------------------------------------------------------------------------
   const DRAW_SCALE: Record<PresetName, number> = { max: 1, ultra: 0.9, high: 0.9, medium: 0.78, low: 0.62 };
   const post = new Post(renderer, scene, camera, { bloom: params.get('bloom') !== '0', aa: params.get('aa') !== '0', scale, preset: PRESET_ORDER[presetIdx] });
-  post.onPreset = (p) => { city.setBundled(true); city.props.drawScale = driving() ? DRAW_SCALE[p] : Math.min(0.45, DRAW_SCALE[p]); };
+  const NEAR_TREES: Record<PresetName, number> = { max: 80, ultra: 80, high: 70, medium: 55, low: 40 };   // photoreal tree range, m
+  post.onPreset = (p) => {
+    city.setBundled(true); city.props.drawScale = driving() ? DRAW_SCALE[p] : Math.min(0.45, DRAW_SCALE[p]);
+    const sp = nyc?.streetProps; if (sp) sp.nearR = NEAR_TREES[p];
+  };
   post.onPreset(post.preset);
   // Headlight shadow map: only the car bodies cast into it (the city does not cast), re-rendered
   // every Nth frame by preset (stale by one frame = ~1 m of light travel at 130 km/h, invisible:
@@ -484,7 +491,7 @@ async function main() {
   // the 40 fps bar rather than 30): below it -> cheaper preset first (no hitch), then -0.1 scale
   // (min 0.5); above 55 fps with 90 % of frames < 22 ms -> +0.1 (only if nothing was lowered).
   // The settled scale and preset are stored per window size, so the next visit is one window.
-  const WINDOW = 650, FPS_LOW = isTouch ? 48 : 36, FPS_HIGH = Math.max(58, capFps * 1.8), STEP = 0.1, MIN_SCALE = 0.5, TUNE_TIMEOUT = 6000;
+  const WINDOW = 650, FPS_LOW = isTouch ? 48 : 36, FPS_HIGH = Math.max(58, capFps * 1.8), STEP = 0.1, MIN_SCALE = MIN_RENDER, TUNE_TIMEOUT = 6000;
   let winStart = 0, tuning = false, calSteps = 0, upSteps = 0, wentDown = false, tuneStart = 0;
   let driveWinTime = 0, driveFrames = 0;
   const startScale = () => guessScale();
@@ -509,7 +516,7 @@ async function main() {
     if (k === lastSize) return;
     const px = innerWidth * innerHeight, ratio = Math.sqrt(lastPixels / Math.max(1, px));
     lastSize = k; lastPixels = px;
-    SCALE_KEY = `nr.scale.v4.${k}`; PRESET_KEY = `nr.preset.v4.${k}`;
+    SCALE_KEY = `nr.scale.v5.${k}`; PRESET_KEY = `nr.preset.v5.${k}`;
     try { localStorage.setItem(PRESET_KEY, post.preset); } catch { /* storage blocked */ }
     if (!adaptive) return;
     let sc = NaN;
@@ -545,7 +552,7 @@ async function main() {
     adaptive = false; presetPinned = true;
     tuning = false;
     setPreset(PRESET_ORDER.indexOf(g));
-    applyScale(GFX_SCALE[g]);
+    applyScale(isTouch ? Math.min(GFX_SCALE[g], guessScale()) : GFX_SCALE[g]);   // phones: fixed presets keep the tuned pixel budget
     menu.setTuning(false, `Graphics fixed: ${g}`);
     setExtra();
   };
@@ -1413,7 +1420,9 @@ async function main() {
       winStart = now;
       const low = fps < FPS_LOW, high = fps > FPS_HIGH && p90 < 22;
       let changed = true;
-      if (low && !presetPinned && presetIdx < PRESET_ORDER.length - 1) { setPreset(presetIdx + 1); wentDown = true; }
+      // phones: pixels above the old 1x picture (scale 0.5 of the 2x canvas) go before any effect does
+      if (low && isTouch && scale > 0.5 + 1e-6) { applyScale(scale - STEP); wentDown = true; }
+      else if (low && !presetPinned && presetIdx < PRESET_ORDER.length - 1) { setPreset(presetIdx + 1); wentDown = true; }
       else if (low && calSteps > 0 && scale > MIN_SCALE + 1e-6) { applyScale(scale - STEP); calSteps--; wentDown = true; }
       else if (high && !wentDown && upSteps > 0 && scale < maxScale - 1e-6) { applyScale(scale + STEP); upSteps--; }
       else changed = false;

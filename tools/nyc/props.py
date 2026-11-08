@@ -13,12 +13,33 @@ import argparse, json, math, os, sys, zlib
 import numpy as np
 import shapely
 from shapely.geometry import LineString, Point, Polygon, box as sbox
-from shapely.ops import unary_union
+from shapely.ops import nearest_points, unary_union
 from shapely.strtree import STRtree
 
 sys.path.insert(0, os.path.dirname(__file__))
 import tilelib as T
-from ground import road_width
+from ground import DRIVE, road_poly, road_surface, road_width
+
+# Ground-level footprint of each kind in its own frame (three.js local x, z = the mesh extents in web/src/scene/nyc/props.ts;
+# overhead parts like lamp and signal arms, tree crowns, are meant to reach over the road and are not part of it). Trees scale
+# by their row's scale. Every footprint keeps KERB_CLEAR from the asphalt AS DRAWN (ground.road_surface: the union of the
+# ways plus the rounded kerb fillets at the corners, up to ~1.9 m beyond the buffered ways, plus parking lots).
+FOOT = {"lamp": (-0.17, 0.17, -0.17, 0.17), "signal": (-0.15, 0.15, -0.15, 0.15), "tree": (-0.78, 0.78, -0.78, 0.78),
+        "hydrant": (-0.16, 0.22, -0.16, 0.16), "bench": (-0.26, 0.25, -0.9, 0.9), "bus_stop": (-0.8, 0.81, -1.85, 1.85),
+        "subway_entrance": (-1.99, 1.99, -0.99, 1.19), "steam": (-0.3, 0.3, -0.3, 0.3), "cone": (-0.21, 0.21, -0.21, 0.21),
+        "kiosk": (-0.65, 0.65, -0.9, 0.9), "waste": (-0.28, 0.28, -0.28, 0.28), "scaffold": (-2.0, 2.0, -1.75, 1.78)}
+NO_YAW = ("steam", "cone", "waste")
+KERB_CLEAR = 0.35     # footprint to asphalt edge (the 0.2 m kerb top + rounding of the written positions)
+MAX_PUSH = 3.0        # moved farther than this back onto the sidewalk: dropped instead
+
+
+def footprint(k, row):
+    """Ground footprint polygon (game frame) of a prop row: local (lx, lz) -> (x + c lx + s lz, y + s lx - c lz) (signage.ts writeMatrix)."""
+    x0, x1, z0, z1 = FOOT[k]
+    sc = row[3] if k == "tree" and len(row) > 3 else 1.0
+    yaw = 0.0 if k in NO_YAW else row[2]
+    c, s = math.cos(yaw), math.sin(yaw)
+    return Polygon([(row[0] + (c * lx + s * lz) * sc, row[1] + (s * lx - c * lz) * sc) for lx, lz in ((x0, z0), (x1, z0), (x1, z1), (x0, z1))])
 
 MASK = (1 << 64) - 1
 
@@ -94,6 +115,7 @@ class Tile:
         self.bgeoms = [g for _, g in self.blds]
         self.btree = STRtree(self.bgeoms) if self.bgeoms else None
         self.areas = world.query("areas", self.b, 60.0)
+        self._road = None
         water = [g for d, g in self.areas if d["kind"] in ("water", "pier") and d["kind"] == "water"]
         self.water = unary_union(water) if water else None
         self.nodes = [d for d, g in world.query("nodes", self.b, 6.0)]
@@ -124,6 +146,52 @@ class Tile:
         if self.water is not None and self.water.contains(p):
             return True
         return False
+
+    def drawn_road(self):
+        """The asphalt exactly as ground.py draws it around this tile (prepared for fast distance tests)."""
+        if self._road is None:
+            x0, y0, x1, y1 = self.b
+            B = sbox(x0 - 30, y0 - 30, x1 + 30, y1 + 30)
+            dp = [road_poly(r, g) for r, g in self.w.query("roads", B.bounds, 40) if r["hw"] in DRIVE and not r["tunnel"]]
+            pl = [(g.buffer(0) if not g.is_valid else g) for a, g in self.w.query("areas", B.bounds, 2) if a["kind"] == "parking"]
+            self._road = road_surface(dp, pl, B)
+            shapely.prepare(self._road)
+        return self._road
+
+    def off_road(self, k, row):
+        """The row with its footprint >= KERB_CLEAR from the drawn asphalt: unchanged, pushed back onto the sidewalk (away from
+        the nearest asphalt edge), or None (would move more than MAX_PUSH, or into a building)."""
+        R = self.drawn_road()
+        if R.is_empty:
+            return row
+        fp = footprint(k, row)
+        if not shapely.dwithin(R, fp, KERB_CLEAR):
+            return row
+        x, y = row[0], row[1]
+        edge = R.boundary
+        for _ in range(16):
+            p = Point(x, y)
+            q = nearest_points(edge, p)[0]
+            dx, dy = x - q.x, y - q.y
+            d = math.hypot(dx, dy)
+            if d < 1e-6:
+                return None
+            ux, uy = dx / d, dy / d
+            if R.contains(p):
+                ux, uy = -ux, -uy
+            gap = R.distance(fp)
+            x += ux * max(0.12, KERB_CLEAR - gap + 0.05)
+            y += uy * max(0.12, KERB_CLEAR - gap + 0.05)
+            fp = footprint(k, [x, y] + list(row[2:]))
+            if math.hypot(x - row[0], y - row[1]) > MAX_PUSH:
+                return None
+            if not shapely.dwithin(R, fp, KERB_CLEAR):
+                break
+        else:
+            return None
+        if k != "scaffold" and self.btree is not None and any(self.bgeoms[i].intersects(fp) for i in self.btree.query(fp)):
+            return None
+        return [x, y] + list(row[2:])
 
     def nearest_road(self, x, y, maxd=45.0, host_only=True):
         best = None
@@ -477,6 +545,9 @@ def gen_tile(world, ix, iy, debug=False):
     for k, clear in (("tree", 0.4), ("hydrant", 0.3), ("bench", 0.3), ("bus_stop", 0.3), ("waste", 0.3),
                      ("subway_entrance", 0.3), ("signal", 0.0), ("steam", 0.3), ("cone", 0.3)):
         O[k] = [v for v in O[k] if not t.blocked(v[0], v[1], clear=clear, bld=False)]
+    # ... and no footprint on the asphalt as drawn (corner fillets, parking lots, wide props): pushed back or dropped
+    for k in FOOT:
+        O[k] = [r for r in (t.off_road(k, v) for v in O[k]) if r is not None]
 
     # caps (budget ~1500 per tile)
     caps = {"lamp": 420, "tree": 900, "signal": 64, "hydrant": 48, "bench": 70, "bus_stop": 14, "subway_entrance": 14, "steam": 6,

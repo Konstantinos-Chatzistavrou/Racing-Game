@@ -76,7 +76,13 @@ try {
   const info = `(() => { const g = window.__game, c = g.car, r = c.body.rotation(), t = c.body.translation(), o = c.out;
     return { kmh: Math.round(o[102] * 3.6), gear: o[104] - 1, yaw: +(Math.atan2(2*(r.w*r.y + r.x*r.z), 1 - 2*(r.y*r.y + r.x*r.x)) * 57.3).toFixed(2),
       x: +t.x.toFixed(1), z: +t.z.toFixed(2), perf: document.getElementById('perf').textContent.replace('\\n', ' | ') }; })()`;
-  if (scenario === 'mobile') {
+  if (process.env.METRICS) {   // METRICS=1600x900: a fixed desktop viewport (headless ignores --window-size)
+    const [w, h] = process.env.METRICS.split('x').map(Number);
+    await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false });
+    await send('Page.reload');
+    for (let i = 0; i < 240; i++) { await sleep(500); if ((await evaluate(`document.getElementById('loading') ? 'no' : 'ready'`).catch(() => '')) === 'ready') break; }
+  }
+  if (scenario === 'mobile' || process.env.MOBILE) {
     // phone in landscape: 915x412 CSS px, DPR 2.6, touch input
     await send('Emulation.setDeviceMetricsOverride', { width: 915, height: 412, deviceScaleFactor: 2.6, mobile: true, screenOrientation: { type: 'landscapePrimary', angle: 90 } });
     await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
@@ -86,6 +92,8 @@ try {
       if ((await evaluate(`document.getElementById('loading') ? 'no' : 'ready'`).catch(() => '')) === 'ready') break;
     }
   }
+  // CPU_THROTTLE=2: main thread slowed down N times (a phone's CPU, for the CPU-bound parts of a frame)
+  if (process.env.CPU_THROTTLE) await send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.CPU_THROTTLE) });
   await sleep(Number(process.env.SETTLE ?? 4000));
   console.log('idle  ', JSON.stringify(await evaluate(info)));
   if (process.env.PROBE) console.log('probe', await evaluate(fs.readFileSync(process.env.PROBE, 'utf8')));
@@ -134,6 +142,73 @@ try {
       await click('[data-act=modes]'); await sleep(300); await click('[data-act=start-free]'); await sleep(4000);
       console.log('free roam (expect no rivals, no board):', await evaluate(`JSON.stringify({ state: window.__game.state, ai: window.__game.ai.mode, board: !document.getElementById('board').hidden })`));
     }
+  }
+  if (scenario === 'raceperf') {
+    // A 6-car race (run with ?menu=1; MOBILE=1 for the phone viewport) with the player's car on an autopilot (pure pursuit
+    // along the route at RP_KMH): frame intervals, GPU time, main-thread profile, the worst frames with what ran in them.
+    const click = (q) => evaluate(`(() => { const e = document.querySelector('${q}'); if (!e) return 'MISSING ${q}'; e.click(); return 'ok'; })()`);
+    for (let i = 0; i < 90 && (await evaluate(`window.__game.menu().tuning`)); i++) await sleep(500);
+    console.log('tuned ', await evaluate(`document.querySelector('.note')?.textContent`));
+    await click('[data-act=play]'); await sleep(800);
+    await click('[data-act=laps][data-v="3"]'); await sleep(200);
+    await click(process.env.RP_FREE ? '[data-act=start-free]' : '[data-act=start-race]');
+    if (process.env.RP_GRID) {   // rivals on the grid with the wheels turned (merged wheel meshes spin in the vertex shader)
+      await sleep(1500);
+      await evaluate(`(window.__game.ai.cars.forEach((c) => (c.spin = ${Number(process.env.RP_GRID)})), 1)`);
+      await sleep(300); await shot('grid.png');
+      await sleep(3700);
+    } else await sleep(5500);
+    await evaluate(`(window.__game.input.hold = false, 1)`);
+    await evaluate(`(() => { const g = window.__game, S = g.routeSamples, N = S.length, kmh = ${Number(process.env.RP_KMH ?? 70)};
+      let near = 0;
+      const fwd = (r) => [2 * (r.x * r.z + r.w * r.y), 1 - 2 * (r.x * r.x + r.y * r.y)];   // (0,0,1) rotated: x, z
+      g.script = () => { const t = g.car.body.translation(), r = g.car.body.rotation(), gx = t.x, gy = -t.z;
+        let bd = 1e18; for (let k = -20; k <= 40; k++) { const i = (near + k + N) % N, d = (S[i].x - gx) ** 2 + (S[i].y - gy) ** 2; if (d < bd) { bd = d; near = i; } }
+        if (bd > 900) for (let i = 0; i < N; i++) { const d = (S[i].x - gx) ** 2 + (S[i].y - gy) ** 2; if (d < bd) { bd = d; near = i; } }
+        const v = Math.abs(g.car.out[102]), la = S[(near + Math.max(5, Math.round(v * 0.55 / 2))) % N];
+        const [fx, fz] = fwd(r), tx = la.x - gx, tz = -la.y - t.z;
+        const cross = fx * tz - fz * tx, dot = fx * tx + fz * tz, ang = Math.atan2(cross, dot);
+        const steer = Math.max(-1, Math.min(1, -ang * 1.6 * (window.__steerSign ?? 1)));
+        const want = kmh / 3.6 * (Math.abs(ang) > 0.35 ? 0.55 : 1);
+        window.__ap = { ang: +ang.toFixed(2), steer: +steer.toFixed(2), d: Math.round(Math.sqrt(bd)), near };
+        return { steer, throttle: v < want ? 0.8 : 0, brake: v > want + 3 ? 0.6 : 0, clutch: 0, handbrake: 0, shiftUp: false, shiftDown: false, device: 0, directGear: -99 }; };
+      return 1; })()`);
+    for (let i = 0; i < 6; i++) { await sleep(500); console.log('ap', await evaluate(`JSON.stringify(window.__ap)`), (await evaluate(info)).kmh, 'km/h'); }
+    await evaluate(`(() => { const g = window.__game, r = g.renderer, be = r.backend;
+      be.trackTimestamp = ${process.env.RP_NOTS ? 'false' : "r.hasFeature('timestamp-query')"};
+      const S = window.__rp = { ft: [], gpu: [], pending: false, cpu: [] };
+      const pr = g.post.render.bind(g.post); g.post.render = () => { const t0 = performance.now(); pr(); S.cpu.push(performance.now() - t0); };
+      let p = performance.now(), t0 = p;
+      const f = (t) => { S.ft.push([t - t0, t - p]); p = t;
+        if (be.trackTimestamp && !S.pending) { S.pending = true;
+          Promise.all([r.resolveTimestampsAsync('render'), r.resolveTimestampsAsync('compute')]).then(([a, c]) => { if (a) S.gpu.push(a + (c || 0)); S.pending = false; }); }
+        requestAnimationFrame(f); };
+      requestAnimationFrame(f); return 1; })()`);
+    const prof = !process.env.RP_NOPROF;
+    if (prof) { await send('Profiler.enable'); await send('Profiler.setSamplingInterval', { interval: 250 }); await send('Profiler.start'); }
+    const secs = Number(process.env.RP_SECS ?? 20);
+    for (let s = 0; s < secs; s += 5) {
+      await sleep(5000);
+      console.log(`t+${s + 5}s`, JSON.stringify(await evaluate(info)), await evaluate(`JSON.stringify({ pos: document.getElementById('lappos')?.textContent, phys: +window.__game.physics().stepMs.toFixed(3) })`));
+      if (process.env.RP_SHOTS) await shot(`rp_${s / 5}.png`);   // a screenshot itself stalls the page ~0.5 s
+    }
+    if (process.env.RP_JS) console.log('rp_js', await evaluate(fs.readFileSync(process.env.RP_JS, 'utf8')));
+    const { profile } = prof ? await send('Profiler.stop') : { profile: { nodes: [], samples: [], timeDeltas: [] } };
+    console.log('frames', await evaluate(`(() => { const S = window.__rp, a = S.ft.slice(3).map((x) => x[1]).sort((x, y) => x - y), q = (b, p) => b.length ? b[Math.min(b.length - 1, Math.floor(p * b.length))].toFixed(1) : '-';
+      const g = S.gpu.slice(3).sort((x, y) => x - y), c = S.cpu.slice(3).sort((x, y) => x - y);
+      const big = S.ft.filter((x) => x[1] > 60).map((x) => (x[0] / 1000).toFixed(1) + 's:' + Math.round(x[1]));
+      return 'rAF ' + a.length + ' median ' + q(a, 0.5) + ' p95 ' + q(a, 0.95) + ' p99 ' + q(a, 0.99) + ' max ' + q(a, 1) + ' | GPU median ' + q(g, 0.5) + ' p95 ' + q(g, 0.95) + ' max ' + q(g, 1)
+        + ' | render() CPU median ' + q(c, 0.5) + ' p95 ' + q(c, 0.95) + ' max ' + q(c, 1) + ' | >60ms ' + big.length + ' [' + big.slice(0, 30).join(' ') + ']'; })()`));
+    const self = new Map(), byId = new Map(profile.nodes.map((n) => [n.id, n]));
+    const dts = profile.timeDeltas; let total = 0, idle = 0;
+    profile.samples.forEach((id, i) => {
+      const n = byId.get(id), f = n.callFrame, k = `${f.functionName || '(anon)'} ${f.url.split('/').pop().split('?')[0]}:${f.lineNumber + 1}`;
+      if (f.functionName === '(idle)' || f.functionName === '(program)') idle += dts[i] ?? 0;
+      self.set(k, (self.get(k) ?? 0) + (dts[i] ?? 0)); total += dts[i] ?? 0;
+    });
+    console.log('main thread busy', ((total - idle) / 1000).toFixed(0), 'ms of', (total / 1000).toFixed(0));
+    [...self.entries()].sort((a, b) => b[1] - a[1]).slice(0, 30).forEach(([k, v]) => console.log((v / 1000).toFixed(0).padStart(6) + ' ms', k));
+    if (process.env.RP_PROFILE) fs.writeFileSync(path.join(out, 'race.cpuprofile'), JSON.stringify(profile));
   }
   if (scenario === 'devices') {
     // Every input device without hardware (run with ?menu=1): fake Gamepad API objects for an Xbox pad, a DualSense and a
@@ -764,7 +839,8 @@ try {
     await send('Profiler.start');
     if (process.env.PROFILE_EARLY) await key('keyDown', 'KeyW', 'w');
     await sleep(4000);
-    const { profile } = await send('Profiler.stop');
+    if (process.env.RP_JS) console.log('rp_js', await evaluate(fs.readFileSync(process.env.RP_JS, 'utf8')));
+    const { profile } = prof ? await send('Profiler.stop') : { profile: { nodes: [], samples: [], timeDeltas: [] } };
     await key('keyUp', 'KeyW', 'w');
     const self = new Map(), byId = new Map(profile.nodes.map((n) => [n.id, n]));
     const dts = profile.timeDeltas; let total = 0;

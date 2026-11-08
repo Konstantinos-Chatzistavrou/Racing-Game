@@ -17,6 +17,7 @@ import { attribute, instancedBufferAttribute, instanceIndex, hash, uv, float, ve
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { barkMaterial, buildTree, leafMaterial } from './trees';
 import { InstanceSet, NycSigns, nycTime, writeMatrix, SIGN_LIGHT } from './signage';
+import { instanceSlots } from '../instancing';
 
 export interface PropsData {
   /** ground height of the tile (m); props are placed at z + this. Optional, default 0. */
@@ -133,7 +134,7 @@ export const TREE_SPECIES = [
 ] as const;
 export type TreeSpecies = typeof TREE_SPECIES[number]['id'];
 /** photoreal tree range (m around the camera) and its capacity per species */
-const NEAR_R = 80, NEAR_CAP = 90;
+const NEAR_CAP = 90;
 export function speciesOf(x: number, y: number): TreeSpecies {
   const h = Math.abs(Math.sin(x * 12.9898 + y * 78.233) * 43758.5453) % 1;
   let acc = 0;
@@ -547,6 +548,8 @@ export class NycProps {
   private nearTrees: Partial<Record<TreeSpecies, { bark: THREE.InstancedMesh; leaves: THREE.InstancedMesh }>> = {};
   private nearNow = new Map<string, { set: string; slot: number; tile: string; m: Float32Array }>();
   private nearAt = 0;
+  /** photoreal tree range around the camera, m (main.ts sets it per quality preset: 80 on max/ultra, less on phones' presets) */
+  nearR = 80;
   private camPos = new THREE.Vector3();
   /** Poles and trees are solid Rapier colliders (obstacles.ts): no proximity break here. */
   solidPoles = false;
@@ -583,9 +586,8 @@ export class NycProps {
     for (const sp of TREE_SPECIES) {
       const g = buildTree(sp.id);
       const mkNear = (geo: THREE.BufferGeometry, mat: THREE.Material, nm: string) => {
-        const m = new THREE.InstancedMesh(geo, mat, NEAR_CAP);
+        const m = new THREE.InstancedMesh(geo, mat, instanceSlots(NEAR_CAP));
         m.name = nm; m.frustumCulled = false; m.castShadow = false; m.receiveShadow = true;
-        m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
         m.instanceMatrix.array.fill(0);
         m.count = 1;   // one degenerate instance: the pipeline compiles with the rest (warm), not at the first near tree
         this.root.add(m); this.meshes.push(m);
@@ -610,7 +612,6 @@ export class NycProps {
     // Lamp light pools: own matrix buffer so broken lamps can extinguish their light pool on the street
     const disc = new THREE.PlaneGeometry(15, 15).rotateX(-Math.PI / 2).translate(2.2, 0.06, 0);
     this.pools = new THREE.InstancedMesh(disc, lampPoolMaterial(), 6000);
-    this.pools.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.pools.frustumCulled = false; this.pools.renderOrder = 5; this.pools.name = 'nyc_lamp_pools';
     this.root.add(this.pools); this.meshes.push(this.pools);
 
@@ -624,8 +625,7 @@ export class NycProps {
 
     // 3D spinning glass shards (for broken storefronts & bus shelters)
     const SHARD_CAP = 540;
-    this.shardMesh = new THREE.InstancedMesh(glassShardGeo(), litMaterial(0.28, 0.06, 0.92), SHARD_CAP);
-    this.shardMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.shardMesh = new THREE.InstancedMesh(glassShardGeo(), litMaterial(0.28, 0.06, 0.92), instanceSlots(SHARD_CAP));
     this.shardMesh.instanceMatrix.array.fill(0);
     this.shardMesh.count = 1;
     this.shardMesh.frustumCulled = false;
@@ -637,8 +637,7 @@ export class NycProps {
 
     // 3D brick & concrete masonry wall chunks (for ground-floor building wall demolition)
     const DEBRIS_CAP = 360;
-    this.debrisMesh = new THREE.InstancedMesh(wallDebrisGeo(), litMaterial(0.0, 0.88, 0.05), DEBRIS_CAP);
-    this.debrisMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.debrisMesh = new THREE.InstancedMesh(wallDebrisGeo(), litMaterial(0.0, 0.88, 0.05), instanceSlots(DEBRIS_CAP));
     this.debrisMesh.instanceMatrix.array.fill(0);
     this.debrisMesh.count = 1;
     this.debrisMesh.frustumCulled = false;
@@ -650,8 +649,7 @@ export class NycProps {
 
     // Electric & metallic collision sparks (for sheared poles & storefronts)
     const SPARK_CAP = 320;
-    this.sparkMesh = new THREE.InstancedMesh(sparkGeo(), litMaterial(6.5, 0.2, 0.5), SPARK_CAP);
-    this.sparkMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.sparkMesh = new THREE.InstancedMesh(sparkGeo(), litMaterial(6.5, 0.2, 0.5), instanceSlots(SPARK_CAP));
     this.sparkMesh.instanceMatrix.array.fill(0);
     this.sparkMesh.count = 1;
     this.sparkMesh.frustumCulled = false;
@@ -696,20 +694,24 @@ export class NycProps {
     if (now - this.nearAt < 250) return;
     this.nearAt = now;
     this.camera.getWorldPosition(this.camPos);
-    const cx = this.camPos.x, cy = -this.camPos.z, r2 = NEAR_R * NEAR_R;
+    const NEAR_R = this.nearR, cx = this.camPos.x, cy = -this.camPos.z, r2 = NEAR_R * NEAR_R;
     const cand: { d: number; set: string; slot: number; tile: string }[] = [];
-    const alive = new Set<string>();
-    for (const [tile, list] of this.tileTrees) for (const t of list) {
-      const k = `${t.set}:${t.slot}`;
-      alive.add(k);
-      const d = (t.x - cx) ** 2 + (t.y - cy) ** 2;
-      if (d < r2) cand.push({ d, set: t.set, slot: t.slot, tile });
-    }
+    // only the tiles (256 m) that reach into the range: a scan of every loaded tree (~19,000) was a CPU spike every 250 ms
+    for (let ix = Math.floor((cx - NEAR_R) / 256); ix <= Math.floor((cx + NEAR_R) / 256); ix++)
+      for (let iy = Math.floor((cy - NEAR_R) / 256); iy <= Math.floor((cy + NEAR_R) / 256); iy++) {
+        const tile = `${ix}_${iy}`, list = this.tileTrees.get(tile);
+        if (list) for (const t of list) {
+          const d = (t.x - cx) ** 2 + (t.y - cy) ** 2;
+          if (d < r2) cand.push({ d, set: t.set, slot: t.slot, tile });
+        }
+      }
     cand.sort((a, b) => a.d - b.d);
     const want = new Map<string, { set: string; slot: number; tile: string }>(), per = new Map<string, number>();
     for (const c of cand) { const n = per.get(c.set) ?? 0; if (n < NEAR_CAP) { per.set(c.set, n + 1); want.set(`${c.set}:${c.slot}`, c); } }
-    for (const [k, t] of this.nearNow) if (!want.has(k)) { if (alive.has(k)) this.sets[t.set].setSlot(t.slot, t.m); this.nearNow.delete(k); }
-    for (const [k, c] of want) if (!this.nearNow.has(k)) { const m = this.sets[c.set].getSlot(c.slot); this.sets[c.set].hideSlot(c.slot); this.nearNow.set(k, { ...c, m }); }
+    let changed = false;
+    for (const [k, t] of this.nearNow) if (!want.has(k)) { this.sets[t.set].setSlot(t.slot, t.m); this.nearNow.delete(k); changed = true; }
+    for (const [k, c] of want) if (!this.nearNow.has(k)) { const m = this.sets[c.set].getSlot(c.slot); this.sets[c.set].hideSlot(c.slot); this.nearNow.set(k, { ...c, m }); changed = true; }
+    if (!changed) return;   // nothing entered or left the range: no upload
     for (const sp of TREE_SPECIES) {
       const N = this.nearTrees[sp.id]!, set = `tree_${sp.id}`;
       const arr = N.bark.instanceMatrix.array as Float32Array, arr2 = N.leaves.instanceMatrix.array as Float32Array;
@@ -717,7 +719,7 @@ export class NycProps {
       for (const t of this.nearNow.values()) if (t.set === set && i < NEAR_CAP) { arr.set(t.m, i * 16); arr2.set(t.m, i * 16); i++; }
       N.bark.count = N.leaves.count = Math.max(1, i);
       if (!i) { arr.fill(0, 0, 16); arr2.fill(0, 0, 16); }
-      N.bark.instanceMatrix.needsUpdate = N.leaves.instanceMatrix.needsUpdate = true;
+      for (const a of [N.bark.instanceMatrix, N.leaves.instanceMatrix]) { a.addUpdateRange(0, Math.max(1, i) * 16); a.needsUpdate = true; }
     }
   }
 
@@ -754,6 +756,7 @@ export class NycProps {
           const tr = list[i];
           if (this.isInsideAnyBuilding(tr.x, tr.y)) {
             this.sets[tr.set].hideSlot(tr.slot);
+            if (this.nearNow.delete(`${tr.set}:${tr.slot}`)) this.nearAt = 0;   // drawn photoreal: never restored
             list.splice(i, 1);
           }
         }
@@ -1151,19 +1154,18 @@ export class NycProps {
     _quat.setFromAxisAngle(_axis.set(t.dz, 0, -t.dx), t.theta).multiply(_quat2.setFromAxisAngle(_up, t.yaw));
     _mat4.compose(_pos.set(fp.x, fp.groundY + Math.sin(t.theta) * 0.12, fp.z), _quat, _scale.set(1, 1, 1));
     _mat4.toArray(this.sets[fp.kind].mesh.instanceMatrix.array as Float32Array, fp.slot * 16);
+    this.sets[fp.kind].markSlot(fp.slot);
     return t.settled || fp.age > 12;
   }
 
   private stepPhysics(dt: number) {
     // 1. Flying / toppling broken metal poles
     if (this.flyingPoles.length) {
-      const touched = new Set<BreakableKind>();
       for (let i = this.flyingPoles.length - 1; i >= 0; i--) {
         const fp = this.flyingPoles[i];
         fp.age += dt;
         if (fp.topple) {
           if (this.stepTopple(fp, dt)) this.flyingPoles.splice(i, 1);
-          touched.add(fp.kind);
           continue;
         }
         fp.x += fp.vx * dt;
@@ -1196,13 +1198,12 @@ export class NycProps {
         _mat4.compose(_pos, _quat, _scale);
         const arr = this.sets[fp.kind].mesh.instanceMatrix.array as Float32Array;
         _mat4.toArray(arr, fp.slot * 16);
-        touched.add(fp.kind);
+        this.sets[fp.kind].markSlot(fp.slot);
 
         if (fp.age > 5.0 || (fp.bounced && Math.hypot(fp.vx, fp.vz) < 0.15 && fp.age > 2.2)) {
           this.flyingPoles.splice(i, 1);
         }
       }
-      for (const k of touched) this.sets[k].mesh.instanceMatrix.needsUpdate = true;
     }
 
     // 2. 3D glass shards (zero CPU cost when inactive)
@@ -1315,13 +1316,13 @@ export class NycProps {
     this.time += dt;
     nycTime.value = this.time;
     this.updateNearTrees();
-    this.flush();
     if (carPos && carVel && dt > 0) {
       this.checkCollisions(carPos, carVel, onImpact);
     }
     if (dt > 0) {
       this.stepPhysics(Math.min(0.05, dt));
     }
+    this.flush();   // after everything that moves or hides a slot this frame (uploads only the written slot ranges)
     if ((this.lightTimer -= dt) <= 0) { this.lightTimer = 0.2; this.assignLights(); }
     const k = Math.min(1, dt * 7);
     for (const s of this.lights) {

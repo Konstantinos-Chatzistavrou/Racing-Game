@@ -394,6 +394,28 @@ def distance_alpha(tree, lo=0.6, span=1.0):
 
 
 # ---------------------------------------------------------------- the tile
+def road_poly(r, g):
+    """One drivable way as drawn: its centreline buffered to the kerb-to-kerb width."""
+    return g.buffer(road_width(r) / 2, quad_segs=3)
+
+
+def road_surface(drive_polys, park_lot, B):
+    """The asphalt as drawn (also used by props.py to keep everything off it): union, round the concave corners (closing:
+    the kerb fillets at intersections, up to ~1.9 m beyond the buffered ways), fill pin holes, add parking lots."""
+    if SNAP > 0.002:
+        drive_polys = [clean(p) for p in drive_polys]
+        park_lot = [clean(p) for p in park_lot]
+    road = unary_union(drive_polys) if drive_polys else Polygon()
+    if not road.is_empty:
+        road = road.buffer(CORNER_R, quad_segs=5).buffer(-CORNER_R, quad_segs=5)
+        road = strip_small_holes(road, 60.0)
+    if park_lot:
+        road = unary_union([road] + [p.simplify(0.1) for p in park_lot])
+    road = clean(polyonly(road.intersection(B)).simplify(0.06, preserve_topology=True))
+    road = unary_union([orient(p, 1.0) for p in polys(road)]) if not road.is_empty else road
+    return road
+
+
 def build_tile(ctx, ix, iy, debug=False):
     x0, y0, x1, y1 = tile_bounds(ix, iy)
     T = box(x0, y0, x1, y1)
@@ -414,7 +436,7 @@ def build_tile(ctx, ix, iy, debug=False):
         if r["tunnel"]:
             continue
         if hw in DRIVE:
-            drive_polys.append(g.buffer(road_width(r) / 2, quad_segs=3))
+            drive_polys.append(road_poly(r, g))
         elif hw == "pedestrian":
             ped_polys.append(g.buffer(max(r.get("width") or 6, 6) / 2, quad_segs=2, cap_style="flat"))
         elif hw in ("footway", "path", "cycleway"):
@@ -429,19 +451,11 @@ def build_tile(ctx, ix, iy, debug=False):
         elif k == "parking": park_lot.append(g)
 
     if SNAP > 0.002:
-        drive_polys = [clean(p) for p in drive_polys]; ped_polys = [clean(p) for p in ped_polys]
+        ped_polys = [clean(p) for p in ped_polys]   # drive_polys / park_lot: in road_surface
         park_p = [clean(p) for p in park_p]; plaza_p = [clean(p) for p in plaza_p]; water_p = [clean(p) for p in water_p]
-        pier_p = [clean(p) for p in pier_p]; park_lot = [clean(p) for p in park_lot]
+        pier_p = [clean(p) for p in pier_p]
 
-    # --- road surface: union, round the concave corners (closing), fill pin holes, add parking lots
-    road = unary_union(drive_polys) if drive_polys else Polygon()
-    if not road.is_empty:
-        road = road.buffer(CORNER_R, quad_segs=5).buffer(-CORNER_R, quad_segs=5)
-        road = strip_small_holes(road, 60.0)
-    if park_lot:
-        road = unary_union([road] + [p.simplify(0.1) for p in park_lot])
-    road = clean(polyonly(road.intersection(B)).simplify(0.06, preserve_topology=True))
-    road = unary_union([orient(p, 1.0) for p in polys(road)]) if not road.is_empty else road
+    road = road_surface(drive_polys, park_lot, B)
 
     # --- land / water
     land = clean(polyonly(unary_union([ctx.land.intersection(B)] + [p.intersection(B) for p in pier_p])))

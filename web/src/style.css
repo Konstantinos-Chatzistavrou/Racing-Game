@@ -97,7 +97,7 @@ body.touch #toast b { font-size: 34px; }
 body.touch #hud-top-left { left: 50%; transform: translateX(-50%); top: calc(34px + env(safe-area-inset-top)); align-items: center; }
 body.touch #perf { font-size: 9px; text-align: center; opacity: .6; }
 body.touch #warn { right: auto; left: calc(8px + env(safe-area-inset-left)); transform: scale(.7); transform-origin: top left; bottom: auto;
-  top: calc(104px + env(safe-area-inset-top)); width: auto; align-items: flex-start; }
+  top: calc(262px + env(safe-area-inset-top)); width: auto; align-items: flex-start; }
 #touch { position: fixed; inset: 0; pointer-events: none; touch-action: none; user-select: none; -webkit-user-select: none;
   -webkit-touch-callout: none; z-index: 5; contain: strict; }
 #touch button { font: 700 12px/1.1 "Inter", system-ui, sans-serif; color: var(--fg); letter-spacing: .06em;
@@ -359,6 +359,7 @@ body.noreset #hud-reset, body.noreset [data-c="reset"] { display: none; }
 #spectate button:hover { background: #ffffff22; }
 body.spectating #dash, body.spectating #warn, body.spectating #laps, body.spectating #help, body.spectating #hud-reset, body.spectating #hud-cam { display: none; }
 body.spectating #board { top: 12px; }
+body.touch.spectating #board { top: calc(54px + env(safe-area-inset-top)); }
 #menu .source-link { font-size: 11px; color: var(--dim); text-decoration: underline; text-underline-offset: 2px; pointer-events: auto; }
 #menu .source-link:hover { color: var(--fg); }
 
@@ -473,5 +474,7 @@ body.spectating #board { top: 12px; }
 #minimap .gps-turn b { color: var(--accent); font-size: 16px; margin-right: 4px; }
 #minimap .gps-turn i { font-style: normal; color: var(--dim); margin-left: 6px; font-variant-numeric: tabular-nums; }
 #minimap .gps-turn[hidden] { display: none; }
-body.touch #minimap { left: 12px; top: 64px; bottom: auto; width: 128px; height: 128px; }
-body.touch #minimap .gps-turn { bottom: auto; top: calc(100% + 6px); }
+/* phones: speedometer (top-left, 96 px), the GPS under it, its turn banner under that; never overlapping */
+body.touch #minimap { left: calc(10px + env(safe-area-inset-left)); top: calc(106px + env(safe-area-inset-top)); bottom: auto; width: 112px; height: 112px; }
+@media (max-height: 360px) { body.touch #minimap { width: 92px; height: 92px; } }
+body.touch #minimap .gps-turn { bottom: auto; top: calc(100% + 6px); left: 0; transform: none; }

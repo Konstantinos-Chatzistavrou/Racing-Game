@@ -1,10 +1,12 @@
 // Photoreal street trees for the near range (~80 m around the camera; farther trees keep the low-poly crowns in
 // props.ts). Per species: a branching skeleton grown from its habit (London planetree, honeylocust, Callery pear, pin
-// oak, littleleaf linden) as bark tubes with the scanned bark (colour + normal), and 240-280 leaf-spray cards (the
-// species' scanned leaves composed on twigs: assets_source/scripts/make_trees.py) over the crown, alpha-tested,
-// lit with normals bent outward from the crown centre (soft, volumetric shading) and darkened towards the inside.
+// oak, littleleaf linden) as bark tubes with the scanned bark (colour + normal), and ~600 leaf-cluster cards (the
+// species' scanned leaves composed on branchlets: assets_source/scripts/make_trees.py) gathered in clumps at the branch tips
+// and over the crown shell, each clump on its own twig, alpha-tested with the coverage kept constant over the mip levels
+// (distant crowns stay dense instead of dissolving into mush), lit with normals bent outward from the crown centre (soft,
+// volumetric shading) and darkened towards the inside of each clump and of the crown.
 import * as THREE from 'three/webgpu';
-import { attribute, hash, instanceIndex, mix, texture, uv, vec3 } from 'three/tsl';
+import { Fn, attribute, dFdx, dFdy, dot, float, hash, instanceIndex, log2, max, mix, texture, uv, vec2, vec3 } from 'three/tsl';
 import type { TreeSpecies } from './props';
 
 interface Habit {
@@ -14,13 +16,15 @@ interface Habit {
   crown: { y0: number; y1: number; r: number; shape: 'dome' | 'vase' | 'teardrop' | 'pyramid' | 'oval' };
   limbs: number; leader: boolean; droop: number;
   cards: number; cardSize: number;
+  /** leaf clumps (branch tips + shell) */
+  clumps: number;
 }
 const HABIT: Record<TreeSpecies, Habit> = {
-  plane: { bark: 'plane', cell: 0, trunkH: 2.6, trunkR: 0.24, crown: { y0: 3.6, y1: 9.4, r: 4.0, shape: 'dome' }, limbs: 5, leader: false, droop: 0, cards: 260, cardSize: 1.85 },
-  locust: { bark: 'furrowed', cell: 1, trunkH: 2.3, trunkR: 0.19, crown: { y0: 4.2, y1: 8.6, r: 3.6, shape: 'vase' }, limbs: 4, leader: false, droop: 0, cards: 280, cardSize: 1.4 },
-  pear: { bark: 'ridged', cell: 2, trunkH: 1.7, trunkR: 0.17, crown: { y0: 2.4, y1: 8.8, r: 2.4, shape: 'teardrop' }, limbs: 5, leader: false, droop: 0, cards: 260, cardSize: 1.5 },
-  oak: { bark: 'furrowed', cell: 3, trunkH: 2.0, trunkR: 0.21, crown: { y0: 2.2, y1: 10.0, r: 3.1, shape: 'pyramid' }, limbs: 9, leader: true, droop: 0.35, cards: 240, cardSize: 1.6 },
-  linden: { bark: 'ridged', cell: 4, trunkH: 2.2, trunkR: 0.19, crown: { y0: 2.9, y1: 9.0, r: 2.8, shape: 'oval' }, limbs: 6, leader: true, droop: 0.1, cards: 250, cardSize: 1.55 },
+  plane: { bark: 'plane', cell: 0, trunkH: 2.6, trunkR: 0.24, crown: { y0: 3.6, y1: 9.4, r: 4.0, shape: 'dome' }, limbs: 5, leader: false, droop: 0, cards: 620, cardSize: 1.25, clumps: 46 },
+  locust: { bark: 'furrowed', cell: 1, trunkH: 2.3, trunkR: 0.19, crown: { y0: 4.2, y1: 8.6, r: 3.6, shape: 'vase' }, limbs: 4, leader: false, droop: 0, cards: 560, cardSize: 1.1, clumps: 52 },
+  pear: { bark: 'ridged', cell: 2, trunkH: 1.7, trunkR: 0.17, crown: { y0: 2.4, y1: 8.8, r: 2.4, shape: 'teardrop' }, limbs: 5, leader: false, droop: 0, cards: 640, cardSize: 1.0, clumps: 44 },
+  oak: { bark: 'furrowed', cell: 3, trunkH: 2.0, trunkR: 0.21, crown: { y0: 2.2, y1: 10.0, r: 3.1, shape: 'pyramid' }, limbs: 9, leader: true, droop: 0.35, cards: 600, cardSize: 1.1, clumps: 50 },
+  linden: { bark: 'ridged', cell: 4, trunkH: 2.2, trunkR: 0.19, crown: { y0: 2.9, y1: 9.0, r: 2.8, shape: 'oval' }, limbs: 6, leader: true, droop: 0.1, cards: 620, cardSize: 1.0, clumps: 44 },
 };
 
 /** Crown radius at height y for a habit (0 outside the crown). */
@@ -37,6 +41,8 @@ function crownR(h: Habit, y: number) {
 }
 
 function rng(seed: number) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
+
+const ATLAS_COLS = 3;   // leaves.webp: 3 x 2 cells of 1024 px (make_trees.py)
 
 class Builder {
   pos: number[] = []; nrm: number[] = []; uv: number[] = []; ao: number[] = []; idx: number[] = [];
@@ -71,7 +77,7 @@ class Builder {
     const cr = Math.cos(roll), sr = Math.sin(roll);
     const u = t.clone().multiplyScalar(cr).addScaledVector(bt, sr), v = t.clone().multiplyScalar(-sr).addScaledVector(bt, cr);
     const bent = c.clone().sub(crownC).normalize().multiplyScalar(0.75).addScaledVector(n, 0.25).normalize();
-    const cu = (cell % 4) / 4, cv = 1 - (Math.floor(cell / 4) + 1) / 2;
+    const cu = (cell % ATLAS_COLS) / ATLAS_COLS, cv = 1 - (Math.floor(cell / ATLAS_COLS) + 1) / 2;
     const corners: [number, number][] = [[-0.5, 0], [0.5, 0], [0.5, 1], [-0.5, 1]];   // card base at the twig end (v = 0)
     for (const side of [1, -1]) {
       const base = this.pos.length / 3;
@@ -79,7 +85,7 @@ class Builder {
         const p = c.clone().addScaledVector(u, x * size).addScaledVector(v, (y - 0.35) * size);
         this.pos.push(p.x, p.y, p.z);
         this.nrm.push(bent.x, bent.y, bent.z);
-        this.uv.push(cu + (side > 0 ? x + 0.5 : 0.5 - x) * 0.25, cv + y * 0.5);
+        this.uv.push(cu + (side > 0 ? x + 0.5 : 0.5 - x) / ATLAS_COLS, cv + y * 0.5);
         this.ao.push(shade);
       }
       if (side > 0) this.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
@@ -134,18 +140,32 @@ export function buildTree(sp: TreeSpecies): { bark: THREE.BufferGeometry; leaves
     }
     tips.push(end);
   }
-  // leaf cards: points in the crown shell (0.55..1.0 of the envelope), denser outside, facing outwards
+  // Leaf clumps: at every branch tip, plus points on the crown shell (0.7-0.95 of the envelope) up to h.clumps, each joined to
+  // the nearest tip by a twig. Cards gather around the clump centres (denser at the core), face outward with scatter.
   const ext = h.crown.y1 - h.crown.y0;
-  for (let k = 0, n = 0; n < h.cards && k < h.cards * 30; k++) {
-    const y = h.crown.y0 + ext * R(), cr = crownR(h, y);
-    if (cr < 0.25) continue;
-    const a = R() * Math.PI * 2, d = cr * Math.pow(0.55 + 0.45 * R(), 0.6);
+  const clumps: { c: THREE.Vector3; r: number }[] = tips.map((t) => ({ c: t.clone(), r: 0.75 + 0.35 * R() }));
+  for (let k = 0; clumps.length < h.clumps && k < h.clumps * 40; k++) {
+    const y = h.crown.y0 + ext * (0.05 + 0.92 * R()), cr = crownR(h, y);
+    if (cr < 0.35) continue;
+    const a = R() * Math.PI * 2, d = cr * (0.7 + 0.25 * R());
     const c = V(Math.cos(a) * d, y, Math.sin(a) * d);
-    const out = c.clone().sub(V(0, y - 0.6, 0)).normalize();
-    const nrm = out.clone().add(V((R() - 0.5) * 0.9, (R() - 0.3) * 0.9, (R() - 0.5) * 0.9)).normalize();
-    const depth = d / cr;   // 1 = outer shell
-    L.card(c, nrm, R() * Math.PI * 2, h.cardSize * (0.8 + 0.4 * R()), h.cell, crownC, 0.42 + 0.58 * depth);
-    n++;
+    if (clumps.some((q) => q.c.distanceToSquared(c) < 0.8)) continue;
+    let near = tips[0], nd = Infinity;
+    for (const t of tips) { const dd = t.distanceToSquared(c); if (dd < nd) { nd = dd; near = t; } }
+    const mid = near.clone().lerp(c, 0.5); mid.y += 0.2 - h.droop * 0.4;
+    B.tube([near, mid, c], 0.035, 0.012, 4);
+    clumps.push({ c, r: 0.65 + 0.4 * R() });
+  }
+  for (let n = 0; n < h.cards; n++) {
+    const cl = clumps[n % clumps.length];
+    // a point in the clump (radius^0.7: denser towards the core), clamped into the crown envelope
+    const u = R() * 2 - 1, th = R() * Math.PI * 2, rr = cl.r * Math.pow(R(), 0.7), sq = Math.sqrt(1 - u * u);
+    const c = cl.c.clone().add(V(sq * Math.cos(th) * rr, u * rr * 0.8, sq * Math.sin(th) * rr));
+    const out = c.clone().sub(V(0, (h.crown.y0 + h.crown.y1) / 2 - 0.6, 0)).normalize();
+    const nrm = out.clone().add(V((R() - 0.5) * 1.1, (R() - 0.3) * 1.0, (R() - 0.5) * 1.1)).normalize();
+    // shade: clump interior and crown interior darker (light reaches the outer leaves)
+    const inClump = rr / cl.r, cr = Math.max(0.3, crownR(h, c.y)), inCrown = Math.min(1, Math.hypot(c.x, c.z) / cr);
+    L.card(c, nrm, R() * Math.PI * 2, h.cardSize * (0.8 + 0.4 * R()), h.cell, crownC, 0.35 + 0.35 * inClump + 0.3 * inCrown);
   }
   return { bark: B.geometry(), leaves: L.geometry(), bark_kind: h.bark };
 }
@@ -170,7 +190,13 @@ export function leafMaterial() {
   const ao = attribute('ao', 'float');
   const tone = mix(vec3(0.86, 0.95, 0.82), vec3(1.08, 1.04, 0.92), hash(instanceIndex));
   m.colorNode = t.rgb.mul(tone).mul(ao.mul(ao).mul(0.85).add(0.15));
-  m.opacityNode = t.a;
+  // Alpha-tested foliage thins out with distance: a mip level averages leaf and gap, so fewer texels pass the test. The
+  // alpha is scaled up with the mip level actually sampled (from the uv derivatives), which keeps the covered area constant.
+  m.opacityNode = Fn(() => {
+    const px = uv().mul(vec2(3072, 2048));
+    const lod = max(float(0), log2(max(dot(dFdx(px), dFdx(px)), dot(dFdy(px), dFdy(px)))).mul(0.5));
+    return t.a.mul(lod.mul(0.28).add(1));
+  })();
   m.alphaTest = 0.45;
   leafMat = m;
   return m;

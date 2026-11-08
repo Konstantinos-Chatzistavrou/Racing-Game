@@ -18,6 +18,7 @@ import * as THREE from 'three/webgpu';
 import RAPIER from '@dimforge/rapier3d-compat';
 import type { BuildingColliderBox } from './props';
 import { GROUP_CAMERA_ONLY } from '../../physics/world';
+import { instanceSlots } from '../instancing';
 
 /** Membership bit 0x8: hit by cars and the world, ignored by GROUP_VIEW rays (camera, AI ground). */
 export const GROUP_RUBBLE = (0x0008 << 16) | 0xffff;
@@ -139,13 +140,12 @@ export class Breaches {
 
   constructor(private scene: THREE.Scene, private pw: { world: RAPIER.World }, private host: BreachHost) {
     this.portalMat.name = 'breach_portal';
-    this.pool = new THREE.InstancedMesh(this.box, this.looseMat, Breaches.POOL);
+    this.pool = new THREE.InstancedMesh(this.box, this.looseMat, instanceSlots(Breaches.POOL));
     this.pool.name = 'breach_pieces';
     for (let i = 0; i < Breaches.POOL; i++) { this.pool.setMatrixAt(i, this.zero); this.pool.setColorAt(i, new THREE.Color(1, 1, 1)); this.free.push(Breaches.POOL - 1 - i); }
     this.pool.count = 1;                 // one degenerate instance: always drawn, so its pipeline is built at load time
     this.pool.frustumCulled = false;
     this.pool.renderOrder = ORDER_EARLY;
-    this.pool.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     scene.add(this.pool);
   }
 

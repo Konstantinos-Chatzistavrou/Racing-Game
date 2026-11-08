@@ -47,3 +47,31 @@ frame medians are vsync-quantised to 16.7 ms so GPU time is the useful number):
 
 Preset switching while driving (`drive.mjs switch`): worst frame 50 ms over 6 switches; scale change
 50-67 ms; 0 pipelines created after loading (68 at start).
+
+## Race CPU cost: buffer uploads and draw calls (2026-11-08)
+
+Measured with `HEADLESS=1 MOBILE=1 node web/tools/drive.mjs "<url>?menu=1&quality=high" <out> raceperf` (a 6-car, 3-lap race in
+the phone viewport, the player's car on a pure-pursuit autopilot; CPU profile, GPU timestamps, frame intervals; RP_JS runs page
+code at the end, e.g. a `writeBuffer` counter). Note: a DevTools screenshot stalls the page ~0.5 s, so `raceperf` takes none
+unless RP_SHOTS=1.
+
+- **three.js r186 re-uploads every `DynamicDrawUsage` attribute in full at every draw**, changed or not, and reads the
+  matrices of an InstancedMesh with <= 1024 instances from a uniform array that is re-uploaded every frame. The NYC prop
+  sets (19,000 trees, 6,000 lamps + pools, ...) were 3.2 MB and ~2,100 `writeBuffer` calls per frame. Now: static usage,
+  uploads only after `needsUpdate` with the written slot range (`InstanceSet` tracks it), every instanced mesh at least
+  1,025 slots (`instanceSlots()`, scene/instancing.ts). 0.3 MB per frame.
+- **AI cars were 46 meshes each** (230 of 275 main-pass draws, and all of them in the headlight shadow pass). Now: only the
+  shell and tyres cast (12 casters), small parts drawn within 30 m only, the four wheels merged per material and spun in
+  the vertex shader (`mergeSpinningWheels`, scene/merge.ts). Main pass 275 -> ~160 draws, shadow pass 134 -> ~45 per frame.
+- The near-tree swap scanned every loaded tree every 250 ms; now only the tiles in range, and nothing is uploaded unless a
+  tree entered or left the range.
+
+| phone viewport, laptop | before | after |
+|---|---|---|
+| main thread per frame | 20.2 ms | 15.0 ms |
+| render() CPU median / p95 | 14.4 / 28.3 ms | 10.5 / 18.4 ms |
+| GPU median (0.38 MP) | 20.1 ms | 20.0 ms (denser near trees included) |
+
+Phones now render into a canvas at up to 2x CSS px with the tuned render scale (~0.72 MP to start, sharpened up to the panel)
+instead of a 1x canvas stretched 2.6x by the browser; the tuner lowers that resolution (down to the old picture) before it
+drops any effect. All presets are rendered for real during loading (a mid-race medium -> low fallback built pipelines: 6.5 s).

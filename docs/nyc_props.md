@@ -86,3 +86,12 @@ cd web && npx vite --port 5209
 CDP_PORT=9409 flock /tmp/racing-gpu.lock node tools/nyc_props_shots.mjs http://127.0.0.1:5209/nyc_props_test.html /tmp/out shots @shots.json
 CDP_PORT=9409 flock /tmp/racing-gpu.lock node tools/nyc_props_shots.mjs http://127.0.0.1:5209/nyc_props_test.html /tmp/out perf
 ```
+
+## Clear of the asphalt as drawn (2026-11-08)
+
+Every prop's ground footprint (`props.FOOT`: the mesh extents at ground level, rotated by its yaw, trees scaled) keeps 0.35 m from
+`ground.road_surface`, the asphalt exactly as ground.py draws it: the ways buffered to their width PLUS the 4.5 m kerb fillets at
+inside corners (up to ~1.9 m beyond the buffered ways), closed medians and parking lots. Props closer are pushed back onto the
+sidewalk (away from the nearest asphalt edge, at most 3 m) or dropped (would land in a building, or stand on a closed median).
+Before: 942 of 1,040 signal poles, 130 trees, 83 scaffolds, 55 lamps and others reached onto the drawn road. Check any time with
+`python3 tools/nyc/check_road_clear.py` (exit 1 if anything does).
