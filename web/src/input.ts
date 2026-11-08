@@ -37,6 +37,7 @@ export class Input {
   onLights = () => {};
   onGarage = () => {};
   onPause = () => {};
+  onMap = () => {};
   /** an assist quick key (1 2 3 5) changed input.assists */
   onAssistKey = () => {};
   /** the active device changed (HUD help line, menus) */
@@ -56,6 +57,7 @@ export class Input {
         case 'KeyR': this.onReset(); break;
         case 'KeyC': this.onCamera(); break;
         case 'KeyH': this.onHud(); break;
+        case 'KeyM': this.onMap(); break;
         case 'KeyL': this.onLights(); break;
         case 'KeyG': this.onGarage(); break;
         case 'Digit1': this.assists.abs = !this.assists.abs; this.onAssistKey(); break;
@@ -268,7 +270,7 @@ export class Input {
     }
     if (this.source === 'wheel') return `${this.wheel?.model.name ?? 'Wheel'} &nbsp; · &nbsp; paddles shift &nbsp; · &nbsp; calibrate and set force feedback in <b>Controls</b> on the main menu`;
     if (this.source === 'touch') return '';
-    return `${kb('W')}${kb('S')} Throttle / Brake &nbsp; ${kb('A')}${kb('D')} Steer &nbsp; ${kb('Q')}${kb('E')} Shift &nbsp; ${kb('Space')} Handbrake &nbsp; ${kb('R')} Recover / Repair &nbsp; ${kb('C')} Camera &nbsp; ${kb('L')} Lights &nbsp; ${kb('G')} Menu &nbsp; ${kb('1-3,5')} Assists &nbsp; ${kb('H')} Hide HUD`;
+    return `${kb('W')}${kb('S')} Throttle / Brake &nbsp; ${kb('A')}${kb('D')} Steer &nbsp; ${kb('Q')}${kb('E')} Shift &nbsp; ${kb('Space')} Handbrake &nbsp; ${kb('R')} Recover / Repair &nbsp; ${kb('C')} Camera &nbsp; ${kb('L')} Lights &nbsp; ${kb('G')} Menu &nbsp; ${kb('M')} Map &nbsp; ${kb('1-3,5')} Assists &nbsp; ${kb('H')} Hide HUD`;
   }
 
   /**

@@ -33,6 +33,7 @@ import { Cloud } from './cloud';
 import { RankedLink } from './ranked';
 import { FREE_ROAM_XP_PER_KM, raceReward } from './progression';
 import { DrivingLine } from './driving-line';
+import { Minimap, type Blip } from './minimap';
 import { Loader, steadyFrames } from './loading';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { RemoteCars } from './net';
@@ -342,6 +343,7 @@ async function main() {
   };
   /** Fresh car on the start line, repaired, traffic back at its grid slots, lap counter at zero. */
   const resetCar = () => {
+    car.body.setEnabled(true);   // paused while spectating (the city streams around the watched car then)
     spawn(); core.repair(); damage.repair(); input.hold = true; settledShowroom = 0;
     syncPose();
     ai.reset();
@@ -713,6 +715,19 @@ async function main() {
   menu.assists = assistSet;
   applyLook();
   const drivingLine = new DrivingLine(scene, ai);
+  // GPS minimap: the tiles' road graphs (loaded in the background), the race route, rivals / players
+  const minimap = new Minimap(document.getElementById('hud')!);
+  minimap.setRoute(route.samples);
+  input.onMap = () => minimap.show(!minimap.visible);
+  if (nyc) void (async () => {
+    try {
+      const idx = await fetch('/assets/nyc/tiles/index.json').then((r) => r.json()) as { tiles: Record<string, { files: string[] }> };
+      const names = Object.entries(idx.tiles).filter(([, t]) => t.files.some((f) => f.endsWith('.graph.json'))).map(([k]) => k);
+      for (let i = 0; i < names.length; i += 6)   // a few at a time: never competes with the city tiles for long
+        await Promise.all(names.slice(i, i + 6).map((k) => fetch(`/assets/nyc/tiles/${k}.graph.json`).then((r) => r.json()).then((g) => minimap.addGraph(g)).catch(() => {})));
+    } catch { /* no map: the minimap shows the route only */ }
+  })();
+  const mmFwd = new THREE.Vector3();
   drivingLine.setCar(applyMods(physics[sel.car], modsOf(sel)));
   // every input device: force feedback (WebHID wheels), the Controls screen, pad / keyboard menu navigation
   const ffb = new ForceFeedback();
@@ -825,6 +840,7 @@ async function main() {
     specIdx = 0; specName = '';
     specRetarget();
     specEl.hidden = false;
+    car.body.setEnabled(false);   // out of the race: parked; its ground may unload while the city follows the watched car
   }
   function hideSpectate() { specEl.hidden = true; }
   function specRetarget() {
@@ -1284,6 +1300,16 @@ async function main() {
     if (ranked && (state === 'race' || state === 'spectate' || state === 'results') && !myDnf) ranked.pos(now, car.body.translation(), Math.abs(car.out[OUT.speed]));
     if (state === 'race' && raceLaps() === 0) freeRoamM += Math.min(Math.abs(car.out[OUT.speed]), 90) * frame;
     drivingLine.update(assistSet.line, state === 'race' || state === 'countdown', pos, car.out[OUT.speed]);
+    if (driving() && state !== 'paused' && state !== 'busy') {
+      const watching = state === 'spectate';   // spectating: the map follows the watched car (no GPS directions)
+      mmFwd.set(0, 0, 1).applyQuaternion(watching ? specQuat : quat);
+      const blips: Blip[] = [];
+      if (ai.mode === 'race') for (const c of ai.cars) blips.push({ x: c.pos.x, z: c.pos.z, color: '#ff4d6d' });
+      if (remote) for (const id of remote.ids()) { const r = remote.get(id); if (r) blips.push({ x: r.root.position.x, z: r.root.position.z, color: '#4dd2ff' }); }
+      const L = lap?.routeLength ?? route.length_m;
+      if (watching) minimap.update(now, specPos, mmFwd, specOut[OUT.speed], null, blips);
+      else minimap.update(now, pos, mmFwd, Math.abs(car.out[OUT.speed]), lap ? ((lap.distance % L) + L) % L : null, blips);
+    }
     menuNav.paused = !!menu.ctl?.calibrating;
     menuNav.update(now);
     if (menu.screen === 'controls') menu.ctl?.tick();
@@ -1305,7 +1331,7 @@ async function main() {
       carBox.centre = [shape.boxCentre[0] - visual.cg.x, shape.boxCentre[1] - visual.cg.y, shape.boxCentre[2] - visual.cg.z];
       streetProps.carBox = driving() ? carBox : null;
     }
-    nyc?.update(pos, frame, driving() ? visual.velocity : undefined, (impulse, kind) => {
+    nyc?.update(state === 'spectate' ? specPos : pos, frame, driving() && state !== 'spectate' ? visual.velocity : undefined, (impulse, kind) => {   // spectating: detail around the watched car
       const lv = car.body.linvel();
       const s = Math.hypot(lv.x, lv.z);
       if (s > 1) {

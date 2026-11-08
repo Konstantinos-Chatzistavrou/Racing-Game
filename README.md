@@ -18,7 +18,7 @@ npm run dev          # http://127.0.0.1:5173
 URL options: `?scale=0.75` (render resolution), `?bloom=0`, `?aa=0`, `?shadows=0`.
 
 Controls: W/S throttle and brake · A/D steer · Q/E shift · Space handbrake · Shift clutch ·
-R recover · G menu · C camera · 1 ABS · 2 TC · 3 ESC · 5 auto gearbox · H hide HUD. Controllers, steering wheels and
+R recover · G menu · C camera · M map · 1 ABS · 2 TC · 3 ESC · 5 auto gearbox · H hide HUD. Controllers, steering wheels and
 phones work too (next section).
 
 ## Controllers, wheels, phones
@@ -111,6 +111,10 @@ your avatar in a party lobby and in your car on the other players' screens.
 
 **The Shop**: single player shows what each level unlocks; online sells cars, upgrade stages and driver gear (helmets
 and suits) for credits once your online level allows them. A DNF earns nothing.
+
+**GPS minimap** (bottom left, M to hide): the real streets heading-up around the car, zooming out with speed, the
+race route as the GPS line with the next stretch lit, rivals and players as dots, and turn-by-turn directions with the
+street name ("↰ 7th Avenue · 250 m"). Spectating, the map and the city's detail follow the watched car.
 
 **Two careers.** *Single player*: XP from races and free roam; levels unlock cars, upgrade stages and driver gear
 for free. *Online*: XP and credits come only from **ranked party races** (6+ players who actually race, at most 2 per
