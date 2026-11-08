@@ -135,13 +135,10 @@ RS_TEST(reference) {
     test::check_range("skidpad 300 ft           [C7 Z51 1.03-1.11 g]", gt.skidpad_g, 1.00, 1.10, "g");
     test::check_range("top speed                [C7 Z51 ~290 km/h]", gt.vmax_kmh, 275, 305, "km/h");
 
-    // The variants must keep their order: Touring < GT < GT-R on every measure.
-    Sheet tour = measure(load_car_config(test::data_path("cars/vela_touring.json")));
-    Sheet gtr = measure(load_car_config(test::data_path("cars/vela_gtr.json")));
-    // Off the line all three are traction-limited (launch technique decides hundredths), so the
-    // power order is checked where power matters: 0-200 km/h.
-    test::check("0-60 mph: Touring slowest", tour.t60 > gt.t60 && tour.t60 > gtr.t60);
-    test::check("0-200 km/h: Touring slower than GT slower than GT-R", tour.t200 > gt.t200 && gt.t200 > gtr.t200);
-    test::check("braking: Touring longer than GT longer than GT-R", tour.brake60 > gt.brake60 && gt.brake60 > gtr.brake60);
-    test::check("grip: Touring < GT < GT-R", tour.skidpad_g < gt.skidpad_g && gt.skidpad_g < gtr.skidpad_g);
+    // The track car must stay ahead of the road car: more power, less mass, more downforce. Off the line both are
+    // traction-limited (launch technique decides hundredths), so power is checked where it matters: 0-200 km/h.
+    Sheet kes = measure(load_car_config(test::data_path("cars/kestrel_gt.json")));
+    test::check("0-200 km/h: Kestrel GT quicker than Vela GT", kes.t200 < gt.t200);
+    test::check("braking: Kestrel GT shorter than Vela GT", kes.brake60 < gt.brake60);
+    test::check("top speed: Vela GT faster (less drag)", gt.vmax_kmh > kes.vmax_kmh);
 }

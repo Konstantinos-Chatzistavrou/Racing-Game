@@ -109,7 +109,7 @@ try {
     if (scenario === 'menu') {
       console.log('garage', await click('[data-act=garage-open]')); await sleep(2500); await shot('m2_garage.png');
       console.log('no mode picker in garage:', await evaluate(`!document.querySelector('[data-act=mode]') && !document.querySelector('#server')`));
-      await click(`[data-act=car][data-v=${process.env.MENU_CAR ?? 'vela_gtr'}]`); await sleep(500);
+      await click(`[data-act=car][data-v=${process.env.MENU_CAR ?? 'kestrel_gt'}]`); await sleep(500);
       await click('[data-act=paint][data-v="#1d4ed8"]'); await click('[data-act=finish][data-v=metallic]');
       if (!process.env.NOMODS) { await click('[data-act=mod][data-k=engine][data-v="2"]'); await click('[data-act=mod][data-k=tyres][data-v="1"]'); }
       await sleep(2500); await shot('m3_garage_gtr.png');
@@ -230,7 +230,7 @@ try {
     await click('[data-act=as-preset][data-v=beginner]'); await click('[data-act=settings-back]');
     await click('[data-act=shop-open]'); await sleep(300); await shot('a3_shop.png');
     console.log('shop', await g(`[...document.querySelectorAll('.scard')].map((c) => c.querySelector('b').textContent + ': ' + c.querySelector('button').textContent)`));
-    console.log('buy touring', await click('[data-act=buy-car][data-v=vela_touring]'), await g(`document.querySelector('.pnote')?.textContent`), await g(`document.querySelector('.wallet-pill')?.textContent`));
+    console.log('buy kestrel (expect: not enough)', await click('[data-act=buy-car][data-v=kestrel_gt]'), await g(`document.querySelector('.pnote')?.textContent`), await g(`document.querySelector('.wallet-pill')?.textContent`));
     console.log('buy tyres S1', await click('[data-act=buy-mod][data-k=tyres][data-v="1"]'), await g(`document.querySelector('.pnote')?.textContent`), await g(`document.querySelector('.wallet-pill')?.textContent`));
     await click('[data-act=garage-open]'); await sleep(1500);
     console.log('garage cars', await g(`[...document.querySelectorAll('.car b')].map((e) => e.textContent)`), 'locked pips', await g(`document.querySelectorAll('.pip.locked').length`));

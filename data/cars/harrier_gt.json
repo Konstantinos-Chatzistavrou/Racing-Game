@@ -1,7 +1,7 @@
 {
   "schema": "car/1",
   "name": "Harrier GT",
-  "notes": "Harrier GT: vela_gtr numbers (mass, power, grip) with its own body (modified from '2018 Mercedes C-Coup\u00e9 DTM' by Dave Love SketchFab (CC BY 4.0, CREDITS.md)). Starting values: tune with feel.",
+  "notes": "Harrier GT: the former Vela GT-R numbers (mass, power, grip) with its own body (modified from '2018 Mercedes C-Coup\u00e9 DTM' by Dave Love SketchFab (CC BY 4.0, CREDITS.md)). Starting values: tune with feel.",
   "chassis": {
     "mass_kg": 1390,
     "cg_height_m": 0.47,

@@ -78,7 +78,7 @@ export function statsOf(d: any): Stats {
 
 const KEY = 'nr.garage.v1';
 export function loadSelection(cars: CatalogCar[], params: URLSearchParams): Selection {
-  const sel: Selection = { car: cars[1]?.id ?? cars[0].id, paint: {}, finish: 'gloss', mods: {}, mode: 'race', laps: 3, name: `Driver ${Math.floor(1000 + Math.random() * 9000)}`, realism: true };
+  const sel: Selection = { car: cars.find((c) => c.id === 'vela_gt')?.id ?? cars[0].id, paint: {}, finish: 'gloss', mods: {}, mode: 'race', laps: 3, name: `Driver ${Math.floor(1000 + Math.random() * 9000)}`, realism: true };
   try {
     const s = JSON.parse(localStorage.getItem(KEY) ?? 'null');
     if (s && typeof s === 'object') {

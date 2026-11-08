@@ -176,7 +176,8 @@ screens in `web/src/menu.ts`, data in `web/src/garage.ts` + `data/cars/catalog.j
   There is no adaptive change while driving or in the garage (the old in-race adaptation is gone: it was the visible
   quality transition). A drive costs more than the parked view, hence the 40 fps bar. Auto / High / Medium / Low
   in the title menu; `?scale=` / `?quality=` still pin for the test tools.
-- **Cars**: Touring, GT, GT-R share the v3 body (`data/cars/vela_gt.visual.json`) and differ in physics JSON.
+- **Cars**: Vela GT (v3 body, `data/cars/vela_gt.visual.json`), Kestrel GT and Harrier GT (own bodies). The Vela GT Touring and GT-R
+  variants (same body, different numbers) were removed on 2026-11-08.
   Changing car or tuning rebuilds the core car and Rapier body at session start; paint and finish only touch the
   paint material.
 - **Tuning** (`applyMods`): engine +5 % torque per stage, tyres +5 % grip, weight -3 % mass and inertia, aero

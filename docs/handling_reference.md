@@ -37,6 +37,9 @@ speed = terminal speed in top gear.
 |---|---|---|---|---|---|---|
 | Corvette C7 Z51 (real) | 3.8-3.9 s | - | - | 31.7-32.6 m | 1.03-1.11 g | ~290 km/h |
 | Vela GT | 3.92 s | 4.07 s | 12.77 s | 31.7 m | 1.04 g | 289 km/h |
+(The Touring and GT-R variants below were removed from the game on 2026-11-08; the core test now checks the Kestrel GT
+against the Vela GT instead. Their rows stay as the record of that calibration.)
+
 | Vela GT Touring | 4.44 s | 4.64 s | 15.85 s | 33.3 m | 0.99 g | 298 km/h |
 | Vela GT-R | 3.99 s | 4.13 s | 11.09 s | 29.8 m | 1.11 g | 279 km/h |
 AI race after the change: 6/6 finish 2 laps, best laps 73.8-74.1 s (was 74.2-75.2 s).

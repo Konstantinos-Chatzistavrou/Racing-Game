@@ -1008,7 +1008,7 @@ async function main() {
     if (!racePaid) {
       racePaid = true;
       const ranked = rank(st), pos = ranked.findIndex((x) => x.you) + 1;
-      earned = wallet.earn(Wallet.racePayout(pos, raceLaps(), !!myDnf, lapTimes.length), myDnf ? 'race · DNF' : `race · P${pos} of ${ranked.length}`);
+      earned = wallet.earn(Wallet.racePayout(pos, raceLaps(), !!myDnf), myDnf ? 'race · DNF' : `race · P${pos} of ${ranked.length}`);
     }
     menu.showResults({ total, best: lapTimes.length ? Math.min(...lapTimes) : 0, laps: lapTimes, laps_target: raceLaps(), standings: st,
       routeLength: lap?.routeLength ?? route.length_m, online: sel.mode === 'online', earned });

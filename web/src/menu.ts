@@ -450,7 +450,7 @@ export class Menu {
       <h2>${me?.dnf ? `Did not finish${me.why ? ' · ' + esc(me.why) : ''}` : ranked.length > 1 ? `You finished ${ord(pos)}` : 'Race Complete'}</h2>
       <div class="big ${pos === 1 && !me?.dnf ? 'win' : ''}">${me?.dnf ? 'DNF' : ranked.length > 1 ? `P${pos}<small> / ${ranked.length}</small>` : formatLap(r.total)}</div>
       <div class="dim">${me?.dnf ? `${r.laps.length} of ${r.laps_target} laps` : `${formatLap(r.total)} · ${r.laps_target} lap${r.laps_target > 1 ? 's' : ''}`} · Best lap <b class="best-inline">${formatLap(r.best)}</b></div>
-      ${r.earned ? `<div class="earned center">+${fmt(r.earned)} <span class="dim">· ${fmt(this.wallet.credits)} total</span></div>` : ''}
+      ${r.earned ? `<div class="earned center">+${fmt(r.earned)} <span class="dim">· ${fmt(this.wallet.credits)} total</span></div>` : me?.dnf ? '<div class="dim center">No prize money for a DNF</div>' : ''}
       ${table}
       <div class="rows">${rows}</div>
       <div class="btns">${btns}</div>

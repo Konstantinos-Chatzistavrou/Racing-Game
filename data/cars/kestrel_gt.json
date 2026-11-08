@@ -1,7 +1,7 @@
 {
   "schema": "car/1",
   "name": "Kestrel GT",
-  "notes": "Track-bred coupe on the Kestrel GT body (docs/car_model_v4.md): Vela GT-R numbers (mass, power, grip) with its own looks. Starting values, tune with feel.",
+  "notes": "Track-bred coupe on the Kestrel GT body (docs/car_model_v4.md): the former Vela GT-R numbers (mass, power, grip) with its own looks. Starting values, tune with feel.",
   "chassis": {
     "mass_kg": 1390,
     "cg_height_m": 0.47,

@@ -6,7 +6,7 @@
 import { MOD_KEYS, type CatalogCar, type ModKey, type Mods, type Selection } from './garage';
 
 export const STARTER_CAR = 'vela_gt';
-export const STARTING_CREDITS = 35_000;
+export const STARTING_CREDITS = 5_000;
 /** Upgrade stage prices (stage 1, 2, 3). Buying a stage also buys the ones below it. */
 export const MOD_PRICES: Record<ModKey, number[]> = {
   engine: [8_000, 18_000, 35_000],
@@ -21,7 +21,7 @@ const LAP_FACTOR: Record<number, number> = { 1: 1, 3: 2.4, 5: 3.6, 10: 6.5 };
 export const FREE_ROAM_PER_KM = 400;
 
 export interface WalletData { credits: number; cars: string[]; mods: Record<string, Mods> }
-const KEY = 'nr.wallet.v1';
+const KEY = 'nr.wallet.v2';   // v1 (35,000 Cr start, paid DNFs) lived for one day: everyone starts again
 
 export const fmt = (n: number) => `${Math.round(n).toLocaleString('en-US')} Cr`;
 
@@ -114,9 +114,9 @@ export class Wallet {
   }
 
   /** Race payout: position 1-based among `field` cars, or dnf with the laps done. */
-  static racePayout(pos: number, laps: number, dnf: boolean, lapsDone: number) {
+  static racePayout(pos: number, laps: number, dnf: boolean) {
     const f = LAP_FACTOR[laps] ?? Math.max(1, laps * 0.65);
-    if (dnf) return Math.round(1_000 + 1_500 * lapsDone);
+    if (dnf) return 0;   // did not finish: no prize money
     return Math.round(PAYOUT[Math.min(PAYOUT.length - 1, Math.max(0, pos - 1))] * f);
   }
 }
