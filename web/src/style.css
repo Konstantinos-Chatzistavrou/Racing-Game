@@ -361,3 +361,31 @@ body.spectating #dash, body.spectating #warn, body.spectating #laps, body.specta
 body.spectating #board { top: 12px; }
 #menu .source-link { font-size: 11px; color: var(--dim); text-decoration: underline; text-underline-offset: 2px; pointer-events: auto; }
 #menu .source-link:hover { color: var(--fg); }
+
+/* ---- controls -------------------------------------------------------------------------------- */
+#menu[data-screen="controls"] { background: #04060ad0; }
+#menu .controls-card { width: min(780px, 100%); }
+#menu .controls-card .opts { margin: 8px 0; flex: none; }
+#menu .controls-card .lobby-foot { display: flex; justify-content: space-between; gap: 10px; margin-top: 18px; }
+#menu .controls-card p.small-note { margin: 6px 0; line-height: 1.45; }
+#menu .controls-card h4 { margin: 14px 0 6px; font-size: 12px; letter-spacing: .1em; }
+#menu .dev { display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; margin-bottom: 6px; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; font-size: 13px; min-width: 0; }
+#menu .dev.on { border-color: var(--accent); }
+#menu .dev .dim { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#menu .binds { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 4px 14px; margin: 8px 0; font-size: 13px; }
+#menu .bind { display: flex; align-items: center; gap: 8px; }
+#menu kbd { display: inline-block; min-width: 22px; text-align: center; padding: 2px 6px; border-radius: 5px; border: 1px solid #ffffff38; background: #ffffff10; font: 700 11px ui-monospace, monospace; white-space: nowrap; }
+#menu .meters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 8px 0; font-size: 11px; }
+#menu .meters > div { display: flex; flex-direction: column; gap: 4px; }
+#menu .meters .bar.mid::after { content: ""; position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: #ffffff60; }
+#menu .calib { padding: 14px; border: 1px solid var(--accent); border-radius: var(--r); background: #ff2d5512; }
+#menu .cal-prompt { font-size: 18px; font-weight: 800; margin: 4px 0 8px; }
+#menu .cal-live { font: 13px ui-monospace, monospace; color: var(--ok); min-height: 18px; }
+#menu .field.slider input { flex: 1; max-width: 320px; accent-color: var(--accent); pointer-events: auto; }
+#menu .field.slider b { min-width: 42px; font-variant-numeric: tabular-nums; }
+/* controller / keyboard focus ring (menus driven by a pad) */
+#menu .nav-focus { outline: 2px solid #fff; outline-offset: 3px; box-shadow: 0 0 0 5px #ff2d5560; }
+@media (max-width: 640px) { #menu .meters { grid-template-columns: 1fr 1fr; } }
+#touch .tilt-only { display: none; }
+#touch.tilt .tilt-only { display: inline-block; }
+#touch.tilt .steer { display: none; }

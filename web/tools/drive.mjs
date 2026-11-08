@@ -1,6 +1,6 @@
 // Drives the game in the system Chrome with WebGPU enabled (Linux needs the flags) through the
 // DevTools protocol: load, idle, full throttle, brake. Prints telemetry + fps, saves screenshots.
-// Usage: node tools/drive.mjs [url] [outdir] [straight|crash|mobile|bench|profile|night|menu|race6|follow|dnf|poles|walls]   (parties: tools/party_test.mjs, tools/party_game_test.mjs)   (CDP_PORT=9334 to change the DevTools port)
+// Usage: node tools/drive.mjs [url] [outdir] [straight|crash|mobile|bench|profile|night|menu|race6|follow|dnf|poles|walls|devices]   (parties: tools/party_test.mjs, tools/party_game_test.mjs)   (CDP_PORT=9334 to change the DevTools port)
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -134,6 +134,85 @@ try {
       await click('[data-act=modes]'); await sleep(300); await click('[data-act=start-free]'); await sleep(4000);
       console.log('free roam (expect no rivals, no board):', await evaluate(`JSON.stringify({ state: window.__game.state, ai: window.__game.ai.mode, board: !document.getElementById('board').hidden })`));
     }
+  }
+  if (scenario === 'devices') {
+    // Every input device without hardware (run with ?menu=1): fake Gamepad API objects for an Xbox pad, a DualSense and a
+    // Logitech G29 wheel (non-standard mapping, pedals resting at +1). Menu navigation with the pad, driving with each
+    // device, Start pauses / resumes, the wheel calibration wizard driven by the wheel alone, the Controls screen.
+    await evaluate(`(() => { window.__pads = []; window.__rumble = [];
+      Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => window.__pads });
+      window.__mk = (id, mapping, nAxes, nButtons, index = 0) => ({ id, index, mapping, connected: true, timestamp: 0,
+        axes: new Array(nAxes).fill(0), buttons: Array.from({ length: nButtons }, () => ({ pressed: false, touched: false, value: 0 })),
+        vibrationActuator: { type: 'dual-rumble', playEffect: (t, o) => { window.__rumble.push(o); return Promise.resolve('complete'); } } });
+      window.__btn = (i, on, pad = 0) => { const b = window.__pads[pad].buttons[i]; b.pressed = on; b.value = on ? 1 : 0; };
+      return 1; })()`);
+    const press = async (i, pad = 0) => { await evaluate(`(__btn(${i}, true, ${pad}), 1)`); await sleep(250); await evaluate(`(__btn(${i}, false, ${pad}), 1)`); await sleep(250); };
+    const st = () => evaluate(`JSON.stringify({ state: window.__game.state, screen: window.__game.menu().screen, focus: document.querySelector('.nav-focus')?.dataset.act ?? null,
+      device: window.__game.input.device, family: window.__game.input.family, raw: Object.fromEntries(Object.entries(window.__game.input.raw).map(([k, v]) => [k, typeof v === 'number' ? +v.toFixed(2) : v])),
+      kmh: Math.round(window.__game.car.out[102] * 3.6), help: document.getElementById('help').textContent.slice(0, 70) })`);
+    for (let i = 0; i < 90 && (await evaluate(`window.__game.menu().tuning`)); i++) await sleep(500);
+    // Xbox pad: navigate the title with the D-pad, A opens Controls
+    await evaluate(`(window.__pads = [__mk('Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)', 'standard', 4, 17)], dispatchEvent(new Event('gamepadconnected')), 1)`);
+    await press(13); console.log('dpad down  ', await st());
+    let guard = 0;
+    const foc = () => evaluate(`document.querySelector('.nav-focus')?.dataset.act ?? null`);
+    while (!['bench', 'soak', 'controls-open'].includes(await foc()) && guard++ < 12) await press(13);   // down to the utility row
+    while ((await foc()) !== 'controls-open' && guard++ < 16) await press(15);                            // then right
+    console.log('focus      ', await evaluate(`document.querySelector('.nav-focus')?.dataset.act`));
+    await press(0); await sleep(300); console.log('A          ', await st()); await shot('d1_controls_xbox.png');
+    await press(1); await sleep(300); console.log('B (back)   ', await st());
+    // drive with the pad
+    await evaluate(`(document.querySelector('[data-act=play]').click(), 1)`); await sleep(400);
+    await evaluate(`(document.querySelector('[data-act=start-free]').click(), 1)`); await sleep(4000);
+    await evaluate(`(() => { const p = __pads[0]; p.axes[0] = -0.5; p.buttons[7].value = 1; p.buttons[7].pressed = true; return 1; })()`);
+    for (let i = 0; i < 40 && (await evaluate(`window.__game.input.device`)) !== 'pad'; i++) await sleep(500);   // first frames of a session are slow headless
+    await sleep(2500); console.log('xbox drive ', await st());
+    await evaluate(`(() => { const p = __pads[0]; p.axes[0] = 1; return 1; })()`); await sleep(1500);
+    console.log('rumble calls', await evaluate(`window.__rumble.length`), JSON.stringify(await evaluate(`window.__rumble.slice(-1)[0] ?? null`)));
+    await evaluate(`(() => { const p = __pads[0]; p.axes[0] = 0; p.buttons[7].value = 0; p.buttons[7].pressed = false; return 1; })()`);
+    await press(9); await sleep(300); console.log('Start      ', await st()); await shot('d2_pause_pad.png');
+    await press(9); await sleep(300); console.log('Start again', await st());
+    // DualSense: labels follow the family
+    await evaluate(`(window.__pads = [__mk('DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)', 'standard', 4, 18)], 1)`);
+    await evaluate(`(() => { const p = __pads[0]; p.buttons[7].value = 0.6; p.buttons[7].pressed = true; return 1; })()`); await sleep(1200);
+    console.log('dualsense  ', await st());
+    await evaluate(`(() => { const p = __pads[0]; p.buttons[7].value = 0; p.buttons[7].pressed = false; return 1; })()`);
+    // G29 wheel: axis 0 steering, 1 clutch?, 2 throttle, 3 brake, all pedals rest at +1 and go to -1 pressed (Linux / Chrome)
+    await evaluate(`(() => { const w = __mk('G29 Driving Force Racing Wheel (Vendor: 046d Product: c24f)', '', 6, 25, 0); w.axes[1] = 1; w.axes[2] = 1; w.axes[3] = 1; window.__pads = [w]; return 1; })()`);
+    await evaluate(`(__pads[0].axes[0] = -0.2, 1)`); await sleep(800);
+    console.log('g29 uncal  ', await st(), 'wheelPos', await evaluate(`window.__game.input.wheelPos.toFixed(3)`));
+    // calibrate with the wheel only: pause (no button mapped yet: Escape), Controls, Calibrate, then every step by the wheel
+    await evaluate(`(window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape' })), 1)`); await sleep(400);
+    await evaluate(`(document.querySelector('[data-act=controls-open]').click(), 1)`); await sleep(400);
+    await evaluate(`(__pads[0].axes[0] = 0, 1)`); await sleep(200);
+    await evaluate(`(document.querySelector('[data-act=c-cal]').click(), 1)`); await sleep(300);
+    const step = () => evaluate(`document.querySelector('.cal-prompt')?.textContent ?? '(done) ' + (document.querySelector('.pnote')?.textContent ?? '')`);
+    const sweep = async (axis, from, to) => { await evaluate(`(__pads[0].axes[${axis}] = ${to}, 1)`); await sleep(350); await evaluate(`(__pads[0].axes[${axis}] = ${from}, 1)`); await sleep(350); };
+    console.log('cal 1', await step()); await shot('d3_calibrate.png'); await press(3);
+    console.log('cal 2', await step()); await sweep(0, 0, -1);
+    console.log('cal 3', await step()); await sweep(2, 1, -1);
+    console.log('cal 4', await step()); await sweep(3, 1, -1);
+    console.log('cal 5', await step()); await sweep(1, 1, -1);
+    console.log('cal 6', await step()); await press(4);
+    console.log('cal 7', await step()); await press(5);
+    console.log('cal 8', await step()); await press(23);
+    console.log('cal 9', await step()); await press(24);
+    console.log('cal 10', await step()); await press(9);
+    console.log('cal 11', await step()); await press(10);
+    console.log('cal end', await step());
+    console.log('saved', await evaluate(`JSON.stringify(window.__game.input.settings.calibration)`));
+    await shot('d4_calibrated.png');
+    await evaluate(`(document.querySelector('[data-act=c-back]').click(), 1)`); await sleep(300);
+    await evaluate(`(document.querySelector('[data-act=resume]').click(), 1)`); await sleep(300);
+    await evaluate(`(() => { const p = __pads[0]; p.axes[0] = -0.25; p.axes[2] = -1; return 1; })()`); await sleep(2500);
+    console.log('g29 drive  ', await st(), 'wheelPos', await evaluate(`window.__game.input.wheelPos.toFixed(3)`));
+    await evaluate(`(() => { const p = __pads[0]; p.axes[2] = 1; p.axes[3] = -1; return 1; })()`); await sleep(1500);
+    console.log('g29 brake  ', await st());
+    await press(9); await sleep(300); console.log('wheel pause', await st());
+    await press(9); await sleep(300);
+    // keyboard takes over the moment a key is pressed
+    await key('keyDown', 'KeyW', 'w'); await sleep(600); console.log('keyboard   ', await st()); await key('keyUp', 'KeyW', 'w');
+    console.log('ffb status ', await evaluate(`window.__game.ffb.status`));
   }
   if (scenario === 'dnf') {
     // Full realism (title setting) race: flip the car -> 'ROLLED OVER · OUT IN n s' -> DNF after 5 s -> spectating the rivals

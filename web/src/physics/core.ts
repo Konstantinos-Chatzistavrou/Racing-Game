@@ -32,6 +32,8 @@ export async function loadCore(): Promise<void> {
 export interface RawInput {
   steer: number; throttle: number; brake: number; clutch: number; handbrake: number;
   shiftUp: boolean; shiftDown: boolean; device: 0 | 1 | 2;
+  /** H-pattern shifter: gear index the lever is in (0 R, 1 N, 2 1st ...); undefined / -99 = no shifter */
+  directGear?: number;
 }
 export interface AssistToggles { abs: boolean; tc: boolean; esc: boolean; autoGearbox: boolean }
 
@@ -98,6 +100,7 @@ export class CoreCar {
     b[80] = raw.steer; b[81] = raw.throttle; b[82] = raw.brake; b[83] = raw.clutch; b[84] = raw.handbrake;
     b[85] = raw.shiftUp ? 1 : 0; b[86] = raw.shiftDown ? 1 : 0; b[87] = raw.device;
     b[88] = +assists.abs; b[89] = +assists.tc; b[90] = +assists.esc; b[91] = +assists.autoGearbox;
+    b[92] = raw.directGear ?? -99;
     mod!._rs_step(this.id, dt);
     return b;
   }

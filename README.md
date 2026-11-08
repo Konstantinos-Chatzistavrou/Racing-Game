@@ -18,7 +18,41 @@ npm run dev          # http://127.0.0.1:5173
 URL options: `?scale=0.75` (render resolution), `?bloom=0`, `?aa=0`, `?shadows=0`.
 
 Controls: W/S throttle and brake · A/D steer · Q/E shift · Space handbrake · Shift clutch ·
-R recover · G menu · C camera · 1 ABS · 2 TC · 3 ESC · 5 auto gearbox · H hide HUD. Gamepads work too.
+R recover · G menu · C camera · 1 ABS · 2 TC · 3 ESC · 5 auto gearbox · H hide HUD. Controllers, steering wheels and
+phones work too (next section).
+
+## Controllers, wheels, phones
+
+The device you last touched drives; mix freely. **Controls** (title screen or pause menu) shows every device and its
+settings.
+
+- **Controllers**: Xbox, PlayStation (DualShock 4, DualSense), Switch Pro and any pad with the browser's standard
+  mapping. Left stick steer, right / left trigger throttle / brake, bumpers shift, A / ✕ handbrake, B / ○ recover,
+  Y / △ camera, X / □ lights, Start / Options pause. Button names in the HUD and menus follow the pad. The D-pad / stick
+  and A / B drive the menus. Vibration from the physics (front tyres scrubbing, rear sliding or spinning, ABS, crashes)
+  in Chrome / Edge.
+- **Steering wheels**: any HID wheel (Logitech, Thrustmaster, Fanatec, Moza, Simucube, Simagic, Asetek, Cammus, PXN,
+  OpenFFBoard...). Calibrate once in Controls (centre, full left, each pedal, paddles, buttons, optional H-shifter
+  gates); every step finishes by itself, so no mouse is needed. Wheel rotation and the car's lock-to-lock are set there;
+  the wheel drives the steering 1:1 with no filtering.
+- **Force feedback** (Chrome / Edge on a computer, WebHID): **Connect wheel for force feedback** in Controls, pick the
+  wheel once; afterwards it reconnects by itself. The force comes from the physics: steering-rack torque from the front
+  tyres' aligning moments (goes light when the fronts let go), speed-dependent damping, a soft lock at the car's steering
+  lock, and crash jolts; strength, a safety cap and the direction are adjustable and there is a test pulse. Protocols:
+  the USB HID PID force-feedback standard (most direct-drive bases: Moza, Simucube, Simagic, Asetek, Cammus, VRS,
+  OpenFFBoard) and Logitech's classic protocol (Driving Force GT, G25, G27, G29, G923 PlayStation version). Thrustmaster
+  and Fanatec belt wheels and the Xbox G920 / G923 use closed protocols: steering and pedals work, force feedback
+  doesn't. **Untested on real hardware so far** (the byte formats are unit-tested: `node web/tools/test_ffb.mjs`); if
+  you try a wheel, please report what happens.
+  Linux: the browser needs read / write access to the wheel's `hidraw` device, for example
+  `/etc/udev/rules.d/70-opengrid-wheels.rules`:
+  ```
+  # Logitech, Thrustmaster, Fanatec, Moza, Simagic, Cammus wheels: let the logged-in user open them (WebHID)
+  KERNEL=="hidraw*", ATTRS{idVendor}=="046d|044f|0eb7|346e|3670|3416", TAG+="uaccess"
+  ```
+  then `sudo udevadm control --reload && sudo udevadm trigger` and re-plug the wheel.
+- **Phones and tablets**: on-screen steering pad and pedals, or **tilt steering** (Controls → Phone: Tilt; "Set
+  straight" / the STRAIGHT button recentres; 35° tilt is full lock). Vibration on crashes and slides on Android.
 
 The compiled physics (`web/src/physics/rs_core.wasm`) is checked in. To rebuild it after changing
 `core/`, install [Emscripten](https://emscripten.org/docs/getting_started/downloads.html) to `~/emsdk`

@@ -10,7 +10,7 @@ export interface TouchState {
   shiftUp: boolean; shiftDown: boolean;
 }
 
-export interface TouchActions { reset(): void; camera(): void; toggleGearbox(): boolean; unlockAudio(): void; garage?(): void }
+export interface TouchActions { reset(): void; camera(): void; toggleGearbox(): boolean; unlockAudio(): void; garage?(): void; recentre?(): void; tilt?(): boolean }
 
 const STEER_RANGE_PX = 68;   // thumb travel for full lock (short enough for crisp, immediate response)
 
@@ -34,6 +34,7 @@ export class TouchControls {
       <div class="top">
         <button class="small" data-c="garage" title="Back to the menu">← MENU</button>
         <button class="small" data-c="reset" title="Reset">⟲</button>
+        <button class="small tilt-only" data-c="recentre" title="Hold the phone straight and tap">STRAIGHT</button>
         <button class="small" data-c="camera" title="Camera">CAM</button>
         <button class="small" data-c="gearbox" title="Gearbox">AUTO</button>
         <button class="small" data-c="fullscreen" title="Fullscreen">⛶</button>
@@ -65,6 +66,8 @@ export class TouchControls {
     on('garage', () => this.actions.garage?.());
     on('reset', () => this.actions.reset());
     on('camera', () => this.actions.camera());
+    on('recentre', () => this.actions.recentre?.());
+    this.setTilt(!!this.actions.tilt?.());
     const gb = on('gearbox', (_e, el) => {
       const auto = this.actions.toggleGearbox();
       el.textContent = auto ? 'AUTO' : 'MAN';
@@ -117,6 +120,14 @@ export class TouchControls {
     pad.addEventListener('pointercancel', release);
 
     this.root.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+
+  /** Tilt steering: the steering pad goes away and a "straight" (recentre) button appears. */
+  private tiltOn: boolean | null = null;
+  setTilt(on: boolean) {
+    if (on === this.tiltOn) return;
+    this.tiltOn = on;
+    this.root.classList.toggle('tilt', on);
   }
 
   /** Edge events are consumed once per physics tick. */

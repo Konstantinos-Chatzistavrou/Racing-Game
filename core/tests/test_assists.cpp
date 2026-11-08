@@ -308,3 +308,25 @@ RS_TEST(self_aligning) {
     test::check("self-aligning off: released keys centre the wheel", std::abs(in.steer) < 1e-6);
 }
 
+// H-pattern shifter: the lever position sets the gear directly (no sequential stepping); no shifter = paddles work.
+RS_TEST(h_shifter) {
+    CarConfig cfg = test::car();
+    Controls c(cfg);
+    VehicleOutput last;
+    RawInput raw;
+    raw.device = InputDevice::Wheel;
+    raw.direct_gear = 4;      // 3rd
+    DriverInput in = c.update(raw, last, 1.0 / 60.0);
+    test::check("lever in 3rd -> gear index 4", in.gear == 4);
+    raw.direct_gear = 1;      // neutral gate
+    in = c.update(raw, last, 1.0 / 60.0);
+    test::check("lever in neutral -> N", in.gear == 1);
+    raw.direct_gear = 1;
+    raw.shift_up = true;      // paddles are ignored while a shifter is in use
+    in = c.update(raw, last, 1.0 / 60.0);
+    test::check("paddle ignored with the shifter", in.gear == 1);
+    raw.direct_gear = -99;
+    in = c.update(raw, last, 1.0 / 60.0);
+    test::check("no shifter: paddle shifts", in.gear == 2);
+}
+

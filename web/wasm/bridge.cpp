@@ -63,6 +63,7 @@ EMSCRIPTEN_KEEPALIVE int rs_create(const char* json) {
         c->cfg = rs::parse_car_config(json);
         c->vehicle = std::make_unique<rs::Vehicle>(c->cfg);
         c->controls = std::make_unique<rs::Controls>(c->vehicle->config());
+        c->buf[92] = -99;                                  // no H-pattern shifter until the page says so
         g_cars.push_back(std::move(c));
         return int(g_cars.size()) - 1;
     } catch (const std::exception& e) {
@@ -125,6 +126,7 @@ EMSCRIPTEN_KEEPALIVE void rs_rays(int id) {
 //     buf[80..87]: raw input: steer (-1 right .. +1 left), throttle, brake, clutch, handbrake,
 //                  shift_up (edge), shift_down (edge), device (0 kb, 1 pad, 2 wheel)
 //     buf[88..91]: settings: abs, tc, esc, auto_gearbox (0/1)
+//     buf[92]: H-pattern shifter gear index (0 R, 1 N, 2 1st ...), -99 = no shifter
 // OUT buf[96..98] force, [99..101] torque (three world, apply at CG for one tick)
 //     buf[102] speed m/s  [103] rpm  [104] gear index  [105] sideslip rad  [106] stalled
 //     [107] throttle applied  [108] brake applied  [109] steer applied  [110..112] accel (body, core axes)
@@ -162,6 +164,7 @@ EMSCRIPTEN_KEEPALIVE void rs_step(int id, double dt) {
     a.tc = b[89] > 0.5;
     a.esc = b[90] > 0.5;
     c.controls->settings.auto_gearbox = b[91] > 0.5;
+    raw.direct_gear = int(std::lround(b[92]));       // H-pattern shifter gear index, -99 = none
     // No input cut-off when totaled: the car always stays drivable (limp home, see damage.hpp).
 
     const rs::DriverInput di = c.controls->update(raw, c.out, dt);

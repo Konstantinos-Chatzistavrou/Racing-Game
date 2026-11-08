@@ -97,8 +97,12 @@ DriverInput Controls::update(const RawInput& raw, const VehicleOutput& last, dou
     // ---- gears: manual shift events always work; the automatic gearbox only moves between
     // forward gears. Shift points from engine rpm; a downshift is refused if it would over-rev.
     shift_cooldown_ = std::max(0.0, shift_cooldown_ - dt);
-    if (raw.shift_up) set_gear(gear_ + 1);
-    if (raw.shift_down) set_gear(gear_ - 1);
+    if (raw.direct_gear != -99) {
+        if (raw.direct_gear != gear_) set_gear(raw.direct_gear);   // the lever is where the lever is
+    } else {
+        if (raw.shift_up) set_gear(gear_ + 1);
+        if (raw.shift_down) set_gear(gear_ - 1);
+    }
     const auto& ratios = cfg_.drivetrain.gear_ratios;
     int top = (int)ratios.size() - 1;
     if (s.auto_gearbox && gear_ >= 2 && shift_cooldown_ <= 0) {

@@ -17,6 +17,9 @@ struct RawInput {
     double handbrake = 0;    // 0..1
     bool shift_up = false;   // edge events: true for ONE update when pressed
     bool shift_down = false;
+    // H-pattern shifter: the gear index the lever is in (0 = R, 1 = N, 2 = 1st ...), or -99 when there is no shifter.
+    // While a shifter is in use it sets the gear directly; the paddles / auto gearbox act on top of nothing.
+    int direct_gear = -99;
     InputDevice device = InputDevice::Keyboard;
 };
 

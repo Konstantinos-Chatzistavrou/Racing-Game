@@ -8,9 +8,10 @@ import { FINISHES, MODS, MOD_KEYS, SWATCHES, applyMods, modsOf, paintOf, saveSel
   type CatalogCar, type Finish, type Mode, type ModKey, type Selection } from './garage';
 import { formatLap } from './hud';
 import { MAX_MEMBERS, cleanCode, type Party, type PartyMode } from './party';
+import type { ControlsUi } from './controls-menu';
 
 export type Gfx = 'auto' | 'max' | 'ultra' | 'high' | 'medium' | 'low';
-export type Screen = 'none' | 'title' | 'garage' | 'modes' | 'lobby' | 'pause' | 'results' | 'busy';
+export type Screen = 'none' | 'title' | 'garage' | 'modes' | 'lobby' | 'pause' | 'results' | 'busy' | 'controls';
 /** One line of the race standings. fin: finish time (s) or -1; d: distance covered (m); dnf: out of the race. */
 export interface Standing { name: string; you: boolean; fin: number; d: number; best: number; ai: boolean; dnf?: boolean; why?: string }
 export interface ResultData { total: number; best: number; laps: number[]; laps_target: number; standings: Standing[]; routeLength: number; online: boolean }
@@ -79,6 +80,9 @@ export class Menu {
   invite = '';
   private joinCode = '';
   private lastResults: ResultData | null = null;
+  /** the Controls screen (main sets it up: it needs the input and force-feedback objects) */
+  ctl: ControlsUi | null = null;
+  private controlsFrom: Screen = 'title';
 
   constructor(readonly sel: Selection, private cars: CatalogCar[], private physics: Record<string, unknown>, private hooks: MenuHooks) {
     this.root.addEventListener('click', (e) => this.click(e));
@@ -87,7 +91,7 @@ export class Menu {
     this.root.addEventListener('keydown', (e) => {
       const t = e.target as HTMLElement;
       if (e.key === 'Enter' && t.id === 'joincode') this.hooks.partyJoin(this.joinCode);
-      e.stopPropagation();   // typing a name or code never drives the car
+      if (t.tagName === 'INPUT' && (t as HTMLInputElement).type === 'text') e.stopPropagation();   // typing a name or code never drives the car
     });
   }
 
@@ -125,7 +129,7 @@ export class Menu {
     const rightScroll = this.root.querySelector('.g-right')?.scrollTop ?? 0;
     const html = {
       none: () => '', title: () => this.title(), garage: () => this.garage(), modes: () => this.modes(), lobby: () => this.lobby(),
-      pause: () => this.pause(), results: () => (this.lastResults ? this.results(this.lastResults) : ''),
+      pause: () => this.pause(), controls: () => this.ctl?.html() ?? '', results: () => (this.lastResults ? this.results(this.lastResults) : ''),
       busy: () => `<div class="card center"><div class="spin"></div><p>${esc(this.busyText)}</p></div>`,
     }[this.screen]();
     this.root.innerHTML = html;
@@ -182,6 +186,7 @@ export class Menu {
         <div class="btnrow util-row">
           <button class="small" data-act="bench" ${dis}>⏱ Benchmark</button>
           <button class="small" data-act="soak" ${dis}>🔥 Soak Test</button>
+          <button class="small" data-act="controls-open" ${dis}>🎮 Controls</button>
         </div>
         <a class="source-link dim" href="https://github.com/Konstantinos-Chatzistavrou/Racing-Game" target="_blank" rel="noopener">Source code · code AGPL-3.0 · assets CC BY-NC 4.0</a>
       </div>`;
@@ -332,9 +337,11 @@ export class Menu {
     const btns = online
       ? `<button class="primary" data-act="resume">▶ Resume Driving</button>
          ${p!.isHost ? '<button data-act="plobby">↩ End Session · Everyone to Lobby</button>' : '<button data-act="quit">↩ Back to Lobby</button>'}
+         <button data-act="controls-open">🎮 Controls</button>
          <button data-act="pleave">${p!.isHost ? 'Close Party' : 'Leave Party'}</button>`
       : `<button class="primary" data-act="resume">▶ Resume Driving</button>
          <button data-act="restart">↻ Restart ${this.sel.mode === 'race' ? 'Race' : 'Session'}</button>
+         <button data-act="controls-open">🎮 Controls</button>
          <button data-act="quit">← Quit to Main Menu</button>`;
     return `<div class="card center pause-card">
       <div class="kicker">${online ? 'PARTY SESSION · OTHERS KEEP DRIVING' : 'SESSION PAUSED'}</div>
@@ -393,6 +400,9 @@ export class Menu {
     const act = b.dataset.act!;
     if (['play', 'garage-open', 'start-race', 'start-free', 'pstart', 'invite', 'prejoin'].includes(act)) this.askFullscreen();
     const v = b.dataset.v ?? '', sel = this.sel;
+    if (act === 'controls-open') { this.controlsFrom = this.screen; this.show('controls'); return; }
+    if (act === 'c-back') { this.ctl?.leave(); this.show(this.controlsFrom); return; }
+    if (act.startsWith('c-') && this.ctl?.click(act, v)) return;
     switch (act) {
       case 'play': this.show('modes'); break;
       case 'garage-open': this.show('garage'); this.hooks.preview(); break;
@@ -444,6 +454,7 @@ export class Menu {
     if (t.id === 'custom') { this.sel.paint[this.sel.car] = t.value; this.hooks.preview(); }   // live while dragging
     if (t.id === 'joincode') { const c = cleanCode(t.value); if (c !== t.value) t.value = c; this.joinCode = c; }
     if (t.id === 'pname') this.sel.name = t.value.slice(0, 18);
+    if (t.type === 'range') this.ctl?.slide(t);
   }
   private change(e: Event) {
     const t = e.target as HTMLInputElement;

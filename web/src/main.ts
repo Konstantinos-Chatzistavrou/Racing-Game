@@ -24,6 +24,9 @@ import { Hud } from './hud';
 import { DamageVisuals, DEBRIS_LAYER } from './scene/damage';
 import { GameAudio } from './audio';
 import { TouchControls, wantsTouch } from './touch';
+import { ForceFeedback } from './ffb';
+import { ControlsUi } from './controls-menu';
+import { MenuNav } from './menu-nav';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { RemoteCars } from './net';
 import { Party, cleanCode, type Progress } from './party';
@@ -352,9 +355,14 @@ async function main() {
       toggleGearbox: () => (input.assists.autoGearbox = !input.assists.autoGearbox),
       unlockAudio: () => audio.unlock(),
       garage: () => { if (driving()) quitSession(party ? 'lobby' : 'title'); },
+      recentre: () => input.recentreTilt(),
+      tilt: () => input.settings.touchSteering === 'tilt',
     });
   };
   const onTouch = () => { if (driving()) { enableTouch(); removeEventListener('touchstart', onTouch); } };
+  // tilt steering chosen earlier: the motion permission (iOS) needs a tap, so ask on the first one
+  const tiltAgain = () => { if (input.settings.touchSteering === 'tilt') void input.enableTilt(); removeEventListener('touchend', tiltAgain); };
+  addEventListener('touchend', tiltAgain, { passive: true });
   addEventListener('touchstart', onTouch, { passive: true });
   input.onCamera = () => { if (driving()) rig.toggle(); };
   input.onHud = () => { if (driving()) hud.toggle(); };
@@ -642,6 +650,15 @@ async function main() {
     spectate: () => enterSpectate(),
   });
   menu.gfx = gfx;
+  // every input device: force feedback (WebHID wheels), the Controls screen, pad / keyboard menu navigation
+  const ffb = new ForceFeedback();
+  const forwardGears = () => Math.max(1, ((physics[sel.car] as { drivetrain?: { gear_ratios?: number[] } })?.drivetrain?.gear_ratios?.length ?? 8) - 2);
+  menu.ctl = new ControlsUi(input, ffb, () => { if (menu.screen === 'controls') menu.render(); }, forwardGears);
+  const menuNav = new MenuNav(document.getElementById('menu')!);
+  const helpEl = document.getElementById('help');
+  input.onDevice = () => { if (helpEl) helpEl.innerHTML = input.helpHtml(); };
+  (g.__game as Record<string, unknown>).ffb = ffb;
+  (g.__game as Record<string, unknown>).input = input;
   {
     const inv = cleanCode(params.get('party') ?? '');
     if (inv.length >= 4) menu.invite = inv;
@@ -794,11 +811,13 @@ async function main() {
     }));
   }
   document.getElementById('hud-garage')?.addEventListener('click', () => { if (driving()) quitSession(party ? 'lobby' : 'title'); });
-  document.getElementById('hud-pause')?.addEventListener('click', () => {
+  const togglePause = () => {
     if (state === 'spectate') { finishRace(); return; }
     if (state === 'race') { pausedFrom = state; setState('paused'); audio.muted = true; menu.show('pause'); }
     else if (state === 'paused') resume();
-  });
+  };
+  document.getElementById('hud-pause')?.addEventListener('click', togglePause);
+  input.onPause = togglePause;   // Start / Options / Menu on a pad, the mapped button on a wheel
   document.getElementById('hud-reset')?.addEventListener('click', () => input.onReset());
   document.getElementById('hud-cam')?.addEventListener('click', () => { if (driving()) rig.toggle(); });
 
@@ -935,6 +954,7 @@ async function main() {
   function resume() {
     setState(pausedFrom);
     menu.show('none');
+    input.syncPads();
     audio.muted = false;
     prev = performance.now();
   }
@@ -1146,7 +1166,14 @@ async function main() {
       }
     }
     if (driving()) audio.update(car.out, car.out[OUT.speed]);
+    // force feedback runs every frame (it ramps to zero in the menus); only while the wheel is the driving device
+    ffb.update(frame, { driving: state === 'race' && input.device === 'wheel', rackTorque: car.out[OUT.steerTorque], speed: Math.abs(car.out[OUT.speed]),
+      wheel: input.wheelPos, wheelVel: input.wheelVel, impactKj: state === 'race' ? rumbleKj : 0 }, input.settings);
     if (state === 'race') { input.rumble(now, car.out, rumbleKj); rumbleKj = 0; }
+    if (state === 'paused' && !menu.ctl?.calibrating) input.menuPoll();
+    menuNav.paused = !!menu.ctl?.calibrating;
+    menuNav.update(now);
+    if (menu.screen === 'controls') menu.ctl?.tick();
     if (remote) {
       remote.update(now, camera);
       if (party && driving()) { const out = remote.outgoing(now, pos, quat, car.body.linvel()); if (out) party.sendPose(out, paintInt()); }
