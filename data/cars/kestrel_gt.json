@@ -1,25 +1,25 @@
 {
   "schema": "car/1",
   "name": "Kestrel GT",
-  "notes": "Track-bred coupe on the Kestrel GT body (docs/car_model_v4.md): the former Vela GT-R numbers (mass, power, grip) with its own looks. Starting values, tune with feel.",
+  "notes": "Kestrel GT: light, high-revving track coupe on its own body (docs/car_model_v4.md). Naturally aspirated, short gearing, big rear wing and splitter (most downforce, most drag), semi-slick tyres, stiff springs: shortest stops, most grip in fast corners, quickest turn-in; the wing caps its top speed. Measured by core/tests/test_characters.cpp.",
   "chassis": {
-    "mass_kg": 1390,
+    "mass_kg": 1300,
     "cg_height_m": 0.47,
-    "weight_front": 0.48,
+    "weight_front": 0.47,
     "wheelbase_m": 2.65,
-    "inertia_roll_kgm2": 527,
-    "inertia_pitch_kgm2": 2013,
-    "inertia_yaw_kgm2": 2253
+    "inertia_roll_kgm2": 493,
+    "inertia_pitch_kgm2": 1883,
+    "inertia_yaw_kgm2": 2000
   },
   "front_axle": {
     "track_m": 1.61,
-    "spring_rate_n_per_m": 78000,
+    "spring_rate_n_per_m": 105000,
     "spring_rest_length_m": 0.25,
     "max_compression_m": 0.07,
     "bump_stop_rate_n_per_m": 300000,
-    "damper_bump_ns_per_m": 3335,
-    "damper_rebound_ns_per_m": 6555,
-    "anti_roll_rate_n_per_m": 37500,
+    "damper_bump_ns_per_m": 3742,
+    "damper_rebound_ns_per_m": 7355,
+    "anti_roll_rate_n_per_m": 42000,
     "roll_centre_height_m": 0.06,
     "max_steer_deg": 32,
     "ackermann": 0.5,
@@ -39,13 +39,13 @@
   },
   "rear_axle": {
     "track_m": 1.6,
-    "spring_rate_n_per_m": 90000,
+    "spring_rate_n_per_m": 118000,
     "spring_rest_length_m": 0.25,
     "max_compression_m": 0.07,
     "bump_stop_rate_n_per_m": 300000,
-    "damper_bump_ns_per_m": 3565,
-    "damper_rebound_ns_per_m": 7015,
-    "anti_roll_rate_n_per_m": 22500,
+    "damper_bump_ns_per_m": 3948,
+    "damper_rebound_ns_per_m": 7768,
+    "anti_roll_rate_n_per_m": 26000,
     "roll_centre_height_m": 0.1,
     "static_camber_deg": -2.1,
     "camber_gain_deg_per_m": -50,
@@ -60,34 +60,34 @@
     "damper_high_speed_ratio": 0.45
   },
   "tire_front": {
-    "size": "245/35 R19",
+    "size": "265/35 R19",
     "radius_m": 0.327,
     "inertia_kgm2": 1.2,
     "fz0_n": 3928.5,
     "vertical_stiffness_n_per_m": 280840,
     "longitudinal": {
       "C": 1.6411,
-      "mu": 1.33,
+      "mu": 1.42,
       "load_sensitivity": -0.13966,
       "camber_sensitivity": 0,
       "E": 0.46403,
       "pEx2": 0.25022,
       "pEx3": 0.067842,
-      "pEx4": -3.7604e-05,
-      "slip_stiffness_per_load": 25.269,
+      "pEx4": -0.000037604,
+      "slip_stiffness_per_load": 26.979,
       "pKx2": 0.48896,
       "pKx3": 0.21253
     },
     "lateral": {
       "C": 1.3507,
-      "mu": 1.27,
+      "mu": 1.38,
       "load_sensitivity": -0.17192,
       "camber_sensitivity": -2.8821,
       "E": -0.0074722,
       "pEy2": -0.0063208,
       "pEy3": 0,
       "pEy4": -760.14,
-      "cornering_stiffness_per_fz0": 26.541,
+      "cornering_stiffness_per_fz0": 30.57,
       "cornering_stiffness_peak_load": 2.0012,
       "camber_stiffness_factor": -0.024778,
       "pHy1": 0,
@@ -149,37 +149,37 @@
     "relaxation_length_lat_m": 0.35,
     "rolling_resistance": 0.012,
     "rolling_resistance_v2": 0.001,
-    "source": "audi_245_40R18_pac2002.tir (PAC2002): fitted Magic Formula, converted by tools/tir2car.mjs"
+    "source": "audi_245_40R18_pac2002.tir (PAC2002): fitted Magic Formula, converted by tools/tir2car.mjs, cornering stiffness x1.06 for the section width"
   },
   "tire_rear": {
-    "size": "285/30 R19",
+    "size": "305/30 R19",
     "radius_m": 0.328,
     "inertia_kgm2": 1.35,
     "fz0_n": 3928.5,
     "vertical_stiffness_n_per_m": 280840,
     "longitudinal": {
       "C": 1.6411,
-      "mu": 1.36,
+      "mu": 1.45,
       "load_sensitivity": -0.13966,
       "camber_sensitivity": 0,
       "E": 0.46403,
       "pEx2": 0.25022,
       "pEx3": 0.067842,
-      "pEx4": -3.7604e-05,
-      "slip_stiffness_per_load": 25.839,
+      "pEx4": -0.000037604,
+      "slip_stiffness_per_load": 27.549,
       "pKx2": 0.48896,
       "pKx3": 0.21253
     },
     "lateral": {
       "C": 1.3507,
-      "mu": 1.3,
+      "mu": 1.4,
       "load_sensitivity": -0.17192,
       "camber_sensitivity": -2.8821,
       "E": -0.0074722,
       "pEy2": -0.0063208,
       "pEy3": 0,
       "pEy4": -760.14,
-      "cornering_stiffness_per_fz0": 31.514,
+      "cornering_stiffness_per_fz0": 35.694,
       "cornering_stiffness_peak_load": 2.0012,
       "camber_stiffness_factor": -0.024778,
       "pHy1": 0,
@@ -241,50 +241,58 @@
     "relaxation_length_lat_m": 0.35,
     "rolling_resistance": 0.012,
     "rolling_resistance_v2": 0.001,
-    "source": "audi_245_40R18_pac2002.tir (PAC2002): fitted Magic Formula, converted by tools/tir2car.mjs, cornering stiffness x1.16 for the section width"
+    "source": "audi_245_40R18_pac2002.tir (PAC2002): fitted Magic Formula, converted by tools/tir2car.mjs, cornering stiffness x1.22 for the section width"
   },
   "brakes": {
-    "max_total_torque_nm": 7000,
-    "bias_front": 0.67
+    "max_total_torque_nm": 7800,
+    "bias_front": 0.66
   },
   "engine": {
     "torque_curve": [
       [
         1000,
-        345
+        290
       ],
       [
         2000,
-        540
+        390
       ],
       [
         3000,
-        627
+        450
       ],
       [
         4000,
-        644
+        490
       ],
       [
         5000,
-        632
+        515
       ],
       [
         6000,
-        598
+        520
       ],
       [
         7000,
-        535
+        505
       ],
       [
-        7500,
-        483
+        8000,
+        480
+      ],
+      [
+        8800,
+        430
+      ],
+      [
+        9000,
+        400
       ]
     ],
-    "idle_rpm": 900,
-    "redline_rpm": 7500,
-    "inertia_kgm2": 0.22,
+    "idle_rpm": 1000,
+    "redline_rpm": 8800,
+    "inertia_kgm2": 0.18,
     "friction_const_nm": 25,
     "friction_linear_nm_per_radps": 0.035
   },
@@ -293,30 +301,30 @@
     "gear_ratios": [
       -3.2,
       0,
-      3.4,
-      2.3,
-      1.7,
-      1.32,
-      1.08,
-      0.88
+      3.3,
+      2.35,
+      1.8,
+      1.45,
+      1.2,
+      1.02
     ],
-    "final_drive": 3.73,
+    "final_drive": 3.9,
     "efficiency": 0.92,
-    "clutch_max_torque_nm": 900,
+    "clutch_max_torque_nm": 800,
     "driveline_inertia_kgm2": 0.06,
     "rear_diff": {
       "type": "lsd",
-      "preload_nm": 60,
-      "power_ramp": 0.35,
-      "coast_ramp": 0.2
+      "preload_nm": 80,
+      "power_ramp": 0.45,
+      "coast_ramp": 0.3
     }
   },
   "aero": {
-    "drag_area_m2": 0.7,
-    "downforce_area_m2": 0.55,
-    "front_balance": 0.45,
-    "ground_effect_per_m": 2.0,
-    "pitch_balance_per_m": 1.2
+    "drag_area_m2": 0.88,
+    "downforce_area_m2": 1.15,
+    "front_balance": 0.44,
+    "ground_effect_per_m": 2.6,
+    "pitch_balance_per_m": 1.4
   },
   "surface_grip": {
     "asphalt": 1,

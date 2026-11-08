@@ -40,7 +40,7 @@ if(RS_BUILD_TESTS)
   target_link_libraries(rs_tests PRIVATE rs_core)
   target_compile_definitions(rs_tests PRIVATE RS_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../data")
   # One CTest entry per test case so failures are reported individually.
-  foreach(t tire config static weight_transfer braking cornering acceleration timestep layouts auto_clutch abs tc esc controls auto_gearbox damage route ai_lap ai_traffic race setup reference)
+  foreach(t tire config static weight_transfer braking cornering acceleration timestep layouts auto_clutch abs tc esc controls auto_gearbox damage route ai_lap ai_traffic race setup reference characters)
     add_test(NAME ${t} COMMAND rs_tests ${t})
   endforeach()
 endif()

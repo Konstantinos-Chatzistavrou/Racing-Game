@@ -121,7 +121,7 @@ struct LaunchDriver {
         in.clutch = 0;
         in.throttle = thr;
         int top = (int)s.vehicle.config().drivetrain.gear_ratios.size() - 1;
-        if (rpm > shift_rpm && gear < top) {
+        if (rpm > std::min(shift_rpm, 0.97 * cfg.engine.redline_rpm) && gear < top) {   // never past this car's redline
             ++gear;
             shift_t = 0;
             in.gear = gear;

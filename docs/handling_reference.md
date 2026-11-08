@@ -47,3 +47,19 @@ AI race after the change: 6/6 finish 2 laps, best laps 73.8-74.1 s (was 74.2-75.
 ## Still open (needs a human)
 Numbers match; FEEL is not tested by numbers: steering weight/response at the limit, how the rear
 lets go on throttle, how catchable slides are with and without assists, kerb behaviour.
+
+## Car characters (2026-11-08)
+
+Same physics, own setups (`data/cars/*.json`); the order below is enforced by `core/tests/test_characters.cpp`
+(fast corner = steady state on a 200 m radius, where downforce counts; step steer = time to 90 % of the steady yaw
+rate after a small steering step at 100 km/h). Geometry (wheelbase, track, wheel size, CG height) stays matched to each
+car's model.
+
+| Car | Setup | 0-100 km/h | 0-200 km/h | 60-0 mph | Skidpad | Fast corner | Top speed | Step steer |
+|---|---|---|---|---|---|---|---|---|
+| Vela GT | 1450 kg, 341 kW road GT, 0.35 m² downforce, summer tyres | 4.03 s | 12.78 s | 32.1 m | 1.02 g | 1.06 g | 288 km/h | 0.125 s |
+| Kestrel GT | 1300 kg, NA 402 kW to 8800 rpm, short gears, 1.15 m² downforce (0.88 m² drag), semi-slicks, stiff | 3.95 s | 12.04 s | 28.3 m | 1.18 g | 1.29 g | 269 km/h | 0.117 s |
+| Harrier GT | 1500 kg, twin-turbo 800 N m / 467 kW, long gears, 0.70 m² rear-biased downforce, wide tyres, stiff front bar | 3.72 s | 10.52 s | 29.4 m | 1.04 g | 1.08 g | 300 km/h | 0.121 s |
+
+The launch test driver now shifts below each car's own redline (it used a fixed 7100 rpm, which a 7000 rpm engine never
+reaches).
