@@ -8,12 +8,19 @@ import { assetUrl, loadGLTF } from './loaders';
 
 import type { DamageVisualConfig } from './damage';
 import { FINISHES, type Finish } from '../garage';
+import { CarCustomizer, installAero, installLivery } from './custom';
+import { Driver } from './driver';
 
 export interface CarVisualConfig extends DamageVisualConfig {
   model: string;
   lod_model: string;
   cg_in_model_m: [number, number, number];
   wheel_nodes: { fl: string; fr: string; rl: string; rr: string };
+  /** driver's hip point in model space (x = left, y = up, z = forward) and figure scale */
+  driver_seat_m?: [number, number, number];
+  driver_scale?: number;
+  /** opaque cabin shells that would hide the driver (no cockpit is drawn: the driver is) */
+  hide_for_driver?: string[];
   /** Model track minus physics track, per side (m): the wheels sit this much further out. */
   wheel_visual_offset_m?: number;
   collision_box: { size_m: [number, number, number]; centre_in_model_m: [number, number, number]; end_lift_m: number; end_lift_start_m: number };
@@ -252,6 +259,7 @@ export function setupCarMaterials(model: THREE.Object3D, cfg: CarVisualConfig, p
           paintMat.iridescenceThicknessRange = [200, 520];
           paintMat.envMapIntensity = 1.45;
           paintMat.color.copy(color);
+          paintMat.userData.livery = installLivery(paintMat);   // garage liveries: uniforms, no recompiles
         }
         assign(paintMat);
         return;
@@ -293,6 +301,7 @@ export function setupCarMaterials(model: THREE.Object3D, cfg: CarVisualConfig, p
             clearcoatRoughness: 0.06,
             envMapIntensity: 1.35,
           });
+          carbonMat.userData.aero = installAero(carbonMat);      // garage aero finishes
         }
         assign(carbonMat);
         return;
@@ -322,6 +331,7 @@ export function setupCarMaterials(model: THREE.Object3D, cfg: CarVisualConfig, p
       if (mat.name === 'light_beam') m.visible = false;   // fake beams: replaced by real spot lights
     });
   });
+  model.userData.carMats = { paint: paintMat, glass: glassMat, carbon: carbonMat };
   return paintMat as THREE.MeshPhysicalMaterial | null;
 }
 
@@ -352,6 +362,9 @@ export class CarVisual {
   readonly velocity = new THREE.Vector3();   // m/s, world (for debris)
   /** The car's own clone of the paint material (garage colour + finish). */
   readonly paint: THREE.MeshPhysicalMaterial | null;
+  /** garage parts and colours (custom.ts) and the driver in the seat (driver.ts) */
+  readonly custom: CarCustomizer;
+  readonly driver: Driver;
 
   private constructor(readonly cfg: CarVisualConfig, readonly model: THREE.Object3D, shared?: THREE.SpotLight[]) {
     this.cg = new THREE.Vector3(...cfg.cg_in_model_m);
@@ -409,6 +422,12 @@ export class CarVisual {
       this.root.add(s, s.target);
       this.headlights.push(s);
     }
+    const mats = model.userData.carMats as { paint: THREE.MeshPhysicalMaterial | null; glass: THREE.MeshPhysicalMaterial | null; carbon: THREE.MeshPhysicalMaterial | null };
+    this.custom = new CarCustomizer(model, mats.paint, mats.glass, mats.carbon, this.headlights);
+    this.driver = new Driver(new THREE.Vector3(...(cfg.driver_seat_m ?? [0.36, 0.25, -0.3])));
+    this.driver.root.scale.setScalar(cfg.driver_scale ?? 0.93);
+    model.add(this.driver.root);
+    for (const nm of cfg.hide_for_driver ?? []) { const o = model.getObjectByName(nm); if (o) o.visible = false; }
   }
 
   /**
@@ -483,11 +502,13 @@ export class CarVisual {
     this.root.position.copy(pos);
     this.root.quaternion.copy(quat);
     this.root.updateMatrixWorld();
+    this.custom.sync(pos, quat);
     const inv = this.physInv.compose(physPos, physQuat, ONE).invert();
     const off = this.cfg.wheel_visual_offset_m ?? 0;
     const tNow = performance.now(), dtS = Math.min(0.05, Math.max(0.001, (tNow - this.lastUpdate) / 1000));
     const first = this.lastUpdate === 0;
     this.lastUpdate = tNow;
+    this.driver.update(out[OUT.steer] || 0, out[OUT.steer + 2] || 0, dtS);   // steering applied; body lateral accel (core y = left)
 
     // Detect uninitialised `out` (all wheel world centres at origin while car isn't at origin)
     const outValid = (out[OUT.wheel(0)] !== 0 || out[OUT.wheel(0) + 1] !== 0 || out[OUT.wheel(0) + 2] !== 0

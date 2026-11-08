@@ -434,3 +434,18 @@ body.spectating #board { top: 12px; }
 @keyframes ldsweep { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
 #loading { transition: opacity .4s ease; }
 #loading.out { opacity: 0; pointer-events: none; }
+
+/* ---- garage tabs, skins, avatars ---------------------------------------------------------------- */
+#menu .gtabs { display: flex; flex-wrap: wrap; gap: 4px; margin: -4px 0 12px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+#menu .gtab { padding: 6px 10px; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; border-radius: 8px; background: transparent; border-color: transparent; color: var(--dim); }
+#menu .gtab.on { color: #fff; background: #ff2d5528; border-color: var(--accent); }
+#menu .sw.off { display: grid; place-items: center; font-size: 12px; color: var(--dim); background: #0006; }
+#menu .skins { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+#menu .skin { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 4px; font-size: 11px; font-weight: 700; background: var(--panel2); }
+#menu .skin.on { border-color: var(--accent); background: #ff2d5520; }
+#menu .scard.gear { align-items: center; text-align: center; }
+#menu .scard.gear .car-head { width: 100%; }
+#menu .suit-dot { width: 46px; height: 8px; border-radius: 4px; border: 1px solid #ffffff30; }
+#menu .avatar { position: relative; display: inline-flex; flex: none; }
+#menu .avatar .dot { position: absolute; right: -3px; bottom: -2px; width: 11px; height: 11px; border-width: 2px; border-color: var(--panel2); }
+#menu svg.helmet { display: block; filter: drop-shadow(0 2px 3px #0008); }

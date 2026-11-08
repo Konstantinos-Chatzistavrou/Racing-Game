@@ -8,6 +8,8 @@
 // everyone loads, the leader waits until all are on the grid, then sends GO (race: 3-2-1 together).
 // ?peer=host:port[/path] uses your own PeerJS server instead of the public one (see server/).
 import Peer, { type DataConnection, type PeerOptions } from 'peerjs';
+import { cleanCustom, type Custom } from './scene/custom';
+import { skinOf } from './scene/driver';
 
 export const MAX_MEMBERS = 6;
 const PREFIX = 'opengrid-v1-';
@@ -16,7 +18,10 @@ const LOAD_TIMEOUT_MS = 20000;
 const BROKER_TRIES = 4;          // the public broker drops connections now and then: try again before giving up
 const brokerTrouble = (type?: string) => type === 'network' || type === 'server-error' || type === 'socket-error' || type === 'socket-closed';
 
-export interface Member { id: string; name: string; car: string; paint: number; host: boolean; ready: boolean }
+/** skin: the driver's helmet and suit (avatar); look: the car's visual parts (both checked on arrival, scene/driver.ts, scene/custom.ts) */
+export interface Member { id: string; name: string; car: string; paint: number; host: boolean; ready: boolean; skin?: string; look?: Custom }
+/** What we tell the party about ourselves. */
+export interface Me { name: string; car: string; paint: number; skin?: string; look?: Custom }
 export type PartyMode = 'free' | 'race';
 export type Phase = 'lobby' | 'loading' | 'driving';
 /** Car pose (body centre) and velocity (m/s, optional: older senders and heartbeats of a parked car). */
@@ -25,7 +30,7 @@ export interface Pose { x: number; y: number; z: number; qx: number; qy: number;
 export interface Progress { d: number; lap: number; fin: number; best: number; dnf?: number }
 
 type Msg =
-  | { t: 'hello'; name: string; car: string; paint: number }
+  | { t: 'hello'; name: string; car: string; paint: number; skin?: string; look?: Custom }
   | { t: 'lobby'; members: Member[]; mode: PartyMode; laps: number; realism: boolean; phase: Phase }
   | { t: 'start'; mode: PartyMode; laps: number; realism: boolean }
   | { t: 'loaded' }
@@ -122,7 +127,7 @@ export class Party {
   get link() { return inviteLink(this.code); }
 
   /** New party with us as leader. Rejects if the broker can't be reached. */
-  static create(me: { name: string; car: string; paint: number }): Promise<Party> {
+  static create(me: Me): Promise<Party> {
     return new Promise((resolve, reject) => {
       let tries = 0;
       const attempt = () => {
@@ -138,7 +143,7 @@ export class Party {
         peer.once('open', () => {
           peer.off('error', fail);
           const p = new Party(peer, code, true);
-          p.members = [{ id: peer.id, name: cleanName(me.name), car: me.car, paint: me.paint, host: true, ready: true }];
+          p.members = [{ id: peer.id, name: cleanName(me.name), car: me.car, paint: me.paint, host: true, ready: true, skin: me.skin, look: me.look }];
           peer.on('connection', (c) => p.accept(c));
           resolve(p);
         });
@@ -148,7 +153,7 @@ export class Party {
   }
 
   /** Join a friend's party by code. Rejects if it doesn't exist, is full or is mid-session. */
-  static async join(code: string, me: { name: string; car: string; paint: number }): Promise<Party> {
+  static async join(code: string, me: Me): Promise<Party> {
     code = cleanCode(code);
     for (let tries = 1; ; tries++) {
       try { return await Party.joinOnce(code, me); } catch (e) {
@@ -157,7 +162,7 @@ export class Party {
       }
     }
   }
-  private static joinOnce(code: string, me: { name: string; car: string; paint: number }): Promise<Party> {
+  private static joinOnce(code: string, me: Me): Promise<Party> {
     return new Promise((resolve, reject) => {
       const peer = new Peer(peerOptions());
       let settled = false;
@@ -170,7 +175,7 @@ export class Party {
       peer.once('open', () => {
         const c = peer.connect(PREFIX + code, { reliable: true, serialization: 'json' });
         const p = new Party(peer, code, false);
-        c.on('open', () => c.send({ t: 'hello', name: cleanName(me.name), car: me.car, paint: me.paint } satisfies Msg));
+        c.on('open', () => c.send({ t: 'hello', name: cleanName(me.name), car: me.car, paint: me.paint, skin: me.skin, look: me.look } satisfies Msg));
         c.on('data', (d) => {
           const m = d as Msg;
           if (!settled) {
@@ -264,12 +269,12 @@ export class Party {
   }
 
   /** Our name, car or paint changed. */
-  updateMe(me: { name: string; car: string; paint: number }) {
+  updateMe(me: Me) {
     if (this.isHost) {
       const m = this.members.find((x) => x.id === this.selfId);
-      if (m) { m.name = cleanName(me.name); m.car = me.car; m.paint = me.paint; }
+      if (m) { m.name = cleanName(me.name); m.car = me.car; m.paint = me.paint; m.skin = me.skin; m.look = me.look; }
       this.pushLobby();
-    } else this.sendHost({ t: 'hello', name: cleanName(me.name), car: me.car, paint: me.paint });
+    } else this.sendHost({ t: 'hello', name: cleanName(me.name), car: me.car, paint: me.paint, skin: me.skin, look: me.look });
   }
 
   sendPose(p: Pose, paint: number) {
@@ -324,6 +329,8 @@ export class Party {
           mem.name = cleanName(m.name);
           mem.car = typeof m.car === 'string' ? m.car.slice(0, 32) : '';
           mem.paint = Number.isInteger(m.paint) && m.paint >= 0 && m.paint <= 0xffffff ? m.paint : 0;
+          mem.skin = skinOf(m.skin).id;
+          mem.look = cleanCustom(m.look);
           this.pushLobby();
           break;
         }

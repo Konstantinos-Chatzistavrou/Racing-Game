@@ -4,7 +4,7 @@
 //
 // Flow: title -> Play -> game modes (Race / Free Roam / Multiplayer)
 //       title -> Garage (cars, paint, upgrades only) -> Main Menu, or Continue -> game modes
-import { FINISHES, MODS, MOD_KEYS, SWATCHES, applyMods, modsOf, paintOf, saveSelection, statsOf,
+import { FINISHES, MODS, MOD_KEYS, SWATCHES, applyMods, customOf, modsOf, paintOf, saveSelection, statsOf,
   type CatalogCar, type Finish, type Mode, type ModKey, type Selection } from './garage';
 import { formatLap } from './hud';
 import { MAX_MEMBERS, cleanCode, type Party, type PartyMode } from './party';
@@ -12,6 +12,19 @@ import type { ControlsUi } from './controls-menu';
 import { PRESET_INFO, applyPreset, matchPreset, type AssistSettings, type Preset } from './assists';
 import { MOD_PRICES, Wallet, fmt } from './wallet';
 import type { Loader } from './loading';
+import { AERO_FINISHES, GLOW_COLOURS, HEAD_TINTS, LIVERIES, PART_COLOURS, RIM_FINISHES, WINGS, type Custom } from './scene/custom';
+import { SKINS, helmetSvg, skinOf } from './scene/driver';
+
+/** Garage tabs: name, camera (azimuth, elevation, distance) that shows those parts. */
+const GTABS: { id: string; label: string; cam: string }[] = [
+  { id: 'paint', label: 'Paint', cam: '0.8,0.17,6.5' },
+  { id: 'aero', label: 'Aero', cam: '2.45,0.24,6.0' },
+  { id: 'wheels', label: 'Wheels', cam: '1.25,0.04,4.4' },
+  { id: 'lights', label: 'Lights', cam: '0.35,0.1,5.6' },
+  { id: 'glass', label: 'Glass', cam: '2.85,0.14,5.2' },
+  { id: 'driver', label: 'Driver', cam: '1.45,0.14,4.3' },
+  { id: 'perf', label: 'Tune', cam: '0.8,0.17,6.5' },
+];
 
 export type Gfx = 'auto' | 'max' | 'ultra' | 'high' | 'medium' | 'low';
 export type Screen = 'none' | 'title' | 'garage' | 'modes' | 'lobby' | 'pause' | 'results' | 'busy' | 'controls' | 'settings' | 'shop';
@@ -48,6 +61,8 @@ export interface MenuHooks {
   partyMe(): void;
   /** driving assists changed (settings screen) */
   assists(): void;
+  /** a visual part, colour or the driver's skin changed: apply to the car on show (no reload) */
+  look(): void;
   /** results screen: watch the cars still racing */
   spectate(): void;
 }
@@ -95,6 +110,8 @@ export class Menu {
   /** the loading screen ('busy' shows it; main may hold it while the game warms up) */
   loader!: Loader;
   private shopNote = '';
+  private garageTab = 'paint';
+  private shopTab: 'cars' | 'upgrades' | 'gear' = 'cars';
   private shopCar = '';
 
   constructor(readonly sel: Selection, private cars: CatalogCar[], private physics: Record<string, unknown>, private hooks: MenuHooks) {
@@ -252,13 +269,22 @@ export class Menu {
         : `<button class="pip buy" data-act="buy-mod" data-k="${k}" data-v="${n}" ${w.modCost(this.shopCar, k, n) > w.credits ? 'disabled' : ''}>${m.levels[n]}<small>${fmt(w.modCost(this.shopCar, k, n))}</small></button>`).join('');
       return `<div class="mod"><div><b>${m.label}</b><span class="dim">${m.hint}</span></div><div class="pips">${stages}</div></div>`;
     }).join('');
+    const gear = SKINS.map((k) => {
+      const owned = w.ownsSkin(k.id), short = k.price - w.credits, worn = this.sel.skin === k.id;
+      const btn = owned ? `<button class="small ${worn ? '' : 'primary'}" data-act="wear-skin" data-v="${k.id}" ${worn ? 'disabled' : ''}>${worn ? '✓ Wearing' : 'Wear'}</button>`
+        : `<button class="small ${short > 0 ? '' : 'primary'}" data-act="buy-skin" data-v="${k.id}" ${short > 0 ? 'disabled' : ''}>${short > 0 ? `Need ${fmt(short)} more` : `Buy · ${fmt(k.price)}`}</button>`;
+      return `<div class="scard gear ${owned ? 'owned' : ''}">${helmetSvg(k, 64)}<div class="car-head"><b>${esc(k.name)}</b><i class="car-badge">${owned ? 'OWNED' : fmt(k.price)}</i></div>
+        <span class="suit-dot" style="background:${k.suit}"></span>${btn}</div>`;
+    }).join('');
+    const tab = (id: typeof this.shopTab, label: string) => `<button class="gtab ${this.shopTab === id ? 'on' : ''}" data-act="stab" data-v="${id}">${label}</button>`;
+    const content = this.shopTab === 'cars' ? `<div class="shop-cars">${cars}</div>`
+      : this.shopTab === 'upgrades' ? `<p class="dim small-note">Fit and remove bought stages in the Garage → Performance.</p><div class="chips">${carChips}</div>${ups}`
+      : `<p class="dim small-note">Helmet and suit: worn by your driver and shown as your avatar to everyone in a party.</p><div class="shop-cars">${gear}</div>`;
     return `<div class="lobby-screen"><div class="card lobby-card shop-card">
       <div class="lobby-head"><button data-act="home" class="back-btn">← Main Menu</button><div><div class="kicker">SPEND YOUR CREDITS</div><h2>Shop</h2></div><div class="wallet-pill">${fmt(w.credits)}</div></div>
+      <div class="gtabs">${tab('cars', 'Cars')}${tab('upgrades', 'Upgrades')}${tab('gear', 'Driver gear')}</div>
       ${this.shopNote ? `<div class="pnote ${this.shopNote.startsWith('✓') ? '' : 'bad'}">${esc(this.shopNote)}</div>` : ''}
-      <h3>Cars</h3><div class="shop-cars">${cars}</div>
-      <h3>Upgrades <small class="dim">(fit and remove them in the Garage)</small></h3>
-      <div class="chips">${carChips}</div>
-      ${ups}
+      ${content}
       <div class="dim note">Earn credits by racing (more for a better finish and longer races) and by driving in free roam (${fmt(400)} per km).</div>
       <div class="lobby-foot"><button data-act="garage-open">⚙ Garage</button><button class="primary" data-act="play">Play ▶</button></div>
     </div></div>`;
@@ -275,10 +301,82 @@ export class Menu {
         <div class="mini"><em>${Math.round(st.power)} kW</em><em>${Math.round(st.mass)} kg</em><em>${st.grip.toFixed(2)} µ</em></div>
       </button>`;
     }).join('');
-    const paint = paintOf(sel, this.cars).toLowerCase();
-    const sw = SWATCHES.map((c) => `<button class="sw ${c === paint ? 'on' : ''}" style="background:${c}" data-act="paint" data-v="${c}" aria-label="${c}"></button>`).join('');
-    const fin = (Object.keys(FINISHES) as Finish[]).map((f) => `<button class="chip ${sel.finish === f ? 'on' : ''}" data-act="finish" data-v="${f}">${FINISHES[f].label}</button>`).join('');
     const mods = modsOf(sel);
+    const now = statsOf(applyMods(this.physics[sel.car], mods));
+    const stages = MOD_KEYS.reduce((a, k) => a + mods[k], 0);
+    const tabs = GTABS.map((t) => `<button class="gtab ${this.garageTab === t.id ? 'on' : ''}" data-act="gtab" data-v="${t.id}">${t.label}</button>`).join('');
+    const body = ({ paint: () => this.gPaint(), aero: () => this.gAero(), wheels: () => this.gWheels(), lights: () => this.gLights(),
+      glass: () => this.gGlass(), driver: () => this.gDriver(), perf: () => this.gPerf() } as Record<string, () => string>)[this.garageTab]?.() ?? '';
+    return `<div class="garage">
+      <div class="g-top">
+        <div class="g-title">GARAGE <span>// BUILD YOUR CAR</span></div>
+        <div class="g-cams">
+          <button class="chip" data-act="cam" data-v="0.8,0.17,6.5">3/4</button>
+          <button class="chip" data-act="cam" data-v="1.57,0.08,6.4">Side</button>
+          <button class="chip" data-act="cam" data-v="3.14,0.15,6.0">Rear</button>
+          <button class="chip" data-act="cam" data-v="0,0.14,6.0">Front</button>
+        </div>
+      </div>
+      <div class="g-left panel"><h3>Your cars (${this.cars.filter((c) => w.owns(c.id)).length}/${this.cars.length})</h3>${cards}
+        ${this.cars.some((c) => !w.owns(c.id)) ? '<button class="small more-cars" data-act="shop-open">🛒 More cars in the Shop</button>' : ''}</div>
+      <div class="g-right panel"><div class="gtabs">${tabs}</div>${body}</div>
+      <div class="g-bottom">
+        <button data-act="home" class="back-btn">← Main Menu</button>
+        <div class="g-summary"><b>${esc(this.car().name)}</b><span class="dim">${stages ? `${stages} upgrade stage${stages > 1 ? 's' : ''} fitted` : 'Stock'} · ${FINISHES[sel.finish].label} paint · ${Math.round(now.power)} kW · ${Math.round(now.mass)} kg</span></div>
+        <button class="primary huge go" data-act="play">Continue ▶</button>
+      </div>
+    </div>`;
+  }
+
+  // ---- garage tabs (each a list of rows; every choice is data-act="cu" data-k=<Custom key> data-v=<value>) ----
+  private cu(k: keyof Custom, v: string | number | boolean, label: string, on: boolean) {
+    return `<button class="chip ${on ? 'on' : ''}" data-act="cu" data-k="${k}" data-v="${v}">${label}</button>`;
+  }
+  private swatches(k: keyof Custom, cur: string, list = PART_COLOURS) {
+    return `<div class="sws">${list.map((c) => c ? `<button class="sw ${c === cur ? 'on' : ''}" style="background:${c}" data-act="cu" data-k="${k}" data-v="${c}" aria-label="${c}"></button>`
+      : `<button class="sw off ${cur === '' ? 'on' : ''}" data-act="cu" data-k="${k}" data-v="" aria-label="Off">✕</button>`).join('')}</div>`;
+  }
+  private gPaint() {
+    const sel = this.sel, c = customOf(sel), paint = paintOf(sel, this.cars).toLowerCase();
+    const sw = SWATCHES.map((x) => `<button class="sw ${x === paint ? 'on' : ''}" style="background:${x}" data-act="paint" data-v="${x}" aria-label="${x}"></button>`).join('');
+    const fin = (Object.keys(FINISHES) as Finish[]).map((f) => `<button class="chip ${sel.finish === f ? 'on' : ''}" data-act="finish" data-v="${f}">${FINISHES[f].label}</button>`).join('');
+    return `<h3>Body colour</h3>
+      <div class="sws">${sw}<label class="sw custom" title="Custom colour"><input id="custom" type="color" value="${paint}" /></label></div>
+      <h3>Finish</h3><div class="chips">${fin}</div>
+      <h3>Livery</h3><div class="chips">${LIVERIES.map((l, i) => this.cu('livery', i, l, c.livery === i)).join('')}</div>
+      ${c.livery ? `<h3>Livery colour</h3>${this.swatches('liveryColor', c.liveryColor)}` : ''}`;
+  }
+  private gAero() {
+    const c = customOf(this.sel);
+    return `<h3>Rear wing</h3><div class="chips">${(Object.keys(WINGS) as (keyof typeof WINGS)[]).map((k) => this.cu('wing', k, WINGS[k], c.wing === k)).join('')}</div>
+      <h3>Splitter, diffuser &amp; wing finish</h3><div class="chips">${(Object.keys(AERO_FINISHES) as (keyof typeof AERO_FINISHES)[]).map((k) => this.cu('aero', k, AERO_FINISHES[k], c.aero === k)).join('')}</div>
+      <p class="dim small-note">Looks only: the car's downforce comes from its setup and the Aero upgrade (Performance tab).</p>`;
+  }
+  private gWheels() {
+    const c = customOf(this.sel);
+    return `<h3>Rim colour</h3>${this.swatches('rimColor', c.rimColor)}
+      <h3>Rim finish</h3><div class="chips">${(Object.keys(RIM_FINISHES) as (keyof typeof RIM_FINISHES)[]).map((k) => this.cu('rimFinish', k, RIM_FINISHES[k], c.rimFinish === k)).join('')}</div>
+      <h3>Brake calipers</h3>${this.swatches('caliper', c.caliper)}`;
+  }
+  private gLights() {
+    const c = customOf(this.sel);
+    return `<h3>Headlights</h3><div class="chips">${(Object.keys(HEAD_TINTS) as (keyof typeof HEAD_TINTS)[]).map((k) => this.cu('headlights', k, HEAD_TINTS[k], c.headlights === k)).join('')}</div>
+      <h3>Tail lights</h3><div class="chips">${this.cu('smokedTails', false, 'Clear red', !c.smokedTails)}${this.cu('smokedTails', true, 'Smoked', c.smokedTails)}</div>
+      <h3>Underglow</h3>${this.swatches('underglow', c.underglow, GLOW_COLOURS)}`;
+  }
+  private gGlass() {
+    const c = customOf(this.sel);
+    return `<h3>Window tint</h3><div class="chips">${['Light', 'Dark', 'Limo'].map((l, i) => this.cu('tint', i, l, c.tint === i)).join('')}</div>
+      <h3>Exhaust tips</h3><div class="chips">${this.cu('exhaust', 'chrome', 'Chrome', c.exhaust === 'chrome')}${this.cu('exhaust', 'black', 'Black', c.exhaust === 'black')}${this.cu('exhaust', 'titanium', 'Burnt titanium', c.exhaust === 'titanium')}</div>`;
+  }
+  private gDriver() {
+    const owned = SKINS.filter((k) => this.wallet.ownsSkin(k.id));
+    const cards = owned.map((k) => `<button class="skin ${this.sel.skin === k.id ? 'on' : ''}" data-act="skin" data-v="${k.id}">${helmetSvg(k, 42)}<span>${esc(k.name)}</span></button>`).join('');
+    return `<h3>Driver gear <small class="dim">(your avatar in multiplayer)</small></h3><div class="skins">${cards}</div>
+      ${owned.length < SKINS.length ? '<button class="small more-cars" data-act="shop-gear">🛒 More helmets &amp; suits in the Shop</button>' : ''}`;
+  }
+  private gPerf() {
+    const sel = this.sel, w = this.wallet, mods = modsOf(sel);
     const rows = MOD_KEYS.map((k) => {
       const m = MODS[k];
       const own = w.stage(sel.car, k);
@@ -297,32 +395,7 @@ export class Menu {
       stat('Downforce', `${now.downforce.toFixed(2)} m²`, base.downforce / 1.2, now.downforce / 1.2),
       stat('Power/wt', `${Math.round(now.ratio)} W/kg`, base.ratio / 400, now.ratio / 400),
     ].join('');
-    const stages = MOD_KEYS.reduce((a, k) => a + mods[k], 0);
-    return `<div class="garage">
-      <div class="g-top">
-        <div class="g-title">GARAGE <span>// UPGRADES &amp; PAINT</span></div>
-        <div class="g-cams">
-          <button class="chip" data-act="cam" data-v="2.3,0.17,6.5">3/4 View</button>
-          <button class="chip" data-act="cam" data-v="1.57,0.08,6.4">Side</button>
-          <button class="chip" data-act="cam" data-v="0,0.15,6.0">Rear</button>
-          <button class="chip" data-act="cam" data-v="3.14,0.14,6.0">Front</button>
-        </div>
-      </div>
-      <div class="g-left panel"><h3>Your cars (${this.cars.filter((c) => w.owns(c.id)).length}/${this.cars.length})</h3>${cards}
-        ${this.cars.some((c) => !w.owns(c.id)) ? '<button class="small more-cars" data-act="shop-open">🛒 More cars in the Shop</button>' : ''}</div>
-      <div class="g-right panel">
-        <h3>Paint &amp; Finish</h3>
-        <div class="sws">${sw}<label class="sw custom" title="Custom colour"><input id="custom" type="color" value="${paint}" /></label></div>
-        <div class="chips">${fin}</div>
-        <h3>Performance Upgrades</h3>${rows}
-        <h3>Telemetry Specs <small class="dim">(red marker = stock)</small></h3>${stats}
-      </div>
-      <div class="g-bottom">
-        <button data-act="home" class="back-btn">← Main Menu</button>
-        <div class="g-summary"><b>${esc(this.car().name)}</b><span class="dim">${stages ? `${stages} upgrade stage${stages > 1 ? 's' : ''} fitted` : 'Stock'} · ${FINISHES[sel.finish].label} paint · ${Math.round(now.power)} kW · ${Math.round(now.mass)} kg</span></div>
-        <button class="primary huge go" data-act="play">Continue ▶</button>
-      </div>
-    </div>`;
+    return `<h3>Performance upgrades</h3>${rows}<h3>Telemetry <small class="dim">(red marker = stock)</small></h3>${stats}`;
   }
 
   private modes() {
@@ -379,7 +452,7 @@ export class Menu {
     }
     const carName = (id: string) => this.cars.find((c) => c.id === id)?.name ?? '—';
     const members = p.members.map((m) => `<div class="member">
-        <i class="dot" style="background:${hex(m.paint)}"></i>
+        <span class="avatar">${helmetSvg(skinOf(m.skin), 30)}<i class="dot" style="background:${hex(m.paint)}"></i></span>
         <div class="mtext"><div class="mname"><b>${esc(m.name)}</b>${m.host ? '<span class="pill gold">LEADER</span>' : ''}${m.id === p.selfId ? '<span class="pill">YOU</span>' : ''}</div>
         <span class="dim">${esc(carName(m.car))} · <span class="mstate ${m.ready ? 'ok' : ''}">${p.phase === 'loading' ? (m.ready ? 'on the grid' : 'loading…') : p.phase === 'driving' ? 'driving' : 'in lobby'}</span></span></div>
       </div>`).join('');
@@ -488,7 +561,20 @@ export class Menu {
       case 'play': this.wallet.lastEarned = 0; this.show('modes'); break;
       case 'garage-open': this.show('garage'); this.hooks.preview(); break;
       case 'home': this.wallet.lastEarned = 0; this.show('title'); break;
-      case 'shop-open': this.shopNote = ''; this.shopCar = sel.car; this.show('shop'); break;
+      case 'shop-open': this.shopNote = ''; this.shopCar = sel.car; this.shopTab = this.garageTab === 'perf' ? 'upgrades' : 'cars'; this.show('shop'); break;
+      case 'shop-gear': this.shopNote = ''; this.shopTab = 'gear'; this.show('shop'); break;
+      case 'stab': this.shopTab = v as typeof this.shopTab; this.render(); break;
+      case 'gtab': { this.garageTab = v; const t = GTABS.find((x) => x.id === v); if (t) { const [az, el, dist] = t.cam.split(',').map(Number); this.hooks.cam?.(az, el, dist); } this.render(); break; }
+      case 'cu': {
+        const c = customOf(sel), k = b.dataset.k as keyof Custom;
+        const val = k === 'livery' || k === 'tint' ? Number(v) : k === 'smokedTails' ? v === 'true' : v;
+        (c as unknown as Record<string, unknown>)[k] = val;
+        this.save(); this.hooks.look(); this.render();
+        break;
+      }
+      case 'skin': if (this.wallet.ownsSkin(v)) { sel.skin = v; this.save(); this.hooks.look(); this.hooks.partyMe(); this.render(); } break;
+      case 'buy-skin': this.shopNote = this.wallet.buySkin(v); this.render(); break;
+      case 'wear-skin': if (this.wallet.ownsSkin(v)) { sel.skin = v; this.save(); this.hooks.look(); this.hooks.partyMe(); this.render(); } break;
       case 'shop-car': this.shopCar = v; this.render(); break;
       case 'shop-drive': sel.car = v; this.shopCar = v; this.save(); this.render(); this.hooks.preview(); break;
       case 'buy-car': this.shopNote = this.wallet.buyCar(v); if (this.wallet.owns(v)) this.shopCar = v; this.render(); break;

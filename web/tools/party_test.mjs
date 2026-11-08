@@ -37,12 +37,14 @@ const check = (name, cond) => { assert.ok(cond, name); console.log('  ok  ' + na
 try {
   for (let i = 0; i < 40; i++) { try { await fetch(`http://127.0.0.1:${port}/json/version`); break; } catch { await sleep(250); } }
   const A = await page(), B = await page(), C = await page();
-  const code = await A(`P.create({ name: 'Alice', car: 'vela_gt', paint: 0xff0000 }).then((p) => { window.p = p; hooks(p, 'A'); return p.code; })`);
+  const code = await A(`P.create({ name: 'Alice', car: 'vela_gt', paint: 0xff0000, skin: 'volt', look: { livery: 1, liveryColor: '#15171c', wing: 'gt', underglow: '#2a9dff' } }).then((p) => { window.p = p; hooks(p, 'A'); return p.code; })`);
   check(`leader created party ${code}`, /^[A-Z2-9]{5}$/.test(code));
-  await B(`P.join('${code.toLowerCase()}', { name: 'Bob<b>', car: 'harrier_gt', paint: 0x00ff00 }).then((p) => { window.p = p; hooks(p, 'B'); return 1; })`);
+  await B(`P.join('${code.toLowerCase()}', { name: 'Bob<b>', car: 'harrier_gt', paint: 0x00ff00, skin: 'not-a-skin', look: { wing: 'rocket', rimColor: 'red;}' } }).then((p) => { window.p = p; hooks(p, 'B'); return 1; })`);
   await waitFor(A, 'p.members.length === 2');
   check('member joined by code (lower case ok), leader sees 2', true);
   check('member sees the lobby with names (markup stripped)', JSON.stringify(await B('p.members.map((m) => m.name)')) === '["Alice","Bobb"]');
+  check('avatars: skin and look of the leader reach the member', JSON.stringify(await B('[p.members[0].skin, p.members[0].look?.wing, p.members[0].look?.underglow]')) === '["volt","gt","#2a9dff"]');
+  check('avatars: a bad skin / look from a member is cleaned by the leader', JSON.stringify(await A('[p.members[1].skin, p.members[1].look.wing, p.members[1].look.rimColor]')) === '["classic","stock","#9aa0aa"]');
   check('bad code is refused', /no party/i.test(await C(`P.join('ZZZZZ', { name: 'C', car: 'x', paint: 0 }).then(() => 'joined', (e) => e.message)`)));
   await A(`(p.setMode('race', 5), 1)`);
   await waitFor(B, `p.mode === 'race' && p.laps === 5`);

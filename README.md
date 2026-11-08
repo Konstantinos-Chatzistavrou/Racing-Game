@@ -102,9 +102,16 @@ from your current speed). The assists are levels of the physics core's own drive
 the same for everyone. They can be changed from the pause menu too; keys 1 / 2 / 3 / 5 switch ABS / TC / stability /
 gearbox while driving. Settings also holds the race rules, graphics, controls and the performance tests.
 
+**Garage** (build your car, part by part): Paint (colour, finish, liveries: twin / wide / side stripes, two-tone),
+Aero (stock wing, none, ducktail or GT wing; splitter / diffuser / wing in carbon, gloss or matte black, body colour),
+Wheels (rim colour and finish, brake calipers), Lights (headlight tint, smoked tail lights, underglow), Glass (tint,
+exhaust tips), Driver (the helmet and suit you own) and Tune (performance upgrades). Each tab turns the camera to that
+part; every change applies at once (uniforms only, no shader compiles). The driver is drawn in the seat; their gear is
+your avatar in a party lobby and in your car on the other players' screens.
+
 **Credits and the Shop**: races pay by finishing position (more for longer races; a DNF pays nothing), free roam
-pays per km driven. The Shop sells cars and upgrade stages; the Garage shows the cars you own and fits the upgrades you
-bought. A new player starts with the Vela GT and 5,000 Cr.
+pays per km driven. The Shop sells cars, upgrade stages and driver gear (helmets and suits); the Garage shows the cars you own and fits
+what you bought. A new player starts with the Vela GT and 5,000 Cr.
 
 **Race rules** (Settings): **Full Realism** (default) or **Respawns**. In Full Realism there is no reset in a race
 (AI or party): a wrecked car, 5 s on its roof, or 30 s stuck is a DNF, and you spectate the remaining cars (◀ ▶ or

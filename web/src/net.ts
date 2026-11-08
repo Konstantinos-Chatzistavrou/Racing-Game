@@ -12,6 +12,8 @@
 import * as THREE from 'three/webgpu';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { setupCarMaterials, type CarVisual } from './scene/car';
+import { CarCustomizer, cleanCustom, type Custom } from './scene/custom';
+import { Driver, skinOf } from './scene/driver';
 import { assetUrl, loadGLTF } from './scene/loaders';
 import { GROUP_CAR, carHull, type CarShape, type PhysicsWorld } from './physics/world';
 import type { Pose } from './party';
@@ -52,10 +54,14 @@ export class RemoteCars {
   private tags = document.getElementById('tags');
   /** names by player id (from the party lobby) */
   names = new Map<string, string>();
+  /** each player's car parts and driver skin (from the party lobby) */
+  looks = new Map<string, { skin?: string; look?: Custom }>();
 
   constructor(private scene: THREE.Scene, private visual: CarVisual, private pw: PhysicsWorld, private shape: CarShape) {
     this.proto = visual.model.clone(true);
     this.proto.traverse((o) => { if ((o as THREE.Light).isLight) o.visible = false; });
+    // our own driver and garage parts are not part of the model: every remote car gets its player's own
+    for (const nm of ['wheel_driver', 'wing_gt', 'wing_ducktail', 'wheel_underglow']) this.proto.getObjectByName(nm)?.removeFromParent();
     // Remote cars use the light traffic model (~28k triangles, shared with the AI cars) once it is
     // in; until then (or if it fails) a copy of the player's model. Same CG offset as the player's.
     if (visual.cfg.lod_model) {
@@ -202,6 +208,16 @@ export class RemoteCars {
       const m = o as THREE.Mesh;
       if (m.isMesh && paintMat && (Array.isArray(m.material) ? m.material.includes(paintMat) : m.material === paintMat)) m.userData.netPaint = true;
     });
+    // that player's parts, colours and driver (custom.ts, driver.ts)
+    const mats = model.userData.carMats as { paint: THREE.MeshPhysicalMaterial | null; glass: THREE.MeshPhysicalMaterial | null; carbon: THREE.MeshPhysicalMaterial | null };
+    const lk = this.looks.get(id);
+    const cz = new CarCustomizer(model, mats.paint, mats.glass, mats.carbon);
+    cz.apply(cleanCustom(lk?.look), '#' + paint.getHexString());
+    const drv = new Driver(new THREE.Vector3(...(this.visual.cfg.driver_seat_m ?? [0.36, 0.25, -0.3])));
+    drv.root.scale.setScalar(this.visual.cfg.driver_scale ?? 0.93);
+    drv.setSkin(skinOf(lk?.skin));
+    model.add(drv.root);
+    root.userData.cz = cz;
     root.add(model);
     drawEarly(model);
     return root;
@@ -226,6 +242,7 @@ export class RemoteCars {
       const root = r.root;
       this.predict(r, now, root.position);
       root.quaternion.copy(r.qNow);
+      (root.userData.cz as CarCustomizer | undefined)?.sync(root.position, root.quaternion);
       if (r.tag) {
         const d = root.position.distanceTo(camera.position);
         this.v.copy(root.position).setY(root.position.y + 1.6).project(camera);

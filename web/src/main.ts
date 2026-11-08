@@ -35,7 +35,8 @@ import type RAPIER from '@dimforge/rapier3d-compat';
 import { RemoteCars } from './net';
 import { Party, cleanCode, type Progress } from './party';
 import { Menu, rank, type Gfx, type Screen, type Standing } from './menu';
-import { applyMods, loadSelection, modsOf, paintOf, type CatalogCar, type Mode } from './garage';
+import { applyMods, customOf, loadSelection, modsOf, paintOf, type CatalogCar, type Mode } from './garage';
+import { skinOf } from './scene/driver';
 import { AiTraffic } from './ai';
 import { formatLap } from './hud';
 import { autoCap, benchClose, benchProgress, benchResults, measureRefresh, recommend, stats, type BenchReport, type PhaseResult, type SoakWindow } from './bench';
@@ -628,7 +629,9 @@ async function main() {
     }
   };
   const paintInt = () => parseInt(paintOf(sel, catalog).slice(1), 16);
-  const meForParty = () => ({ name: sel.name, car: sel.car, paint: paintInt() });
+  const meForParty = () => ({ name: sel.name, car: sel.car, paint: paintInt(), skin: sel.skin, look: customOf(sel) });
+  /** The garage look (parts, colours) and the driver's skin on the car on show. */
+  const applyLook = () => { visual.custom.apply(customOf(sel), paintOf(sel, catalog)); visual.driver.setSkin(skinOf(sel.skin)); };
   const isShowroom = (st: State) => st === 'title' || st === 'garage' || st === 'modes' || st === 'lobby' || st === 'busy';
   const menu: Menu = new Menu(sel, catalog, physics, {
     preview: () => { void (async () => {
@@ -638,6 +641,7 @@ async function main() {
       if (swap) await loader.show(`Loading ${catalog.find((c) => c.id === sel.car)?.name ?? 'car'}…`);
       await showCar();
       visual.setPaint(paintOf(sel, catalog), sel.finish);
+      applyLook();
       party?.updateMe(meForParty());
       if (swap) { await steadyFrames(5, 70, 6000); loader.hide(); }
     })(); },
@@ -651,7 +655,12 @@ async function main() {
       if (sc === 'title' || sc === 'garage' || sc === 'modes' || sc === 'lobby') setState(sc);
       if (sc === 'garage') preloadGarageCars();
     },
-    cam: (az, el, dist) => { orbit.az = az; orbit.el = el; orbit.dist = dist; orbit.drag = false; },
+    // garage camera presets are relative to the car: 0 = in front, pi/2 = the driver's (left) side, pi = behind
+    cam: (az, el, dist) => {
+      const f = tmpD.set(0, 0, 1).applyQuaternion(quat);
+      orbit.az = Math.atan2(f.x, f.z) + az; orbit.el = el; orbit.dist = dist; orbit.drag = false;
+      orbit.holdUntil = performance.now() + 15000;   // the turntable waits while you look at that part
+    },
     // ---- multiplayer ----
     partyCreate: () => {
       if (menu.partyBusy) return;
@@ -678,12 +687,14 @@ async function main() {
     partyMe: () => party?.updateMe(meForParty()),
     spectate: () => enterSpectate(),
     assists: () => { toToggles(assistSet, input.assists); saveAssists(assistSet); },
+    look: () => { applyLook(); party?.updateMe(meForParty()); },
   });
   menu.gfx = gfx;
   const loader = new Loader();
   menu.loader = loader;
   menu.wallet = wallet;
   menu.assists = assistSet;
+  applyLook();
   const drivingLine = new DrivingLine(scene, ai);
   drivingLine.setCar(applyMods(physics[sel.car], modsOf(sel)));
   // every input device: force feedback (WebHID wheels), the Controls screen, pad / keyboard menu navigation
@@ -711,7 +722,7 @@ async function main() {
     if (p.isHost) p.setMode(p.mode, p.laps, sel.realism);   // the leader's own rules setting is the party default
     p.hooks = {
       changed: () => {
-        if (remote) { remote.names = new Map(p.members.map((m) => [m.id, m.name])); remote.refreshTags(); }
+        if (remote) { remote.names = new Map(p.members.map((m) => [m.id, m.name])); remote.looks = new Map(p.members.map((m) => [m.id, { skin: m.skin, look: m.look }])); remote.refreshTags(); }
         if (menu.screen === 'lobby' || menu.screen === 'modes') menu.render();
         setExtra();
       },
@@ -891,6 +902,7 @@ async function main() {
       for (const sh of headShadows) sh.autoUpdate = false;
     }
     visual.setPaint(paintOf(sel, catalog), sel.finish);
+    applyLook();
     if (needModel || carKey() !== builtKey) {
       rebuildPlayer();
       spawn();
@@ -929,7 +941,7 @@ async function main() {
     if (mode === 'online') {
       remote?.clear();
       remote = new RemoteCars(scene, visual, pw, shape);
-      if (party) remote.names = new Map(party.members.map((m) => [m.id, m.name]));
+      if (party) { remote.names = new Map(party.members.map((m) => [m.id, m.name])); remote.looks = new Map(party.members.map((m) => [m.id, { skin: m.skin, look: m.look }])); }
       remote.warmup(true);           // remote car shaders compiled now, not as a hitch when someone joins
       await warm();
       remote.warmup(false);
@@ -1055,7 +1067,7 @@ async function main() {
   });
 
   // Showroom camera: slow turntable around the parked car, drag to turn, wheel to zoom.
-  const orbit = { az: 2.3, el: 0.17, dist: 7, drag: false, x: 0, y: 0, shift: 0 };
+  const orbit = { az: 2.3, el: 0.17, dist: 7, drag: false, x: 0, y: 0, shift: 0, holdUntil: 0 };
   (g.__game as { orbit?: typeof orbit; nyc?: typeof nyc }).orbit = orbit;
   (g.__game as { orbit?: typeof orbit; nyc?: typeof nyc }).nyc = nyc;
   const dom = renderer.domElement;
@@ -1072,7 +1084,7 @@ async function main() {
   dom.addEventListener('wheel', (e) => { if (!driving()) orbit.dist = Math.min(11, Math.max(4.5, orbit.dist + e.deltaY * 0.004)); }, { passive: true });
   const tmpT = new THREE.Vector3(), tmpP = new THREE.Vector3(), tmpR = new THREE.Vector3(), tmpD = new THREE.Vector3();
   const placeShowroom = (dt: number, carPos: THREE.Vector3) => {
-    if (!orbit.drag) orbit.az += dt * (state === 'title' ? 0.2 : 0.1);
+    if (!orbit.drag && performance.now() > orbit.holdUntil) orbit.az += dt * (state === 'title' ? 0.2 : 0.1);
     // on the title the car sits right of centre (the logo is on the left); in the garage it is centred
     orbit.shift += ((state === 'title' ? 1.7 : 0) - orbit.shift) * (1 - Math.exp(-dt * 4));
     tmpT.copy(carPos).add(tmpD.set(0, 0.25, 0));

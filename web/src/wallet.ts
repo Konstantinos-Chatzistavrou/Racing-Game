@@ -4,6 +4,7 @@
 // A new player starts with the Vela GT and STARTING_CREDITS. A player from before the shop existed keeps the car they
 // had selected and the upgrades fitted to it.
 import { MOD_KEYS, type CatalogCar, type ModKey, type Mods, type Selection } from './garage';
+import { SKINS } from './scene/driver';
 
 export const STARTER_CAR = 'vela_gt';
 export const STARTING_CREDITS = 5_000;
@@ -20,7 +21,7 @@ const LAP_FACTOR: Record<number, number> = { 1: 1, 3: 2.4, 5: 3.6, 10: 6.5 };
 /** Free roam: credits per km driven. */
 export const FREE_ROAM_PER_KM = 400;
 
-export interface WalletData { credits: number; cars: string[]; mods: Record<string, Mods> }
+export interface WalletData { credits: number; cars: string[]; mods: Record<string, Mods>; skins: string[] }
 const KEY = 'nr.wallet.v2';   // v1 (35,000 Cr start, paid DNFs) lived for one day: everyone starts again
 
 export const fmt = (n: number) => `${Math.round(n).toLocaleString('en-US')} Cr`;
@@ -37,7 +38,8 @@ export class Wallet {
     try {
       const s = JSON.parse(localStorage.getItem(KEY) ?? 'null');
       if (s && typeof s === 'object' && Number.isFinite(s.credits)) {
-        d = { credits: Math.max(0, Math.round(s.credits)), cars: Array.isArray(s.cars) ? s.cars.filter((c: unknown) => typeof c === 'string') : [], mods: {} };
+        d = { credits: Math.max(0, Math.round(s.credits)), cars: Array.isArray(s.cars) ? s.cars.filter((c: unknown) => typeof c === 'string') : [], mods: {},
+          skins: Array.isArray(s.skins) ? s.skins.filter((k: unknown) => SKINS.some((x) => x.id === k)) : [] };
         for (const [car, m] of Object.entries((s.mods ?? {}) as Record<string, Mods>)) {
           const o = { engine: 0, tyres: 0, weight: 0, aero: 0 } as Mods;
           for (const k of MOD_KEYS) o[k] = Math.max(0, Math.min(3, Math.round(Number(m?.[k]) || 0)));
@@ -47,14 +49,15 @@ export class Wallet {
     } catch { /* storage blocked */ }
     if (!d) {
       // first run with the shop: the starter car, plus whatever this player was already driving
-      d = { credits: STARTING_CREDITS, cars: [STARTER_CAR], mods: {} };
+      d = { credits: STARTING_CREDITS, cars: [STARTER_CAR], mods: {}, skins: [] };
       let had = false;
       try { had = localStorage.getItem('nr.garage.v1') !== null; } catch { /* blocked */ }
       if (had && sel.car !== STARTER_CAR) d.cars.push(sel.car);
       if (had && sel.mods[sel.car]) d.mods[sel.car] = { ...sel.mods[sel.car] };
     }
     if (!d.cars.includes(STARTER_CAR)) d.cars.push(STARTER_CAR);
-    if (unlockAll) for (const c of catalog) { if (!d.cars.includes(c.id)) d.cars.push(c.id); d.mods[c.id] = { engine: 3, tyres: 3, weight: 3, aero: 3 }; }
+    for (const k of SKINS) if (k.price === 0 && !d.skins.includes(k.id)) d.skins.push(k.id);   // free skins are always yours
+    if (unlockAll) { for (const c of catalog) { if (!d.cars.includes(c.id)) d.cars.push(c.id); d.mods[c.id] = { engine: 3, tyres: 3, weight: 3, aero: 3 }; } d.skins = SKINS.map((k) => k.id); }
     this.data = d;
     this.fitOwned(sel);
     this.save();
@@ -64,12 +67,23 @@ export class Wallet {
   get credits() { return this.data.credits; }
 
   owns(car: string) { return this.data.cars.includes(car); }
+  ownsSkin(id: string) { return this.data.skins.includes(id); }
+  buySkin(id: string): string {
+    const k = SKINS.find((x) => x.id === id);
+    if (!k || this.ownsSkin(id)) return '';
+    if (k.price > this.data.credits) return `Not enough credits: ${k.name} costs ${fmt(k.price)}.`;
+    this.data.credits -= k.price;
+    this.data.skins.push(id);
+    this.save();
+    return `✓ ${k.name} gear is yours. Wear it from the Garage → Driver tab.`;
+  }
   /** highest owned stage of an upgrade on a car */
   stage(car: string, k: ModKey) { return this.data.mods[car]?.[k] ?? 0; }
 
   /** Selection must only use owned things (a car / stage removed or never bought: fall back). */
   fitOwned(sel: Selection) {
     if (!this.owns(sel.car)) sel.car = STARTER_CAR;
+    if (!this.ownsSkin(sel.skin)) sel.skin = SKINS[0].id;
     for (const [car, m] of Object.entries(sel.mods)) for (const k of MOD_KEYS) m[k] = Math.min(m[k], this.stage(car, k));
   }
 

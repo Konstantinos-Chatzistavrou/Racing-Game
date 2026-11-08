@@ -1,5 +1,8 @@
 // Garage data: the car catalog, tuning mods (a patch applied to the car's physics JSON before the
-// core is created), paint, and the saved selection. No DOM and no three.js here (menu.ts draws it).
+// core is created), paint, visual parts (scene/custom.ts), the driver's skin, and the saved selection. No DOM here.
+
+import { cleanCustom, defaultCustom, type Custom } from './scene/custom';
+import { SKINS } from './scene/driver';
 
 export interface CatalogCar { id: string; name: string; tag: string; physics: string; paint: string; /** visual config (default: the shared Vela GT body) */ visual?: string; /** Shop price, credits */ price?: number }
 export type Finish = 'gloss' | 'satin' | 'metallic' | 'pearl' | 'candy' | 'matte';
@@ -19,6 +22,10 @@ export interface Selection {
   name: string;
   /** races: true = full realism (no resets; wrecked / rolled / stuck = DNF, then spectate), false = R respawns */
   realism: boolean;
+  /** visual parts per car (garage tabs) */
+  custom: Record<string, Custom>;
+  /** the driver's skin (helmet, suit): also the multiplayer avatar */
+  skin: string;
 }
 
 /** iridescence: strength of the angle-dependent colour shift of pearl paint (0 = none). */
@@ -78,7 +85,7 @@ export function statsOf(d: any): Stats {
 
 const KEY = 'nr.garage.v1';
 export function loadSelection(cars: CatalogCar[], params: URLSearchParams): Selection {
-  const sel: Selection = { car: cars.find((c) => c.id === 'vela_gt')?.id ?? cars[0].id, paint: {}, finish: 'gloss', mods: {}, mode: 'race', laps: 3, name: `Driver ${Math.floor(1000 + Math.random() * 9000)}`, realism: true };
+  const sel: Selection = { car: cars.find((c) => c.id === 'vela_gt')?.id ?? cars[0].id, paint: {}, finish: 'gloss', mods: {}, mode: 'race', laps: 3, name: `Driver ${Math.floor(1000 + Math.random() * 9000)}`, realism: true, custom: {}, skin: 'classic' };
   try {
     const s = JSON.parse(localStorage.getItem(KEY) ?? 'null');
     if (s && typeof s === 'object') {
@@ -94,6 +101,8 @@ export function loadSelection(cars: CatalogCar[], params: URLSearchParams): Sele
       if ([1, 3, 5, 10].includes(s.laps)) sel.laps = s.laps;
       if (typeof s.name === 'string' && s.name.trim()) sel.name = s.name.trim().slice(0, 18);
       if (typeof s.realism === 'boolean') sel.realism = s.realism;
+      if (s.custom && typeof s.custom === 'object') for (const [k, v] of Object.entries(s.custom)) if (cars.some((c) => c.id === k)) sel.custom[k] = cleanCustom(v);
+      if (SKINS.some((k) => k.id === s.skin)) sel.skin = s.skin;
     }
   } catch { /* storage blocked or corrupt: defaults */ }
   const q = params.get('car');   // ?car=<id>: pick the car from the URL (tests, links)
@@ -105,3 +114,5 @@ export function saveSelection(sel: Selection) {
 }
 export const paintOf = (sel: Selection, cars: CatalogCar[]) => sel.paint[sel.car] ?? cars.find((c) => c.id === sel.car)!.paint;
 export const modsOf = (sel: Selection): Mods => sel.mods[sel.car] ?? noMods();
+/** The selected car's visual parts (created on first use). */
+export const customOf = (sel: Selection): Custom => (sel.custom[sel.car] ??= defaultCustom());

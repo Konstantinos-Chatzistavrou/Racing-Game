@@ -104,5 +104,11 @@
     1.65
   ],
   "lod_model": "res://assets/cars/v3/vela_gt_traffic.glb",
-  "lod_distance_m": 30
+  "lod_distance_m": 30,
+  "driver_seat_m": [
+    0.37,
+    0.21,
+    -0.45
+  ],
+  "driver_scale": 0.93
 }

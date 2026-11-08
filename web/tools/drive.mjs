@@ -214,6 +214,36 @@ try {
     await key('keyDown', 'KeyW', 'w'); await sleep(600); console.log('keyboard   ', await st()); await key('keyUp', 'KeyW', 'w');
     console.log('ffb status ', await evaluate(`window.__game.ffb.status`));
   }
+  if (scenario === 'garage2') {
+    // Garage tabs (?menu=1&unlockall=1): a screenshot per tab with choices made, and the driver seen from the side in
+    // every car (seat check).
+    const click = (q) => evaluate(`(() => { const e = document.querySelector('${q}'); if (!e) return 'MISSING ${q}'; e.click(); return 'ok'; })()`);
+    for (let i = 0; i < 90 && (await evaluate(`window.__game.menu().tuning`)); i++) await sleep(500);
+    await click('[data-act=garage-open]'); await sleep(2500);
+    const steps = [
+      ['paint', ['[data-act=cu][data-k=livery][data-v="1"]', '[data-act=cu][data-k=liveryColor][data-v="#15171c"]']],
+      ['aero', ['[data-act=cu][data-k=wing][data-v=gt]', '[data-act=cu][data-k=aero][data-v=gloss]']],
+      ['wheels', ['[data-act=cu][data-k=rimColor][data-v="#c8a24a"]', '[data-act=cu][data-k=rimFinish][data-v=gloss]', '[data-act=cu][data-k=caliper][data-v="#e6c619"]']],
+      ['lights', ['[data-act=cu][data-k=headlights][data-v=ice]', '[data-act=cu][data-k=underglow][data-v="#2a9dff"]']],
+      ['glass', ['[data-act=cu][data-k=tint][data-v="2"]']],
+      ['driver', ['[data-act=skin][data-v=volt]']],
+    ];
+    for (const [tab, clicks] of steps) {
+      console.log(tab, await click(`[data-act=gtab][data-v=${tab}]`));
+      await sleep(1600);
+      for (const q of clicks) console.log('  ', q.slice(0, 60), await click(q));
+      await sleep(900);
+      await shot(`g_${tab}.png`);
+    }
+    for (const car of ['kestrel_gt', 'harrier_gt', 'vela_gt']) {
+      await click(`[data-act=car][data-v=${car}]`);
+      for (let i = 0; i < 30 && (await evaluate(`!!document.getElementById('loader')?.classList.contains('in')`)); i++) await sleep(300);
+      await sleep(1500);
+      await click('[data-act=gtab][data-v=driver]'); await sleep(1500);
+      await shot(`g_driver_${car}.png`);
+    }
+    console.log('look', await evaluate(`JSON.stringify(window.__game.menu().sel.custom)`));
+  }
   if (scenario === 'stalls') {
     // Where does the game freeze? (?menu=1&unlockall=1) Frame times through: Garage, car swaps, Play -> race start,
     // pause / quit. Prints every frame over 100 ms with the step it happened in.
