@@ -12,7 +12,7 @@ export interface Profile {
 }
 
 const KEY = 'nr.cloud.v1';
-const envUrl = (import.meta as unknown as { env: Record<string, string | boolean | undefined> }).env;
+const envUrl = (import.meta as unknown as { env?: Record<string, string | boolean | undefined> }).env ?? {};
 const BASE = String(envUrl.VITE_CLOUD_URL ?? (envUrl.DEV ? 'http://127.0.0.1:8787' : '')).replace(/\/$/, '');
 
 export class Cloud {

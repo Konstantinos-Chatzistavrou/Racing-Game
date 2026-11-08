@@ -10,7 +10,10 @@ import { formatLap } from './hud';
 import { MAX_MEMBERS, cleanCode, type Party, type PartyMode } from './party';
 import type { ControlsUi } from './controls-menu';
 import { PRESET_INFO, applyPreset, matchPreset, type AssistSettings, type Preset } from './assists';
-import { MOD_PRICES, Wallet, fmt } from './wallet';
+import { fmt, fmtXp, type Career, type MpCareer, type SpCareer } from './career';
+import type { Cloud } from './cloud';
+import type { RankedResult } from './ranked';
+import { levelOf } from './progression';
 import type { Loader } from './loading';
 import { AERO_FINISHES, GLOW_COLOURS, HEAD_TINTS, LIVERIES, PART_COLOURS, RIM_FINISHES, WINGS, type Custom } from './scene/custom';
 import { SKINS, helmetSvg, skinOf } from './scene/driver';
@@ -104,7 +107,15 @@ export class Menu {
   ctl: ControlsUi | null = null;
   private controlsFrom: Screen = 'title';
   /** credits / owned cars and upgrades, and the driving assists (main sets them up) */
-  wallet!: Wallet;
+  sp!: SpCareer;
+  mp!: MpCareer;
+  cloud!: Cloud;
+  /** the career the garage and shop show (single player / online) */
+  get career(): Career { return this.sel.career === 'mp' ? this.mp : this.sp; }
+  /** the online race room's verdict on the last party race */
+  private rankedRes: RankedResult | null = null;
+  private recoveryShown = false;
+  private settingsNote = '';
   assists!: AssistSettings;
   private settingsFrom: Screen = 'title';
   /** the loading screen ('busy' shows it; main may hold it while the game warms up) */
@@ -195,13 +206,14 @@ export class Menu {
     const dis = this.tuning ? 'disabled' : '';
     const invite = this.invite && !this.party ? `<div class="invite"><span>🏁 You're invited to party <b>${esc(this.invite)}</b></span>
         <button class="primary" data-act="invite" ${dis}>Join Party</button><button class="small" data-act="noinvite" aria-label="Dismiss">✕</button></div>` : '';
-    const w = this.wallet;
-    const earned = w.lastEarned ? `<div class="earned">+${fmt(w.lastEarned)} <span class="dim">${esc(w.lastReason)}</span></div>` : '';
+    const last = this.sp.last ?? this.mp.last;
+    const earned = last && (last.xp || last.cr) ? `<div class="earned">+${fmtXp(last.xp)}${last.cr ? ` · +${fmt(last.cr)}` : ''} <span class="dim">${esc(last.reason)}</span>${last.levelUp ? ` <b class="lvup">LEVEL ${last.levelUp}</b>` : ''}</div>` : '';
     return `${this.tuning ? '<div class="cover"><div class="card center"><div class="spin"></div><p>Calibrating WebGPU pipeline…</p><span class="dim">Optimizing resolution &amp; reflections for this display.</span></div></div>' : ''}
       <div class="title">
         <div class="kicker">1:1 NEW YORK CITY // PACEJKA MF 6.1</div>
         <div class="logo">OPEN<span>GRID</span></div>
-        <div class="sub">1:1 Midtown Manhattan · Active vehicle: <b>${esc(curCar.name)}</b> · <span class="credits">${fmt(w.credits)}</span></div>
+        <div class="sub">1:1 Midtown Manhattan · Active vehicle: <b>${esc(curCar.name)}</b></div>
+        <div class="careers">${this.careerCard('sp')}${this.careerCard('mp')}</div>
         ${earned}
         ${invite}
         <div class="title-btns">
@@ -243,19 +255,53 @@ export class Menu {
       <div class="lobby-head"><button data-act="settings-back" class="back-btn">← Back</button><div><div class="kicker">OPTIONS</div><h2>Settings</h2></div></div>
       <h3>Driving assists</h3>${assists}
       <h3>Controls</h3><div class="chips"><button data-act="controls-open">🎮 Controllers, wheels &amp; keyboard…</button></div>
+      <h3>Online account</h3>
+      <div class="dim note">${this.cloud.available ? `Your online career is kept on the server, with no e-mail or password. The recovery code moves it to another device: keep it private, anyone with it can use your account.${this.mp.ready ? '' : ` (${esc(this.mp.note)})`}` : 'The online service is not set up for this build.'}</div>
+      ${this.cloud.available ? `<div class="chips"><button class="small" data-act="recovery">${this.recoveryShown ? 'Hide' : 'Show'} recovery code</button></div>
+        ${this.recoveryShown ? `<input id="reccode" type="text" readonly value="${esc(this.cloud.recoveryCode || 'No account yet: open the multiplayer lobby once.')}" />` : ''}
+        <div class="joinrow"><input id="restore" type="text" placeholder="Paste a recovery code to use that account here" spellcheck="false" autocomplete="off" /><button class="small" data-act="restore">Use</button></div>
+        ${this.settingsNote ? `<div class="pnote ${this.settingsNote.startsWith('✓') ? '' : 'bad'}">${esc(this.settingsNote)}</div>` : ''}` : ''}
       ${more}
       <div class="lobby-foot"><span></span><button data-act="settings-back" class="primary">Done</button></div>
     </div></div>`;
   }
 
+  /** A career's level, XP bar and (online) credits. */
+  private careerCard(k: 'sp' | 'mp') {
+    const c = k === 'sp' ? this.sp : this.mp, L = levelOf(c.xp);
+    const pct = L.need ? Math.round((L.into / L.need) * 100) : 100;
+    const extra = k === 'mp' ? (this.mp.ready ? ` · <span class="credits">${fmt(c.credits)}</span>` : ` · <span class="dim">${esc(this.mp.note || 'offline')}</span>`) : '';
+    return `<div class="ccard"><span class="dim">${k === 'sp' ? 'SINGLE PLAYER' : 'ONLINE'}</span><b>Level ${L.level}</b>${extra}
+      <div class="xpbar"><i style="width:${pct}%"></i></div><small class="dim">${L.need ? `${fmtXp(L.into)} / ${fmtXp(L.need)}` : 'Max level'}</small></div>`;
+  }
+  /** The single player / online switch on the garage and shop. */
+  private careerBar() {
+    const sp = levelOf(this.sp.xp).level, mp = levelOf(this.mp.xp).level;
+    return `<div class="career-bar"><button class="chip ${this.sel.career === 'sp' ? 'on' : ''}" data-act="career" data-v="sp">Single player · Lv ${sp}</button>
+      <button class="chip ${this.sel.career === 'mp' ? 'on' : ''}" data-act="career" data-v="mp">Online · Lv ${mp}${this.mp.ready ? ` · ${fmt(this.mp.credits)}` : ''}</button></div>`;
+  }
+  /** The get-it button of a shop item for the active career. */
+  private itemBtn(kind: 'car' | 'mod' | 'skin', id: string, stage: number | undefined, label: string, small = true) {
+    const c = this.career, r = c.req(kind, id, stage), cls = small ? 'small' : 'pip buy';
+    const data = `data-act="buy" data-kind="${kind}" data-v="${id}"${stage ? ` data-stage="${stage}"` : ''}`;
+    if (c.kind === 'sp') return `<button class="${cls}" disabled>${label ? `${label} · ` : ''}Unlocks at level ${r.spLevel}</button>`;
+    if (!this.mp.ready) return `<button class="${cls}" disabled>${esc(this.mp.note || 'Online service unavailable')}</button>`;
+    const lvl = levelOf(this.mp.xp).level;
+    let price = r.price;
+    if (kind === 'mod') { price = 0; const [car, key] = id.split(':'); for (let s2 = this.mp.stage(car, key as ModKey) + 1; s2 <= (stage ?? 1); s2++) price += c.req('mod', key, s2).price; }
+    if (lvl < r.mpLevel) return `<button class="${cls}" disabled>${label ? `${label} · ` : ''}Online level ${r.mpLevel}</button>`;
+    if (price > this.mp.credits) return `<button class="${cls}" disabled>${label ? `${label} · ` : ''}Need ${fmt(price - this.mp.credits)} more</button>`;
+    return `<button class="${cls} primary" ${data}>${label ? `${label} · ` : ''}Buy · ${fmt(price)}</button>`;
+  }
+
   private shop() {
-    const w = this.wallet;
+    const w = this.career, sp = w.kind === 'sp';
     const cars = this.cars.map((c) => {
-      const st = statsOf(this.physics[c.id]), owned = w.owns(c.id), price = w.price(c), short = price - w.credits;
-      const btn = owned ? `<button class="small" data-act="shop-drive" data-v="${c.id}">${c.id === this.sel.car ? '✓ Driving' : 'Drive'}</button>`
-        : `<button class="${short > 0 ? '' : 'primary'} small" data-act="buy-car" data-v="${c.id}" ${short > 0 ? 'disabled' : ''}>${short > 0 ? `Need ${fmt(short)} more` : `Buy · ${fmt(price)}`}</button>`;
+      const st = statsOf(this.physics[c.id]), owned = w.owns(c.id);
+      const btn = owned ? `<button class="small" data-act="shop-drive" data-v="${c.id}">${c.id === this.sel.car ? '✓ Driving' : 'Drive'}</button>` : this.itemBtn('car', c.id, undefined, '');
+      const r = w.req('car', c.id);
       return `<div class="scard ${owned ? 'owned' : ''}">
-        <div class="car-head"><b>${esc(c.name)}</b><i class="car-badge">${owned ? 'OWNED' : fmt(price)}</i></div>
+        <div class="car-head"><b>${esc(c.name)}</b><i class="car-badge">${owned ? (sp ? 'UNLOCKED' : 'OWNED') : sp ? `LV ${r.spLevel}` : `LV ${r.mpLevel} · ${fmt(r.price)}`}</i></div>
         <span class="dim">${esc(c.tag)}</span>
         <div class="mini"><em>${Math.round(st.power)} kW</em><em>${Math.round(st.mass)} kg</em><em>${st.grip.toFixed(2)} µ</em></div>
         ${btn}</div>`;
@@ -265,34 +311,35 @@ export class Menu {
     const carChips = ownedCars.map((c) => `<button class="chip ${c.id === this.shopCar ? 'on' : ''}" data-act="shop-car" data-v="${c.id}">${esc(c.name)}</button>`).join('');
     const ups = MOD_KEYS.map((k) => {
       const m = MODS[k], have = w.stage(this.shopCar, k);
-      const stages = [1, 2, 3].map((n) => n <= have ? `<button class="pip on" disabled>${m.levels[n]} ✓</button>`
-        : `<button class="pip buy" data-act="buy-mod" data-k="${k}" data-v="${n}" ${w.modCost(this.shopCar, k, n) > w.credits ? 'disabled' : ''}>${m.levels[n]}<small>${fmt(w.modCost(this.shopCar, k, n))}</small></button>`).join('');
+      const stages = [1, 2, 3].map((n) => n <= have ? `<button class="pip on" disabled>${m.levels[n]} ✓</button>` : this.itemBtn('mod', sp ? k : `${this.shopCar}:${k}`, n, m.levels[n], false)).join('');
       return `<div class="mod"><div><b>${m.label}</b><span class="dim">${m.hint}</span></div><div class="pips">${stages}</div></div>`;
     }).join('');
     const gear = SKINS.map((k) => {
-      const owned = w.ownsSkin(k.id), short = k.price - w.credits, worn = this.sel.skin === k.id;
-      const btn = owned ? `<button class="small ${worn ? '' : 'primary'}" data-act="wear-skin" data-v="${k.id}" ${worn ? 'disabled' : ''}>${worn ? '✓ Wearing' : 'Wear'}</button>`
-        : `<button class="small ${short > 0 ? '' : 'primary'}" data-act="buy-skin" data-v="${k.id}" ${short > 0 ? 'disabled' : ''}>${short > 0 ? `Need ${fmt(short)} more` : `Buy · ${fmt(k.price)}`}</button>`;
-      return `<div class="scard gear ${owned ? 'owned' : ''}">${helmetSvg(k, 64)}<div class="car-head"><b>${esc(k.name)}</b><i class="car-badge">${owned ? 'OWNED' : fmt(k.price)}</i></div>
+      const owned = w.ownsSkin(k.id), worn = this.sel.skin === k.id, r = w.req('skin', k.id);
+      const btn = owned ? `<button class="small ${worn ? '' : 'primary'}" data-act="wear-skin" data-v="${k.id}" ${worn ? 'disabled' : ''}>${worn ? '✓ Wearing' : 'Wear'}</button>` : this.itemBtn('skin', k.id, undefined, '');
+      return `<div class="scard gear ${owned ? 'owned' : ''}">${helmetSvg(k, 64)}<div class="car-head"><b>${esc(k.name)}</b><i class="car-badge">${owned ? (sp ? 'UNLOCKED' : 'OWNED') : sp ? `LV ${r.spLevel}` : fmt(r.price)}</i></div>
         <span class="suit-dot" style="background:${k.suit}"></span>${btn}</div>`;
     }).join('');
     const tab = (id: typeof this.shopTab, label: string) => `<button class="gtab ${this.shopTab === id ? 'on' : ''}" data-act="stab" data-v="${id}">${label}</button>`;
     const content = this.shopTab === 'cars' ? `<div class="shop-cars">${cars}</div>`
-      : this.shopTab === 'upgrades' ? `<p class="dim small-note">Fit and remove bought stages in the Garage → Performance.</p><div class="chips">${carChips}</div>${ups}`
+      : this.shopTab === 'upgrades' ? `<p class="dim small-note">Fit and remove stages in the Garage → Tune.</p><div class="chips">${carChips}</div>${ups}`
       : `<p class="dim small-note">Helmet and suit: worn by your driver and shown as your avatar to everyone in a party.</p><div class="shop-cars">${gear}</div>`;
+    const how = sp ? 'Single player: everything unlocks as you level up (XP from races and free roam). Nothing to buy.'
+      : 'Online: credits and XP come only from ranked party races (6+ players who race; at most 2 per network). Each item needs an online level and credits.';
     return `<div class="lobby-screen"><div class="card lobby-card shop-card">
-      <div class="lobby-head"><button data-act="home" class="back-btn">← Main Menu</button><div><div class="kicker">SPEND YOUR CREDITS</div><h2>Shop</h2></div><div class="wallet-pill">${fmt(w.credits)}</div></div>
+      <div class="lobby-head"><button data-act="home" class="back-btn">← Main Menu</button><div><div class="kicker">${sp ? 'UNLOCKS' : 'SPEND YOUR CREDITS'}</div><h2>Shop</h2></div>${sp ? '' : `<div class="wallet-pill">${this.mp.ready ? fmt(w.credits) : '—'}</div>`}</div>
+      ${this.careerBar()}
       <div class="gtabs">${tab('cars', 'Cars')}${tab('upgrades', 'Upgrades')}${tab('gear', 'Driver gear')}</div>
       ${this.shopNote ? `<div class="pnote ${this.shopNote.startsWith('✓') ? '' : 'bad'}">${esc(this.shopNote)}</div>` : ''}
       ${content}
-      <div class="dim note">Earn credits by racing (more for a better finish and longer races) and by driving in free roam (${fmt(400)} per km).</div>
+      <div class="dim note">${how}</div>
       <div class="lobby-foot"><button data-act="garage-open">⚙ Garage</button><button class="primary" data-act="play">Play ▶</button></div>
     </div></div>`;
   }
 
   private garage() {
     const sel = this.sel;
-    const w = this.wallet;
+    const w = this.career;
     const cards = this.cars.filter((c) => w.owns(c.id)).map((c) => {
       const st = statsOf(this.physics[c.id]);
       return `<button class="car ${c.id === sel.car ? 'on' : ''}" data-act="car" data-v="${c.id}">
@@ -319,7 +366,7 @@ export class Menu {
       </div>
       <div class="g-left panel"><h3>Your cars (${this.cars.filter((c) => w.owns(c.id)).length}/${this.cars.length})</h3>${cards}
         ${this.cars.some((c) => !w.owns(c.id)) ? '<button class="small more-cars" data-act="shop-open">🛒 More cars in the Shop</button>' : ''}</div>
-      <div class="g-right panel"><div class="gtabs">${tabs}</div>${body}</div>
+      <div class="g-right panel">${this.careerBar()}<div class="gtabs">${tabs}</div>${body}</div>
       <div class="g-bottom">
         <button data-act="home" class="back-btn">← Main Menu</button>
         <div class="g-summary"><b>${esc(this.car().name)}</b><span class="dim">${stages ? `${stages} upgrade stage${stages > 1 ? 's' : ''} fitted` : 'Stock'} · ${FINISHES[sel.finish].label} paint · ${Math.round(now.power)} kW · ${Math.round(now.mass)} kg</span></div>
@@ -370,18 +417,18 @@ export class Menu {
       <h3>Exhaust tips</h3><div class="chips">${this.cu('exhaust', 'chrome', 'Chrome', c.exhaust === 'chrome')}${this.cu('exhaust', 'black', 'Black', c.exhaust === 'black')}${this.cu('exhaust', 'titanium', 'Burnt titanium', c.exhaust === 'titanium')}</div>`;
   }
   private gDriver() {
-    const owned = SKINS.filter((k) => this.wallet.ownsSkin(k.id));
+    const owned = SKINS.filter((k) => this.career.ownsSkin(k.id));
     const cards = owned.map((k) => `<button class="skin ${this.sel.skin === k.id ? 'on' : ''}" data-act="skin" data-v="${k.id}">${helmetSvg(k, 42)}<span>${esc(k.name)}</span></button>`).join('');
     return `<h3>Driver gear <small class="dim">(your avatar in multiplayer)</small></h3><div class="skins">${cards}</div>
       ${owned.length < SKINS.length ? '<button class="small more-cars" data-act="shop-gear">🛒 More helmets &amp; suits in the Shop</button>' : ''}`;
   }
   private gPerf() {
-    const sel = this.sel, w = this.wallet, mods = modsOf(sel);
+    const sel = this.sel, w = this.career, mods = modsOf(sel);
     const rows = MOD_KEYS.map((k) => {
       const m = MODS[k];
       const own = w.stage(sel.car, k);
       const pips = m.levels.map((l, i) => i > own
-        ? `<button class="pip locked" data-act="shop-open" title="${l}: buy in the Shop (${MOD_PRICES[k][i - 1].toLocaleString('en-US')} Cr)">🔒</button>`
+        ? `<button class="pip locked" data-act="shop-open" title="${l}: ${w.kind === 'sp' ? `unlocks at level ${w.req('mod', k, i).spLevel}` : `online level ${w.req('mod', k, i).mpLevel}, ${fmt(w.req('mod', k, i).price)} in the Shop`}">🔒</button>`
         : `<button class="pip ${i <= mods[k] && mods[k] > 0 ? 'on' : ''} ${i === mods[k] ? 'cur' : ''}" data-act="mod" data-k="${k}" data-v="${i}" title="${l}">${i === 0 ? 'STK' : 'S' + i}</button>`).join('');
       return `<div class="mod"><div><b>${m.label}</b><span class="dim">${m.levels[mods[k]]}</span></div><div class="pips">${pips}</div><small class="dim">${m.hint}</small></div>`;
     }).join('');
@@ -527,12 +574,38 @@ export class Menu {
       <h2>${me?.dnf ? `Did not finish${me.why ? ' · ' + esc(me.why) : ''}` : ranked.length > 1 ? `You finished ${ord(pos)}` : 'Race Complete'}</h2>
       <div class="big ${pos === 1 && !me?.dnf ? 'win' : ''}">${me?.dnf ? 'DNF' : ranked.length > 1 ? `P${pos}<small> / ${ranked.length}</small>` : formatLap(r.total)}</div>
       <div class="dim">${me?.dnf ? `${r.laps.length} of ${r.laps_target} laps` : `${formatLap(r.total)} · ${r.laps_target} lap${r.laps_target > 1 ? 's' : ''}`} · Best lap <b class="best-inline">${formatLap(r.best)}</b></div>
-      ${r.earned ? `<div class="earned center">+${fmt(r.earned)} <span class="dim">· ${fmt(this.wallet.credits)} total</span></div>` : me?.dnf ? '<div class="dim center">No prize money for a DNF</div>' : ''}
+      ${this.rewardHtml(r, !!me?.dnf)}
       ${table}
       <div class="rows">${rows}</div>
       <div class="btns">${btns}</div>
     </div>`;
   }
+
+  /** XP for a single-player race, or the online race room's verdict (ranked / unranked, XP, credits, notes). */
+  private rewardHtml(r: ResultData, dnf: boolean) {
+    if (r.online) {
+      const x = this.rankedRes;
+      if (!x) return `<div class="reward dim">${this.mp.ready ? 'The online race room is timing the race… (results when every car is in)' : 'Unranked: not connected to the online service.'}</div>`;
+      const y = x.you;
+      return `<div class="reward"><div class="kicker">${x.ranked ? 'RANKED RACE' : 'UNRANKED'}</div>
+        ${y && (y.xp || y.cr) ? `<div class="earned center">+${fmtXp(y.xp)} · +${fmt(y.cr)}</div>` : ''}
+        ${(y?.parts ?? []).filter((p) => p.xp).map((p) => `<div class="rpart"><span>${esc(p.label)}</span><b>+${p.xp.toLocaleString('en-US')}</b></div>`).join('')}
+        ${(y?.notes ?? []).map((n) => `<div class="dim small-note">${esc(n)}</div>`).join('')}</div>`;
+    }
+    const e = this.sp.last;
+    if (!e || r.earned === undefined) return '';
+    if (dnf || !e.xp) return '<div class="reward dim">No XP for a DNF</div>';
+    const unlocked = (e.unlocked ?? []).map((u) => {
+      const [k, id, st] = u.split(':');
+      return k === 'car' ? this.cars.find((c) => c.id === id)?.name ?? id : k === 'skin' ? `${skinOf(id).name} gear` : `${MODS[id as ModKey].levels[Number(st)]} (${MODS[id as ModKey].label})`;
+    });
+    return `<div class="reward"><div class="earned center">+${fmtXp(e.xp)}</div>
+      ${(e.parts ?? []).filter((p) => p.xp).map((p) => `<div class="rpart"><span>${esc(p.label)}</span><b>+${p.xp.toLocaleString('en-US')}</b></div>`).join('')}
+      ${e.levelUp ? `<div class="lvup big-lv">LEVEL ${e.levelUp}</div>` : ''}${unlocked.length ? `<div class="dim small-note">Unlocked: ${esc(unlocked.join(', '))}</div>` : ''}
+      ${this.careerCard('sp')}</div>`;
+  }
+  /** The online race room's verdict arrived (results screen or later). */
+  ranked(r: RankedResult | null) { this.rankedRes = r; if (this.screen === 'results' || this.screen === 'title') this.render(); }
 
   // ---- events ----------------------------------------------------------------------------------
   /** Fullscreen needs a user gesture, so the first menu click asks for it (once per page; ?fs=0 turns it off, F toggles later). */
@@ -558,9 +631,9 @@ export class Menu {
     if (act === 'c-back') { this.ctl?.leave(); this.show(this.controlsFrom); return; }
     if (act.startsWith('c-') && this.ctl?.click(act, v)) return;
     switch (act) {
-      case 'play': this.wallet.lastEarned = 0; this.show('modes'); break;
+      case 'play': this.sp.last = this.mp.last = null; this.show('modes'); break;
       case 'garage-open': this.show('garage'); this.hooks.preview(); break;
-      case 'home': this.wallet.lastEarned = 0; this.show('title'); break;
+      case 'home': this.show('title'); break;
       case 'shop-open': this.shopNote = ''; this.shopCar = sel.car; this.shopTab = this.garageTab === 'perf' ? 'upgrades' : 'cars'; this.show('shop'); break;
       case 'shop-gear': this.shopNote = ''; this.shopTab = 'gear'; this.show('shop'); break;
       case 'stab': this.shopTab = v as typeof this.shopTab; this.render(); break;
@@ -572,24 +645,41 @@ export class Menu {
         this.save(); this.hooks.look(); this.render();
         break;
       }
-      case 'skin': if (this.wallet.ownsSkin(v)) { sel.skin = v; this.save(); this.hooks.look(); this.hooks.partyMe(); this.render(); } break;
-      case 'buy-skin': this.shopNote = this.wallet.buySkin(v); this.render(); break;
-      case 'wear-skin': if (this.wallet.ownsSkin(v)) { sel.skin = v; this.save(); this.hooks.look(); this.hooks.partyMe(); this.render(); } break;
+      case 'skin': if (this.career.ownsSkin(v)) { sel.skin = v; this.save(); this.hooks.look(); this.hooks.partyMe(); this.render(); } break;
+      case 'wear-skin': if (this.career.ownsSkin(v)) { sel.skin = v; this.save(); this.hooks.look(); this.hooks.partyMe(); this.render(); } break;
       case 'shop-car': this.shopCar = v; this.render(); break;
       case 'shop-drive': sel.car = v; this.shopCar = v; this.save(); this.render(); this.hooks.preview(); break;
-      case 'buy-car': this.shopNote = this.wallet.buyCar(v); if (this.wallet.owns(v)) this.shopCar = v; this.render(); break;
-      case 'buy-mod': this.shopNote = this.wallet.buyMod(this.shopCar, b.dataset.k as ModKey, Number(v)) || `✓ ${MODS[b.dataset.k as ModKey].levels[Number(v)]} bought. Fit it in the Garage.`; this.render(); break;
+      case 'buy': {
+        const st = b.dataset.stage ? Number(b.dataset.stage) : undefined;
+        this.shopNote = '…'; this.render();
+        void this.career.buy(b.dataset.kind as 'car' | 'mod' | 'skin', v, st).then((note) => { this.shopNote = note; if (b.dataset.kind === 'car' && this.career.owns(v)) this.shopCar = v; this.render(); });
+        break;
+      }
+      case 'career': {
+        sel.career = v === 'mp' ? 'mp' : 'sp';
+        this.career.fit(sel); this.save(); this.shopNote = '';
+        if (sel.career === 'mp' && !this.mp.ready) void this.mp.refresh();
+        this.render(); this.hooks.preview();
+        break;
+      }
+      case 'recovery': this.recoveryShown = !this.recoveryShown; this.render(); break;
+      case 'restore': {
+        const code = (document.getElementById('restore') as HTMLInputElement | null)?.value ?? '';
+        if (this.cloud.restore(code)) { this.mp.profile = null; this.settingsNote = '✓ Account restored on this device.'; void this.mp.refresh(); } else this.settingsNote = 'That is not a recovery code.';
+        this.render();
+        break;
+      }
       case 'modes': this.show('modes'); break;
       case 'quit-modes': this.lastResults = null; this.hooks.quit('modes'); break;
-      case 'lobby': this.partyNote = ''; this.show('lobby'); break;
+      case 'lobby': this.partyNote = ''; this.setCareer('mp'); this.show('lobby'); break;
       case 'gfx': this.gfx = v as Gfx; this.hooks.gfx(this.gfx); this.render(); break;
       case 'car': sel.car = v; this.save(); this.render(); this.hooks.preview(); break;
       case 'paint': sel.paint[sel.car] = v; this.save(); this.render(); this.hooks.preview(); break;
       case 'finish': sel.finish = v as Finish; this.save(); this.render(); this.hooks.preview(); break;
       case 'mod': { const m = { ...modsOf(sel) }; m[b.dataset.k as ModKey] = Number(v); sel.mods[sel.car] = m; this.save(); this.render(); break; }
       case 'laps': sel.laps = Number(v); this.save(); this.render(); break;
-      case 'start-race': sel.mode = 'race'; this.save(); this.hooks.play('race'); break;
-      case 'start-free': sel.mode = 'free'; this.save(); this.hooks.play('free'); break;
+      case 'start-race': sel.mode = 'race'; this.setCareer('sp'); this.save(); this.hooks.play('race'); break;
+      case 'start-free': sel.mode = 'free'; this.setCareer('sp'); this.save(); this.hooks.play('free'); break;
       case 'resume': this.hooks.resume(); break;
       case 'restart': this.hooks.restart(); break;
       case 'quit': this.lastResults = null; this.hooks.quit('title'); break;
@@ -628,6 +718,16 @@ export class Menu {
     }
     this.hooks.assists();
     this.render();
+  }
+
+  /** The session about to start belongs to this career: its car / upgrades / gear. */
+  private setCareer(k: 'sp' | 'mp') {
+    if (this.sel.career === k) return;
+    this.sel.career = k;
+    this.career.fit(this.sel);
+    this.save();
+    if (k === 'mp' && !this.mp.ready) void this.mp.refresh();
+    this.hooks.preview();
   }
 
   private copyLink() {

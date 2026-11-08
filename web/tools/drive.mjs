@@ -288,6 +288,33 @@ try {
     console.log('after ', (await evaluate(`document.getElementById('perf')?.textContent ?? ''`)).replace(/\n/g, ' | '));
     await shot('r1_after_resize.png');
   }
+  if (scenario === 'careers') {
+    // Single-player XP career + online career against a local online service (cloud/: npm run dev). ?menu=1
+    const click = (q) => evaluate(`(() => { const e = document.querySelector('${q}'); if (!e) return 'MISSING ${q}'; e.click(); return 'ok'; })()`);
+    const g = (e) => evaluate(`JSON.stringify(${e})`);
+    for (let i = 0; i < 90 && (await evaluate(`window.__game.menu().tuning`)); i++) await sleep(500);
+    console.log('title careers', await g(`[...document.querySelectorAll('.ccard')].map((c) => c.textContent.replace(/\s+/g, ' ').trim())`));
+    await shot('c1_title.png');
+    await click('[data-act=shop-open]'); await sleep(400);
+    console.log('shop (single player)', await g(`[...document.querySelectorAll('.scard')].map((c) => c.querySelector('b').textContent + ': ' + c.querySelector('button').textContent)`));
+    await shot('c2_shop_sp.png');
+    await click('[data-act=career][data-v=mp]');
+    for (let i = 0; i < 20 && !(await evaluate(`window.__game.menu().mp.ready`)); i++) await sleep(500);
+    console.log('online profile', await g(`{ ready: window.__game.menu().mp.ready, note: window.__game.menu().mp.note, xp: window.__game.menu().mp.xp, credits: window.__game.menu().mp.credits }`));
+    console.log('shop (online)', await g(`[...document.querySelectorAll('.scard')].map((c) => c.querySelector('b').textContent + ': ' + c.querySelector('button').textContent)`));
+    await shot('c3_shop_mp.png');
+    await click('[data-act=career][data-v=sp]'); await sleep(300);
+    await click('[data-act=home]'); await sleep(300);
+    await click('[data-act=play]'); await sleep(300); await click('[data-act=start-free]'); await sleep(5000);
+    await evaluate(`(window.__game.input.hold = false, 1)`);
+    await key('keyDown', 'KeyW', 'w'); await sleep(9000); await key('keyUp', 'KeyW', 'w');
+    await evaluate(`(window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape' })), 1)`); await sleep(400);
+    await click('[data-act=quit]'); await sleep(1500);
+    console.log('after free roam', await g(`{ earned: document.querySelector('.earned')?.textContent, sp: [...document.querySelectorAll('.ccard')][0]?.textContent.replace(/\s+/g, ' ').trim() }`));
+    await shot('c4_title_xp.png');
+    await click('[data-act=play]'); await sleep(300); await click('[data-act=lobby]'); await sleep(800);
+    console.log('lobby career', await evaluate(`window.__game.menu().sel.career`));
+  }
   if (scenario === 'assists') {
     // Settings / assists / shop / credits (run with ?menu=1, a fresh profile = a new player): title has 4 buttons,
     // Beginner preset reaches the core (b[93..95]), the driving line shows in a race, a race pays credits, the shop

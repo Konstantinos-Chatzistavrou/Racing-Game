@@ -28,7 +28,10 @@ import { ForceFeedback } from './ffb';
 import { ControlsUi } from './controls-menu';
 import { MenuNav } from './menu-nav';
 import { fromToggles, loadAssists, saveAssists, toToggles } from './assists';
-import { FREE_ROAM_PER_KM, Wallet } from './wallet';
+import { MpCareer, SpCareer } from './career';
+import { Cloud } from './cloud';
+import { RankedLink } from './ranked';
+import { FREE_ROAM_XP_PER_KM, raceReward } from './progression';
 import { DrivingLine } from './driving-line';
 import { Loader, steadyFrames } from './loading';
 import type RAPIER from '@dimforge/rapier3d-compat';
@@ -168,7 +171,13 @@ async function main() {
   ]);
   const sel = loadSelection(catalog, params);
   // credits, owned cars and upgrades. Dev server tests (?car=..., ?unlockall=1) own everything.
-  const wallet = new Wallet(catalog, sel, import.meta.env.DEV && (params.get('unlockall') === '1' || params.has('car')));
+  // careers: single player (XP levels, this device) and online (the server's profile). Dev tests (?car=, ?unlockall=1)
+  // unlock the whole single-player career.
+  const sp = new SpCareer(import.meta.env.DEV && (params.get('unlockall') === '1' || params.has('car')));
+  const cloud = new Cloud();
+  const mp = new MpCareer(cloud, catalog);
+  const careerOf = () => (sel.career === 'mp' ? mp : sp);
+  if (sel.career === 'mp') sel.career = 'sp';   // the game opens on the single-player career; the lobby switches
   // driving assists (Settings): levels of the core's existing aids
   const assistSet = loadAssists();
   const visualPathOf = (id: string) => catalog.find((c) => c.id === id)?.visual ?? DEFAULT_VISUAL;
@@ -283,11 +292,13 @@ async function main() {
   audio.prepare();   // the audio device opens now (behind the loading screen), not on the first key press
   let damage = new DamageVisuals(visual, visualCfg, pw, scene);
   let rumbleKj = 0;   // crash energy for the pad's rumble this frame
-  let racePaid = false;   // this race's payout is in the wallet
+  let racePaid = false;   // this race's XP is in the career
+  let raceImpacts = 0;    // crashes this race (clean-race bonus)
+  let ranked: RankedLink | null = null;   // a party race's link to the online race room
   let freeRoamM = 0;      // metres driven in free roam this session (paid on leaving)
   toToggles(assistSet, input.assists);
   input.onAssistKey = () => { fromToggles(assistSet, input.assists); toToggles(assistSet, input.assists); saveAssists(assistSet); };
-  const wireDamage = () => { damage.onImpact = (kj, glass) => { audio.impact(kj, glass); rumbleKj = Math.max(rumbleKj, kj); }; };
+  const wireDamage = () => { damage.onImpact = (kj, glass) => { audio.impact(kj, glass); rumbleKj = Math.max(rumbleKj, kj); if (state === 'race' && kj > 3) raceImpacts++; }; };
   wireDamage();
   input.onAnyInput = () => audio.unlock();
   audio.muted = true;   // silent in the menus
@@ -338,7 +349,7 @@ async function main() {
     raceCar = race.addCar(car.body.translation());
     aiRace = ai.mode === 'race' ? ai.cars.map((c) => ({ idx: race.addCar(c.pos), lap: null, fin: -1 })) : [];
     raceT0 = ticks * DT;
-    lapTimes = []; raceFinishedAt = -1; lap = null; racePaid = false;
+    lapTimes = []; raceFinishedAt = -1; lap = null; racePaid = false; raceImpacts = 0;
     myDnf = ''; rolledT = stuckT = 0; hud.outWarn = '';
     hud.resetLaps();
     remoteProg.clear();
@@ -358,6 +369,7 @@ async function main() {
     p.y += core.info.cgHeight + 0.02;
     car.place(p, Math.atan2(Math.cos(q.heading), -Math.sin(q.heading)));
     car.settle();
+    ranked?.reset();
     core.repair(); damage.repair(); input.hold = true;
     syncPose();
     remote?.kick();
@@ -692,7 +704,12 @@ async function main() {
   menu.gfx = gfx;
   const loader = new Loader();
   menu.loader = loader;
-  menu.wallet = wallet;
+  menu.sp = sp;
+  menu.mp = mp;
+  mp.onChange = () => {
+    if (mp.profile && mp.profile.name !== sel.name && sel.name.trim()) void cloud.setName(sel.name).then((p) => { mp.profile = p; }).catch(() => {}); if (['title', 'shop', 'garage', 'lobby', 'results', 'settings'].includes(menu.screen)) menu.render(); };
+  menu.cloud = cloud;
+  if (cloud.id) void mp.refresh();   // an online account exists on this device: show its level / credits on the title
   menu.assists = assistSet;
   applyLook();
   const drivingLine = new DrivingLine(scene, ai);
@@ -779,6 +796,7 @@ async function main() {
     if (!why) return;
     myDnf = why;
     hud.outWarn = '';
+    ranked?.dnf(why);
     party?.sendProgress({ d: lap?.distance ?? 0, lap: lap?.laps ?? 0, fin: -1, best: lap?.best ?? 0, dnf: 1 });
     enterSpectate(`OUT · ${why.toUpperCase()}`);
   }
@@ -938,6 +956,21 @@ async function main() {
       const slot = party ? Math.max(0, party.members.findIndex((m) => m.id === party!.selfId)) : 0;
       grid = mode === 'online' ? { ds: -8 * (slot >> 1), lat: slot % 2 ? 2.2 : -2.2 } : { ds: 0, lat: 0 };
     }
+    if (mode === 'online' && party?.mode === 'race' && !rejoin && cloud.available) {
+      // ranked: the online race room times this race and pays the online career (it decides whether it counts)
+      ranked?.close();
+      if (!mp.ready) await mp.refresh();
+      if (mp.ready) {
+        const a = assistSet;
+        ranked = new RankedLink(cloud, party.code, { car: sel.car, host: party.isHost, manual: a.gearbox === 'manual',
+          assistsOff: +(a.abs === 'off') + +(a.tc === 0) + +!a.stability + +(a.countersteer === 'off') + +(a.line === 'off') });
+        menu.ranked(null);
+        ranked.onResult = (r) => {
+          if (r.profile && r.you) mp.paid({ xp: r.you.xp, cr: r.you.cr, reason: r.ranked ? `ranked race · P${r.you.pos}` : 'unranked race', parts: r.you.parts }, r.profile);
+          menu.ranked(r);
+        };
+      }
+    }
     if (mode === 'online') {
       remote?.clear();
       remote = new RemoteCars(scene, visual, pw, shape);
@@ -1002,6 +1035,7 @@ async function main() {
     for (const t of ['3', '2', '1']) { menu.countdown(t); await sleep(900); if (state !== 'countdown') { menu.countdown(''); return; } }
     menu.countdown('GO');
     setState('race');
+    if (ranked && party?.isHost) ranked.start(raceLaps(), useNyc ? 'nyc' : 'city', realism());   // the room's clock starts
     raceT0 = ticks * DT;
     ai.go();
     setTimeout(() => menu.countdown(''), 700);
@@ -1017,8 +1051,9 @@ async function main() {
 
   /** End the session: back to the title, the game modes, or (party) the lobby. */
   function quitSession(to: 'title' | 'modes' | 'lobby') {
-    if (freeRoamM > 50) wallet.earn(freeRoamM / 1000 * FREE_ROAM_PER_KM, `free roam · ${(freeRoamM / 1000).toFixed(1)} km`);
+    if (freeRoamM > 50 && sel.mode === 'free') sp.earn(freeRoamM / 1000 * FREE_ROAM_XP_PER_KM, `free roam · ${(freeRoamM / 1000).toFixed(1)} km`);
     freeRoamM = 0;
+    ranked?.close(); ranked = null;
     if (remote) party?.sendGone();
     remote?.clear(); remote = null;
     hideSpectate();
@@ -1044,10 +1079,15 @@ async function main() {
     rig.setTarget(car.body, core.info.redline);
     const st = standings();
     let earned = 0;
-    if (!racePaid) {
+    if (!racePaid && sel.mode !== 'online') {
+      // single player: XP only (online races are paid by the server's race room)
       racePaid = true;
-      const ranked = rank(st), pos = ranked.findIndex((x) => x.you) + 1;
-      earned = wallet.earn(Wallet.racePayout(pos, raceLaps(), !!myDnf), myDnf ? 'race · DNF' : `race · P${pos} of ${ranked.length}`);
+      const order = rank(st), pos = order.findIndex((x) => x.you) + 1;
+      const a = assistSet;
+      const reward = raceReward({ pos, laps: raceLaps(), dnf: !!myDnf, gained: ai.cars.length ? Math.max(0, 4 - pos) : 0, clean: raceImpacts === 0,
+        assistsOff: +(a.abs === 'off') + +(a.tc === 0) + +!a.stability + +(a.countersteer === 'off') + +(a.line === 'off'),
+        manual: a.gearbox === 'manual', realism: sel.realism }, 'sp');
+      earned = sp.earn(reward.xp, myDnf ? 'race · DNF' : `race · P${pos} of ${order.length}`, reward.parts).xp;
     }
     menu.showResults({ total, best: lapTimes.length ? Math.min(...lapTimes) : 0, laps: lapTimes, laps_target: raceLaps(), standings: st,
       routeLength: lap?.routeLength ?? route.length_m, online: sel.mode === 'online', earned });
@@ -1236,6 +1276,7 @@ async function main() {
       wheel: input.wheelPos, wheelVel: input.wheelVel, impactKj: state === 'race' ? rumbleKj : 0 }, input.settings);
     if (state === 'race') { input.rumble(now, car.out, rumbleKj); rumbleKj = 0; }
     if (state === 'paused' && !menu.ctl?.calibrating) input.menuPoll();
+    if (ranked && (state === 'race' || state === 'spectate' || state === 'results') && !myDnf) ranked.pos(now, car.body.translation(), Math.abs(car.out[OUT.speed]));
     if (state === 'race' && raceLaps() === 0) freeRoamM += Math.min(Math.abs(car.out[OUT.speed]), 90) * frame;
     drivingLine.update(assistSet.line, state === 'race' || state === 'countdown', pos, car.out[OUT.speed]);
     menuNav.paused = !!menu.ctl?.calibrating;

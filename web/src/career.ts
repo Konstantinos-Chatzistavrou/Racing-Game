@@ -3,7 +3,7 @@
 //   MpCareer  online, kept by the server (cloud.ts): XP and credits from ranked races; a level makes an item buyable,
 //             credits pay for it. This class only shows the server's profile and asks it to buy things.
 // Both answer the same questions for the menus: is it mine, what does it need, get it.
-import { CAR_REQ, MOD_REQ, SKIN_REQ, STARTER_CAR, levelOf, type Career as CareerKind, type Req } from './progression';
+import { CAR_REQ, MOD_REQ, SKIN_REQ, STARTER_CAR, levelOf, xpToNext, type Career as CareerKind, type Req } from './progression';
 import { MOD_KEYS, type CatalogCar, type ModKey, type Selection } from './garage';
 import { SKINS } from './scene/driver';
 import type { Cloud, Profile } from './cloud';
@@ -66,7 +66,7 @@ export class SpCareer implements Career {
       const w = JSON.parse(localStorage.getItem('nr.wallet.v2') ?? 'null');
       const need = Math.max(1, ...((w?.cars ?? []) as string[]).map((c) => CAR_REQ[c]?.spLevel ?? 1));
       let xp = 0;
-      for (let l = 1; l < need; l++) xp += levelXp(l);
+      for (let l = 1; l < need; l++) xp += xpToNext(l);
       this.data.xp = xp;
       this.save();
     } catch { /* nothing to migrate */ }
@@ -100,7 +100,6 @@ export class SpCareer implements Career {
     return this.last;
   }
 }
-const levelXp = (l: number) => Math.round((1000 * Math.pow(l, 1.25)) / 50) * 50;
 
 // ---- online --------------------------------------------------------------------------------------------------------------
 export class MpCareer implements Career {

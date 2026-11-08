@@ -11,7 +11,13 @@ export type Mods = Record<ModKey, number>;   // level 0 (stock) .. 3
 /** free roam (just you), race (you + AI rivals), online (a party session: its rules come from the party) */
 export type Mode = 'free' | 'race' | 'online';
 
+/** What each career drives (they own different things): car, fitted upgrade stages, driver gear. */
+export interface Side { car: string; mods: Record<string, Mods>; skin: string }
 export interface Selection {
+  /** which career the garage, shop and next session use (single player / online) */
+  career: 'sp' | 'mp';
+  sides: { sp: Side; mp: Side };
+  /** the active career's car / mods / skin (accessors onto sides[career]) */
   car: string;
   paint: Record<string, string>;     // per car: '#rrggbb'
   finish: Finish;
@@ -85,24 +91,41 @@ export function statsOf(d: any): Stats {
 
 const KEY = 'nr.garage.v1';
 export function loadSelection(cars: CatalogCar[], params: URLSearchParams): Selection {
-  const sel: Selection = { car: cars.find((c) => c.id === 'vela_gt')?.id ?? cars[0].id, paint: {}, finish: 'gloss', mods: {}, mode: 'race', laps: 3, name: `Driver ${Math.floor(1000 + Math.random() * 9000)}`, realism: true, custom: {}, skin: 'classic' };
+  const starter = cars.find((c) => c.id === 'vela_gt')?.id ?? cars[0].id;
+  const side = (): Side => ({ car: starter, mods: {}, skin: 'classic' });
+  const sel = { career: 'sp', sides: { sp: side(), mp: side() }, paint: {}, finish: 'gloss', mode: 'race', laps: 3,
+    name: `Driver ${Math.floor(1000 + Math.random() * 9000)}`, realism: true, custom: {} } as unknown as Selection;
+  for (const k of ['car', 'mods', 'skin'] as const)
+    Object.defineProperty(sel, k, { enumerable: false, get: () => sel.sides[sel.career][k], set: (v) => { (sel.sides[sel.career] as unknown as Record<string, unknown>)[k] = v; } });
+  const cleanMods = (o: unknown) => {
+    const out: Record<string, Mods> = {};
+    if (o && typeof o === 'object') for (const [k, v] of Object.entries(o as Record<string, Mods>)) {
+      const m = noMods();
+      for (const key of MOD_KEYS) m[key] = Math.max(0, Math.min(3, Math.round(Number((v as Mods)?.[key]) || 0)));
+      out[k] = m;
+    }
+    return out;
+  };
+  const cleanSide = (o: Partial<Side> | undefined, into: Side) => {
+    if (!o || typeof o !== 'object') return;
+    if (cars.some((c) => c.id === o.car)) into.car = o.car!;
+    into.mods = cleanMods(o.mods);
+    if (SKINS.some((k) => k.id === o.skin)) into.skin = o.skin!;
+  };
   try {
     const s = JSON.parse(localStorage.getItem(KEY) ?? 'null');
     if (s && typeof s === 'object') {
-      if (cars.some((c) => c.id === s.car)) sel.car = s.car;
+      // older saves had one car / mods / skin: they become the single-player side
+      if (s.sides) { cleanSide(s.sides.sp, sel.sides.sp); cleanSide(s.sides.mp, sel.sides.mp); }
+      else cleanSide({ car: s.car, mods: s.mods, skin: s.skin }, sel.sides.sp);
+      if (s.career === 'mp' || s.career === 'sp') sel.career = s.career;
       if (s.paint && typeof s.paint === 'object') for (const [k, v] of Object.entries(s.paint)) if (/^#[0-9a-f]{6}$/i.test(v as string)) sel.paint[k] = v as string;
       if (s.finish in FINISHES) sel.finish = s.finish;
-      if (s.mods && typeof s.mods === 'object') for (const [k, v] of Object.entries(s.mods as Record<string, Mods>)) {
-        const m = noMods();
-        for (const key of MOD_KEYS) m[key] = Math.max(0, Math.min(3, Math.round(Number((v as Mods)?.[key]) || 0)));
-        sel.mods[k] = m;
-      }
       if (['free', 'race'].includes(s.mode)) sel.mode = s.mode;
       if ([1, 3, 5, 10].includes(s.laps)) sel.laps = s.laps;
       if (typeof s.name === 'string' && s.name.trim()) sel.name = s.name.trim().slice(0, 18);
       if (typeof s.realism === 'boolean') sel.realism = s.realism;
       if (s.custom && typeof s.custom === 'object') for (const [k, v] of Object.entries(s.custom)) if (cars.some((c) => c.id === k)) sel.custom[k] = cleanCustom(v);
-      if (SKINS.some((k) => k.id === s.skin)) sel.skin = s.skin;
     }
   } catch { /* storage blocked or corrupt: defaults */ }
   const q = params.get('car');   // ?car=<id>: pick the car from the URL (tests, links)

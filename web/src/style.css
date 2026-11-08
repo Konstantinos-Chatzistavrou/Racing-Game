@@ -449,3 +449,17 @@ body.spectating #board { top: 12px; }
 #menu .avatar { position: relative; display: inline-flex; flex: none; }
 #menu .avatar .dot { position: absolute; right: -3px; bottom: -2px; width: 11px; height: 11px; border-width: 2px; border-color: var(--panel2); }
 #menu svg.helmet { display: block; filter: drop-shadow(0 2px 3px #0008); }
+
+/* ---- careers, XP, rewards ----------------------------------------------------------------------------- */
+#menu .careers { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+#menu .ccard { display: flex; flex-direction: column; gap: 3px; min-width: 190px; padding: 9px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; font-size: 13px; pointer-events: auto; }
+#menu .ccard > .dim:first-child { font-size: 9px; font-weight: 800; letter-spacing: .22em; }
+#menu .ccard small { font-size: 10px; font-variant-numeric: tabular-nums; }
+#menu .xpbar { height: 4px; border-radius: 2px; background: #ffffff14; overflow: hidden; }
+#menu .xpbar i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); }
+#menu .career-bar { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 10px; }
+#menu .reward { margin: 10px auto 4px; max-width: 360px; display: flex; flex-direction: column; gap: 4px; }
+#menu .rpart { display: flex; justify-content: space-between; font-size: 12px; color: var(--dim); }
+#menu .rpart b { color: var(--fg); font-variant-numeric: tabular-nums; }
+#menu .lvup { color: var(--warn); font-weight: 900; letter-spacing: .12em; }
+#menu .big-lv { font-size: 22px; text-align: center; margin: 4px 0; }
