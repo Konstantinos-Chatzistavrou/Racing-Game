@@ -943,6 +943,11 @@ async function main() {
     sel.mode = mode;
     setState('busy');
     menu.show('busy', mode === 'online' ? 'Loading the party session…' : 'Getting ready…');
+    if (mode === 'online' && cloud.available) {
+      // online: drive only what the online account owns (the race room checks it), from a fresh profile
+      await mp.refresh();
+      mp.fit(sel);
+    }
     await showCar();
     visual.setPaint(paintOf(sel, catalog), sel.finish);
     if (carKey() !== builtKey) rebuildPlayer();
@@ -959,10 +964,9 @@ async function main() {
     if (mode === 'online' && party?.mode === 'race' && !rejoin && cloud.available) {
       // ranked: the online race room times this race and pays the online career (it decides whether it counts)
       ranked?.close();
-      if (!mp.ready) await mp.refresh();
       if (mp.ready) {
         const a = assistSet;
-        ranked = new RankedLink(cloud, party.code, { car: sel.car, host: party.isHost, manual: a.gearbox === 'manual',
+        ranked = new RankedLink(cloud, party.code, { car: sel.car, mods: { ...modsOf(sel) }, host: party.isHost, manual: a.gearbox === 'manual',
           assistsOff: +(a.abs === 'off') + +(a.tc === 0) + +!a.stability + +(a.countersteer === 'off') + +(a.line === 'off') });
         menu.ranked(null);
         ranked.onResult = (r) => {

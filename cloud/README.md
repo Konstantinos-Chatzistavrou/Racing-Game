@@ -15,6 +15,7 @@ Licence: AGPL-3.0-or-later, like the game's code.
 - **Ranked races**: the party's race room (one Durable Object per party code) receives every car's position ~4 times a
   second, times the laps itself (`src/tracker.ts`, same rules as the core's race tracker), decides the order, and pays.
   - counts only if **6+ accounts genuinely raced**, at most **2 per network** (IPv4 address, or IPv6 /64 = one household)
+  - the car and upgrade stages a player races with must be owned by their account (otherwise: not counted, no reward)
   - checks: average speed vs. the car's real top speed, teleports, resets (none in full realism; never gaining distance),
     message floods, car-to-car contact (clean-race bonus). 3 violations = no reward + a strike; 3 strikes = no ranked races
   - new accounts earn half (first 24 h and below level 3); racing the same opponents 5+ / 10+ times a day pays half / a
@@ -29,7 +30,7 @@ cd cloud
 npm install
 npm run db:local          # create the local database
 npm run dev               # http://127.0.0.1:8787 (the game's dev server uses it automatically)
-npm test                  # 15 simulated players, two real-time races (~2 min)
+npm test                  # 17 simulated players, two real-time races (~2 min)
 ```
 
 `.dev.vars` (not committed) for local runs: `ALLOW_TEST_IP=1`, `IP_SALT=dev-salt`, `VERIFIER_KEY=dev-verifier`.

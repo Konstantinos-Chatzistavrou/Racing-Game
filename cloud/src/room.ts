@@ -8,13 +8,14 @@
 // Ranked: >= 6 accounts that genuinely raced, at most 2 per network. Rewards: progression.ts, halved for new accounts,
 // less for racing the same opponents again and again the same day, capped per day. Top 3 are asked for a replay.
 import { DurableObject } from 'cloudflare:workers';
-import { ACTIVE_MIN_DISTANCE, CAR_VMAX_KMH, DAILY_CAP, MAX_PER_NETWORK, NEW_ACCOUNT, RANKED_MIN_PLAYERS, levelOf, levelUpCredits, raceReward } from '../../web/src/progression';
+import { ACTIVE_MIN_DISTANCE, CAR_VMAX_KMH, STARTER_CAR, DAILY_CAP, MAX_PER_NETWORK, NEW_ACCOUNT, RANKED_MIN_PLAYERS, levelOf, levelUpCredits, raceReward } from '../../web/src/progression';
 import { Progress, Route } from './tracker';
 import { type AccountRow, type Env, accountOf, day, netOf, profileOf, randomId, strike } from './util';
 
 interface Player {
   ws: WebSocket; id: string; name: string; net: string; created: number; xp: number; banned: boolean;
   car: string; assistsOff: number; manual: boolean; host: boolean;
+  ownedCars: string[]; ownedMods: Record<string, Record<string, number>>; unowned: string;   // what the account owns; why the declared car is not
   prog: Progress | null; gridDist: number; lastMs: number; lastX: number; lastY: number;
   hist: { ms: number; x: number; y: number }[];   // last ~2.5 s of positions (speed window)
   violations: string[]; contact: boolean; dnf: boolean; dnfWhy: string; gone: boolean; goneMs: number;
@@ -37,6 +38,7 @@ export class RaceRoom extends DurableObject<Env> {
     const p: Player = {
       ws: server, id: acct.id, name: acct.name, net: await netOf(req, this.env), created: acct.created, xp: acct.xp, banned: !!acct.banned,
       car: 'vela_gt', assistsOff: 0, manual: false, host: false,
+      ownedCars: JSON.parse(acct.cars), ownedMods: JSON.parse(acct.mods), unowned: '',
       prog: null, gridDist: 0, lastMs: 0, lastX: 0, lastY: 0, hist: [],
       violations: [], contact: false, dnf: false, dnfWhy: '', gone: false, goneMs: 0, msgs: 0, msgWindow: 0, resetMs: 0, skipJump: false, inRace: false,
     };
@@ -62,6 +64,14 @@ export class RaceRoom extends DurableObject<Env> {
     switch (m.t) {
       case 'join': {
         p.car = typeof m.car === 'string' && m.car in CAR_VMAX_KMH ? m.car : 'vela_gt';
+        // the car and upgrade stages must be this account's (the starter car is everyone's; stage 0 is stock)
+        p.unowned = '';
+        if (p.car !== STARTER_CAR && !p.ownedCars.includes(p.car)) p.unowned = `${p.car} is not owned by this account`;
+        const mods = (m.mods && typeof m.mods === 'object' ? m.mods : {}) as Record<string, unknown>;
+        for (const k of ['engine', 'tyres', 'weight', 'aero']) {
+          const want = Math.round(Number(mods[k]) || 0), have = p.ownedMods[p.car]?.[k] ?? 0;
+          if (want > have) p.unowned ||= `${k} stage ${want} is not owned by this account`;
+        }
         p.assistsOff = Math.max(0, Math.min(5, Math.round(Number(m.assistsOff) || 0)));
         p.manual = m.manual === true;
         p.host = m.host === true;
@@ -169,11 +179,12 @@ export class RaceRoom extends DurableObject<Env> {
     const grid = rs.slice().sort((a, b) => (b.gridDist) - (a.gridDist));
     const flagged = (p: Player) => p.violations.length >= 3 || p.violations.includes('teleport');
     const active = (p: Player) => !!p.prog && (p.prog.finished || p.prog.distance >= ACTIVE_MIN_DISTANCE * total);
+    const eligible = (p: Player) => active(p) && !flagged(p) && !p.banned && !p.unowned;
     // ranked: genuinely racing, clean of violations, not banned; at most MAX_PER_NETWORK per network
     const perNet = new Map<string, number>();
     let counted = 0;
     for (const p of rs) {
-      if (!active(p) || flagged(p) || p.banned) continue;
+      if (!eligible(p)) continue;
       const n = perNet.get(p.net) ?? 0;
       if (n < MAX_PER_NETWORK) { perNet.set(p.net, n + 1); counted++; }
     }
@@ -191,6 +202,8 @@ export class RaceRoom extends DurableObject<Env> {
       if (flagged(p)) {
         notes.push(`Flagged by the race checks (${[...new Set(p.violations)].join(', ')}): no reward, one strike.`);
         await strike(this.env, p.id);
+      } else if (p.unowned) {
+        notes.push(`Not counted, no reward: ${p.unowned} (refresh the game if you just bought it on another device).`);
       } else if (!ranked) {
         notes.push(`Unranked: ${counted} player${counted === 1 ? '' : 's'} counted, ${RANKED_MIN_PLAYERS} needed (players who raced; at most ${MAX_PER_NETWORK} per network).`);
       } else if (p.banned) {
@@ -226,7 +239,7 @@ export class RaceRoom extends DurableObject<Env> {
         stmts.push(db.prepare('INSERT INTO daily (account, day, xp, cr) VALUES (?, ?, ?, ?) ON CONFLICT (account, day) DO UPDATE SET xp = xp + excluded.xp, cr = cr + excluded.cr').bind(p.id, today, xp, cr));
         if (pos <= 3 && finished) stmts.push(db.prepare('INSERT OR IGNORE INTO replays (race, account, requested, claimed_ms) VALUES (?, ?, ?, ?)').bind(r.id, p.id, now, Math.round(p.prog!.finishMs - r.startMs)));
       }
-      results.set(p.id, { pos, finished, xp: reward.xp, cr: reward.cr, parts: reward.parts, notes, replay: ranked && pos <= 3 && finished && !flagged(p) });
+      results.set(p.id, { pos, finished, xp: reward.xp, cr: reward.cr, parts: reward.parts, notes, replay: ranked && pos <= 3 && finished && !flagged(p) && !p.unowned });
     }
     stmts.push(db.prepare('INSERT INTO races (id, created, party, laps, ranked, result) VALUES (?, ?, ?, ?, ?, ?)').bind(r.id, now, this.ctx.id.toString().slice(0, 12), r.laps, ranked ? 1 : 0, JSON.stringify(table)));
     if (stmts.length) await db.batch(stmts);

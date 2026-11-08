@@ -20,7 +20,8 @@ export class RankedLink {
   onResult: (r: RankedResult) => void = () => {};
   onStatus: () => void = () => {};
 
-  constructor(cloud: Cloud, party: string, join: { car: string; assistsOff: number; manual: boolean; host: boolean }) {
+  /** join: the car and the upgrade stages fitted (the room checks the account owns them), aids, gearbox, host */
+  constructor(cloud: Cloud, party: string, join: { car: string; mods: Record<string, number>; assistsOff: number; manual: boolean; host: boolean }) {
     try { this.ws = cloud.room(party); } catch { this.status = 'offline'; return; }
     this.ws.addEventListener('open', () => { this.open = true; this.status = 'connected'; this.send({ t: 'join', ...join }); for (const m of this.queue.splice(0)) this.ws?.send(m); this.onStatus(); });
     this.ws.addEventListener('message', (e) => {

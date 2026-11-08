@@ -33,12 +33,12 @@ function at(s, lane) {
 }
 
 /** One simulated player: joins, (host) starts, drives `laps` laps at v m/s from grid offset s0 in a lane. */
-function driver(acct, party, { host = false, v = 33, s0 = -10, lane = 0, laps = 1, idle = false, teleportAt = -1, startDelay = 0 }) {
+function driver(acct, party, { host = false, v = 33, s0 = -10, lane = 0, laps = 1, idle = false, teleportAt = -1, startDelay = 0, car = 'vela_gt', mods = {} }) {
   return new Promise((resolve) => {
     const ws = new WebSocket(`${BASE.replace(/^http/, 'ws')}/v1/room/${party}?auth=${encodeURIComponent(acct.auth)}&testip=${acct.ip}`);
     let s = s0, timer = 0, raceId = '', t0 = 0;
     ws.addEventListener('open', async () => {
-      ws.send(JSON.stringify({ t: 'join', car: 'vela_gt', assistsOff: 1, manual: false, host }));
+      ws.send(JSON.stringify({ t: 'join', car, mods, assistsOff: 1, manual: false, host }));
       await sleep(startDelay);
       if (host) ws.send(JSON.stringify({ t: 'start', laps, route: 'nyc', realism: true }));
     });
@@ -70,6 +70,7 @@ const net = (i) => `10.${run}.${i}.7`;
 const honest = await Promise.all([0, 1, 2, 3, 4, 5].map((i) => account(net(i))));
 const roommates = await Promise.all([account(net(0)), account(net(0))]);   // the first network again: 3 accounts there
 const idle = await account(net(6)), cheat = await account(net(7));
+const fakeCar = await account(net(8)), fakeMods = await account(net(9));   // claim things they do not own
 const small = await Promise.all([10, 11, 12, 13, 14].map((i) => account(net(i))));
 // sign-up limit: 5 per network per day
 const extra = [];
@@ -86,17 +87,19 @@ const ranked = Promise.all([
   ...roommates.map((a, i) => driver(a, `R${run}A`, { v: 30 - i, s0: -50 - i * 6, lane: i ? 3.5 : -3.5 })),
   driver(idle, `R${run}A`, { idle: true, s0: -70 }),
   driver(cheat, `R${run}A`, { v: 30, s0: -76, lane: 0, teleportAt: 8000 }),
+  driver(fakeCar, `R${run}A`, { v: 28, s0: -82, lane: 3.5, car: 'kestrel_gt' }),
+  driver(fakeMods, `R${run}A`, { v: 27, s0: -88, lane: -3.5, mods: { engine: 3 } }),
 ]);
 const unranked = Promise.all(small.map((a, i) => driver(a, `U${run}B`, { host: i === 0, v: 34 - i, s0: -8 - i * 6, lane: (i % 3) * 3.5 - 3.5, startDelay: 600 })));
 const [R, U] = await Promise.all([ranked, unranked]);
 
 const byId = (res, a) => res.find((x) => x.acct.id === a.id);
-const roles = new Map([...honest.map((a, i) => [a.id, `honest${i}`]), ...roommates.map((a, i) => [a.id, `room${i}`]), [idle.id, 'idle'], [cheat.id, 'cheat']]);
+const roles = new Map([...honest.map((a, i) => [a.id, `honest${i}`]), ...roommates.map((a, i) => [a.id, `room${i}`]), [idle.id, 'idle'], [cheat.id, 'cheat'], [fakeCar.id, 'fakeCar'], [fakeMods.id, 'fakeMods']]);
 if (process.env.DEBUG) for (const t of R[0].table) console.log('   ', roles.get(t.id), t.finished ? (t.timeMs / 1000).toFixed(1) : 'DNF', t.why, t.flagged ? 'FLAGGED' : '');
 const r0 = R[0];
 console.log('  result table:', r0.table.map((t) => `${t.pos}.${t.name.slice(-4)}${t.finished ? ` ${(t.timeMs / 1000).toFixed(1)}s` : ' DNF'}${t.flagged ? ' FLAGGED' : ''}`).join('  '));
 check('ranked race: ranked', r0.ranked === true, `(counted ${r0.counted})`);
-check('counted 7: 6 networks + 1 extra on the shared network (2 per network), idle and cheat not counted', r0.counted === 7);
+check('counted 7: 6 networks + 1 extra on the shared network (2 per network); idle, cheat and unowned cars not counted', r0.counted === 7);
 check('finishing order follows the speeds (server-timed)', r0.table[0].id === honest[0].id && r0.table[1].id === honest[1].id);
 const winner = byId(R, honest[0]).you;
 check('winner paid XP and credits (new account: x0.5)', winner.xp > 0 && winner.cr > 0, `(${winner.xp} XP, ${winner.cr} Cr; ${winner.notes.join(' ')})`);
@@ -106,6 +109,10 @@ check('teleporter flagged, no reward', ch.you.xp === 0 && ch.table.find((t) => t
 check('teleporter got a strike', (await api(cheat, 'GET', '/v1/me')).body.strikes === 1);
 const id = byId(R, idle);
 check('idle player: no reward', id.you.xp === 0 && id.you.cr === 0);
+const fc = byId(R, fakeCar).you, fm = byId(R, fakeMods).you;
+check('racing a car the account does not own: no reward', fc.xp === 0 && fc.cr === 0 && fc.notes.some((n) => n.includes('not owned')), `(${fc.notes.join(' ')})`);
+check('racing upgrade stages the account does not own: no reward', fm.xp === 0 && fm.cr === 0 && fm.notes.some((n) => n.includes('not owned')), `(${fm.notes.join(' ')})`);
+check('an unowned claim is not a strike (it can be a stale profile)', (await api(fakeCar, 'GET', '/v1/me')).body.strikes === 0);
 const me = (await api(honest[0], 'GET', '/v1/me')).body;
 check('winner profile updated on the server', me.xp === winner.xp && me.credits === winner.cr, `(${me.xp} XP, ${me.credits} Cr)`);
 check('unranked race (5 players): no rewards', U.every((x) => !x.ranked && x.you.xp === 0 && x.you.cr === 0), `(${U[0].you.notes.join(' ')})`);
