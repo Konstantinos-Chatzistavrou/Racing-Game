@@ -214,6 +214,28 @@ try {
     await key('keyDown', 'KeyW', 'w'); await sleep(600); console.log('keyboard   ', await st()); await key('keyUp', 'KeyW', 'w');
     console.log('ffb status ', await evaluate(`window.__game.ffb.status`));
   }
+  if (scenario === 'stalls') {
+    // Where does the game freeze? (?menu=1&unlockall=1) Frame times through: Garage, car swaps, Play -> race start,
+    // pause / quit. Prints every frame over 100 ms with the step it happened in.
+    for (let i = 0; i < 90 && (await evaluate(`window.__game.menu().tuning`)); i++) await sleep(500);
+    await sleep(1000);
+    await evaluate(`(() => { window.__ft = []; window.__step = 'title'; let p = performance.now(); const f = (t) => { if (t - p > 100) window.__ft.push([window.__step, Math.round(t - p), !!document.getElementById('loader')?.classList.contains('in')]); p = t; requestAnimationFrame(f); }; requestAnimationFrame(f); return 1; })()`);
+    const step = async (name, js, wait) => { await evaluate(`(window.__step = ${JSON.stringify(name)}, ${js}, 1)`); await sleep(wait); };
+    const click = (q) => `document.querySelector('${q}')?.click()`;
+    await step('garage open', click('[data-act=garage-open]'), 3000);
+    await step('swap kestrel', click('[data-act=car][data-v=kestrel_gt]'), 5000);
+    await step('swap harrier', click('[data-act=car][data-v=harrier_gt]'), 5000);
+    await step('swap vela', click('[data-act=car][data-v=vela_gt]'), 5000);
+    await step('play', click('[data-act=play]'), 800);
+    await step('start race', click('[data-act=start-race]'), 9000);
+    await step('pause', `window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape' }))`, 800);
+    await step('quit', click('[data-act=quit]'), 3000);
+    const ft = await evaluate(`window.__ft`);
+    const by = {};
+    for (const [st, d, covered] of ft) (by[st] ??= []).push(covered ? `(${d})` : String(d));
+    for (const [st, ds] of Object.entries(by)) console.log(`stall ${st.padEnd(13)} frames ${ds.join(' ')}   [(n) = behind the loading screen]`);
+    console.log('VISIBLE freezes > 100 ms:', ft.filter(([, , c]) => !c).length, ' worst visible', Math.max(0, ...ft.filter(([, , c]) => !c).map(([, d]) => d)), 'ms');
+  }
   if (scenario === 'resize') {
     // Going fullscreen (run with ?menu=1): the window jumps from 1280x800 to 1920x1080. Frame times are recorded from
     // before the change until 12 s after: how long until the picture is smooth again, the worst frame, the preset.

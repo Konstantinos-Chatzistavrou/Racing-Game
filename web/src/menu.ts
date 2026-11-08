@@ -11,6 +11,7 @@ import { MAX_MEMBERS, cleanCode, type Party, type PartyMode } from './party';
 import type { ControlsUi } from './controls-menu';
 import { PRESET_INFO, applyPreset, matchPreset, type AssistSettings, type Preset } from './assists';
 import { MOD_PRICES, Wallet, fmt } from './wallet';
+import type { Loader } from './loading';
 
 export type Gfx = 'auto' | 'max' | 'ultra' | 'high' | 'medium' | 'low';
 export type Screen = 'none' | 'title' | 'garage' | 'modes' | 'lobby' | 'pause' | 'results' | 'busy' | 'controls' | 'settings' | 'shop';
@@ -91,6 +92,8 @@ export class Menu {
   wallet!: Wallet;
   assists!: AssistSettings;
   private settingsFrom: Screen = 'title';
+  /** the loading screen ('busy' shows it; main may hold it while the game warms up) */
+  loader!: Loader;
   private shopNote = '';
   private shopCar = '';
 
@@ -110,6 +113,7 @@ export class Menu {
     this.busyText = busyText;
     this.root.hidden = s === 'none';
     this.root.dataset.screen = s;
+    if (s === 'busy') void this.loader.show(busyText); else this.loader.hide();
     this.render();
     this.hooks.screen(s);
   }
@@ -140,7 +144,7 @@ export class Menu {
     const html = {
       none: () => '', title: () => this.title(), garage: () => this.garage(), modes: () => this.modes(), lobby: () => this.lobby(),
       pause: () => this.pause(), controls: () => this.ctl?.html() ?? '', settings: () => this.settings(), shop: () => this.shop(), results: () => (this.lastResults ? this.results(this.lastResults) : ''),
-      busy: () => `<div class="card center"><div class="spin"></div><p>${esc(this.busyText)}</p></div>`,
+      busy: () => '',   // the loading screen (loading.ts) covers it
     }[this.screen]();
     this.root.innerHTML = html;
     if (this.screen === 'garage') {

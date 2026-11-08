@@ -138,7 +138,7 @@ body.touch #warn { right: auto; left: calc(8px + env(safe-area-inset-left)); tra
 #menu .panel, #menu .card, #menu .title > *, #menu .g-top > *, #menu .g-bottom { pointer-events: auto; }
 #menu .card, #menu .panel, #menu .g-bottom { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); }
 #menu[data-screen="pause"], #menu[data-screen="results"], #menu[data-screen="busy"] { display: grid; place-items: center; background: #04060ab8; pointer-events: auto; }
-#menu[data-screen="busy"] { background: #04060ae0; }
+#menu[data-screen="busy"] { background: transparent; }
 #menu .card { padding: 28px 34px; min-width: 320px; border-top: 2px solid var(--accent); }
 #menu .card.center { text-align: center; }
 #menu .kicker { font-size: 10px; font-weight: 700; letter-spacing: .3em; color: var(--accent); margin-bottom: 6px; }
@@ -414,3 +414,23 @@ body.spectating #board { top: 12px; }
 #menu .pip.locked { opacity: .55; }
 #menu .more-cars { width: 100%; margin-top: 4px; }
 @media (max-width: 640px) { #menu .srow2 { grid-template-columns: 1fr; } #menu .srow2 small { grid-column: 1; } }
+
+/* ---- loading screen (loading.ts) and boot screen: compositor-only animation (transform / opacity) ---------------- */
+#loader { position: fixed; inset: 0; z-index: 25; display: grid; place-items: center; color: var(--dim); opacity: 0;
+  background: radial-gradient(ellipse at 50% 120%, #2a0a14 0%, var(--bg) 60%); transition: opacity .35s ease; will-change: opacity; }
+#loader[hidden] { display: none; }
+#loader.in { opacity: 1; }
+#loader.out { opacity: 0; }
+#loader .load-msg { margin: 18px 0 14px; font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--fg); }
+.ld-ring { width: 44px; height: 44px; margin: 28px auto 0; position: relative; }
+.ld-ring i { position: absolute; inset: 0; border-radius: 50%; border: 3px solid #ffffff14; border-top-color: var(--accent); border-right-color: var(--accent2);
+  animation: ldspin .9s linear infinite; will-change: transform; }
+.ld-bar, .load-bar { position: relative; height: 3px; background: #ffffff12; border-radius: 2px; overflow: hidden; }
+.ld-bar i, .load-bar::after { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 40%;
+  background: linear-gradient(90deg, transparent, var(--accent), var(--accent2), transparent);
+  animation: ldsweep 1.3s cubic-bezier(.45, 0, .55, 1) infinite; will-change: transform; }
+.ld-tip { margin-top: 26px; min-height: 32px; font-size: 12px; line-height: 1.5; color: var(--dim); }
+@keyframes ldspin { to { transform: rotate(360deg); } }
+@keyframes ldsweep { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+#loading { transition: opacity .4s ease; }
+#loading.out { opacity: 0; pointer-events: none; }

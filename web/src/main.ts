@@ -30,6 +30,7 @@ import { MenuNav } from './menu-nav';
 import { fromToggles, loadAssists, saveAssists, toToggles } from './assists';
 import { FREE_ROAM_PER_KM, Wallet } from './wallet';
 import { DrivingLine } from './driving-line';
+import { Loader, steadyFrames } from './loading';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { RemoteCars } from './net';
 import { Party, cleanCode, type Progress } from './party';
@@ -630,7 +631,16 @@ async function main() {
   const meForParty = () => ({ name: sel.name, car: sel.car, paint: paintInt() });
   const isShowroom = (st: State) => st === 'title' || st === 'garage' || st === 'modes' || st === 'lobby' || st === 'busy';
   const menu: Menu = new Menu(sel, catalog, physics, {
-    preview: () => { void showCar().then(() => { visual.setPaint(paintOf(sel, catalog), sel.finish); party?.updateMe(meForParty()); }); },
+    preview: () => { void (async () => {
+      // a different model: the loading screen covers the download and the first frames with the new car (shader
+      // compiles), and lifts once the garage renders steadily again
+      const swap = visualPathOf(sel.car) !== visualPath;
+      if (swap) await loader.show(`Loading ${catalog.find((c) => c.id === sel.car)?.name ?? 'car'}…`);
+      await showCar();
+      visual.setPaint(paintOf(sel, catalog), sel.finish);
+      party?.updateMe(meForParty());
+      if (swap) { await steadyFrames(5, 70, 6000); loader.hide(); }
+    })(); },
     play: (mode) => void startSession(mode),
     gfx: (g2) => applyGfx(g2),
     resume: () => resume(),
@@ -670,6 +680,8 @@ async function main() {
     assists: () => { toToggles(assistSet, input.assists); saveAssists(assistSet); },
   });
   menu.gfx = gfx;
+  const loader = new Loader();
+  menu.loader = loader;
   menu.wallet = wallet;
   menu.assists = assistSet;
   const drivingLine = new DrivingLine(scene, ai);
@@ -954,20 +966,27 @@ async function main() {
     rig.update(1, pos, quat, new THREE.Vector3(), car.out);
     cityLights.update(1, camera);
     city.update(camera, true);
-    if (carSwapped) {
-      carSwapped = false;
-      await renderer.compileAsync(scene, camera);
-    }
+    // (a swapped car's shaders were compiled by the garage frames; anything left compiles behind the loading screen)
+    carSwapped = false;
     for (const sh of headShadows) sh.needsUpdate = true;
     post.render();
+    loader.hold = loader.shown;      // a session load: the loading screen stays until the race view renders steadily
     menu.show('none');
     hud.resetFps();
     input.poll();                    // drop key edges pressed in the menus
     audio.muted = false;
     remote?.kick();
     prev = performance.now(); acc = 0; lastRenderAt = 0;
+    setState('countdown');           // parked on the grid (no input) while the view warms up
+    if (loader.hold) {
+      loader.text('Almost there…');
+      await steadyFrames(6, 70, 8000);   // tiles around the start stream in, shaders compile: behind the screen
+      loader.hold = false;
+      loader.hide();
+      await sleep(250);
+      if (state !== 'countdown') return;
+    }
     if (raceLaps() === 0) { ai.go(); setState('race'); setExtra(); return; }
-    setState('countdown');
     for (const t of ['3', '2', '1']) { menu.countdown(t); await sleep(900); if (state !== 'countdown') { menu.countdown(''); return; } }
     menu.countdown('GO');
     setState('race');
@@ -1128,7 +1147,7 @@ async function main() {
   post.carPos.copy(pos);
 
   // Boot into the title (or, for the test tools with ?menu=0, straight into a free run).
-  document.getElementById('loading')?.remove();
+  { const l = document.getElementById('loading'); if (l) { l.classList.add('out'); setTimeout(() => l.remove(), 450); } }   // fade, not a cut
   if (params.get('menu') === '0') {
     sel.mode = 'free';
     hud.show();
