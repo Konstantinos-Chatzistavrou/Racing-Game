@@ -10,6 +10,11 @@ Licence: AGPL-3.0-or-later, like the game's code.
 
 - **Accounts**: anonymous (random id + secret token, hashed on the server). No e-mail, no password; the recovery code
   (Settings → Online account) moves an account to another device. At most 5 new accounts per network per day.
+- **Usernames**: every player picks one at first start (`web/src/username.ts` has the rules: 3-16 letters, digits, `_ . -`;
+  `#` is reserved for the single-player bots `#Bot1..#Bot5`). Unique regardless of capitals (a unique index); the first pick
+  is free, a change once per 30 days. It is the name in race rooms, on the leaderboard, over the car and on the number plate.
+- **Friends**: add by username (a request; adding back, or Accept, makes you friends), remove / decline / cancel. Friends
+  see each other online (a heartbeat every 60 s while the game is open) and the party they are in, with a Join button.
 - **Online career**: XP, level, credits and owned items live in the database; the game only shows them. Purchases are
   checked here (online level + credits; a conditional update so credits can never be spent twice).
 - **Ranked races**: the party's race room (one Durable Object per party code) receives every car's position ~4 times a
@@ -31,6 +36,7 @@ npm install
 npm run db:local          # create the local database
 npm run dev               # http://127.0.0.1:8787 (the game's dev server uses it automatically)
 npm test                  # 17 simulated players, two real-time races (~2 min)
+npm run test:social       # usernames and friends (a few seconds)
 ```
 
 `.dev.vars` (not committed) for local runs: `ALLOW_TEST_IP=1`, `IP_SALT=dev-salt`, `VERIFIER_KEY=dev-verifier`.

@@ -18,6 +18,8 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { GROUP_CAR, GROUP_VIEW, type PhysicsWorld } from './physics/world';
 import { materialsOf } from './scene/city';
 import { mergeSpinningWheels, mergeStaticMeshes } from './scene/merge';
+import { applyPlate } from './scene/plate';
+import { botName } from './username';
 import { createContactShadow, setupCarMaterials, type CarVisualConfig } from './scene/car';
 import { assetUrl, loadGLTF } from './scene/loaders';
 import { drawEarly } from './scene/nyc/breach';
@@ -28,13 +30,14 @@ const G = 9.81, WHEEL_R = 0.34;
 export const STEP = 2;     // lane resolution, m
 const PAINTS = [0x15181d, 0x0c1a33, 0xb8bcc2, 0x6b0f12, 0x1f3d2b];   // gunmetal, deep blue, silver, oxblood, racing green
 /** Rival names and skills (fraction of the car's grip they use). Spread so a decent driver beats some and has to work for the rest. */
+/** The computer drivers, strongest first: #Bot1 .. #Bot5 (username.ts: '#' marks a bot, no player name can have one). */
 export const RIVALS = [
-  { name: 'Marco Vance', skill: 0.92, line: -1.8 },
-  { name: 'Aiko Tanaka', skill: 0.89, line: 1.6 },
-  { name: 'Dre Holloway', skill: 0.86, line: -0.6 },
-  { name: 'Sasha Novak', skill: 0.82, line: 0.8 },
-  { name: 'Leo Brandt', skill: 0.78, line: 2.2 },
-];
+  { skill: 0.92, line: -1.8 },
+  { skill: 0.89, line: 1.6 },
+  { skill: 0.86, line: -0.6 },
+  { skill: 0.82, line: 0.8 },
+  { skill: 0.78, line: 2.2 },
+].map((r, i) => ({ ...r, name: botName(i) }));
 const X = new THREE.Vector3(1, 0, 0), UP = new THREE.Vector3(0, 1, 0);
 
 /** What the default car can do (from its physics JSON): limits for the speed profiles. */
@@ -236,6 +239,7 @@ export class AiTraffic {
       //    exhaust, plate and underbody all sit inside that silhouette, so the shadow is the same;
       //  - beyond DETAIL_M the parts hidden by the night, the fog and tinted glass are not drawn (46 -> 30 draws).
       // the four wheels: one mesh per material, spun in the vertex shader (merge.ts); ?merge=0 keeps the separate nodes
+      applyPlate(model, rival.name);   // #BOT1 on the plate
       const spinners = wheels.length === 4 && new URLSearchParams(location.search).get('merge') !== '0' ? mergeSpinningWheels(model, wheels.map((w) => w.node)) : [];
       const detail: THREE.Object3D[] = [];
       const casters: THREE.Mesh[] = [];

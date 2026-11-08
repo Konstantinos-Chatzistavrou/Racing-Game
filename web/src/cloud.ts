@@ -6,7 +6,7 @@
 import type { Mods } from './garage';
 
 export interface Profile {
-  id: string; name: string; xp: number; credits: number;
+  id: string; name: string; username: string | null; usernameAt: number | null; xp: number; credits: number;
   cars: string[]; mods: Record<string, Mods>; skins: string[];
   clean: number; strikes: number; banned: boolean; created: number;
 }
@@ -14,6 +14,9 @@ export interface Profile {
 const KEY = 'nr.cloud.v1';
 const envUrl = (import.meta as unknown as { env?: Record<string, string | boolean | undefined> }).env ?? {};
 const BASE = String(envUrl.VITE_CLOUD_URL ?? (envUrl.DEV ? 'http://127.0.0.1:8787' : '')).replace(/\/$/, '');
+
+export interface Friend { username: string; level: number; online: boolean; party: string | null }
+export interface Friends { friends: Friend[]; incoming: string[]; outgoing: string[] }
 
 export class Cloud {
   readonly base = BASE;
@@ -53,7 +56,18 @@ export class Cloud {
   }
 
   me() { return this.call<Profile>('GET', '/v1/me'); }
-  setName(name: string) { return this.call<Profile>('POST', '/v1/name', { name }); }
+  /** Is that username free? (no account needed) */
+  async usernameFree(u: string): Promise<{ ok: boolean; error?: string }> {
+    if (!this.base) throw new Error('no online service');
+    const r = await fetch(`${this.base}/v1/username?u=${encodeURIComponent(u)}`);
+    return r.json();
+  }
+  /** Claim / change this account's username (unique; the server checks the rules again). */
+  claimUsername(username: string) { return this.call<Profile>('POST', '/v1/username', { username }); }
+  friends() { return this.call<Friends>('GET', '/v1/friends'); }
+  friend(username: string, action: 'add' | 'accept' | 'remove') { return this.call<{ ok: true; state: string }>('POST', '/v1/friends', { username, action }); }
+  /** Heartbeat while the game is open: friends see you online, and your party (they can join it). */
+  presence(party: string | null) { return this.call<{ ok: true }>('POST', '/v1/presence', { party: party ?? '' }); }
   buy(kind: 'car' | 'mod' | 'skin', id: string, stage?: number) { return this.call<Profile>('POST', '/v1/buy', { kind, id, stage }); }
   report(raceId: string, player: string, why: string) { return this.call<{ ok: true }>('POST', '/v1/report', { raceId, player, why }); }
   /** Upload the input recording of a race the server asked for (replay check). */

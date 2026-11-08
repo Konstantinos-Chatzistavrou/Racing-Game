@@ -4,6 +4,8 @@
 //
 // Flow: title -> Play -> game modes (Race / Free Roam / Multiplayer)
 //       title -> Garage (cars, paint, upgrades only) -> Main Menu, or Continue -> game modes
+import type { Identity } from './identity';
+import { PLATE_MAX, USERNAME_MAX, USERNAME_MIN, usernameError } from './username';
 import { FINISHES, MODS, MOD_KEYS, SWATCHES, applyMods, customOf, modsOf, paintOf, saveSelection, statsOf,
   type CatalogCar, type Finish, type Mode, type ModKey, type Selection } from './garage';
 import { formatLap } from './hud';
@@ -30,7 +32,7 @@ const GTABS: { id: string; label: string; cam: string }[] = [
 ];
 
 export type Gfx = 'auto' | 'max' | 'ultra' | 'high' | 'medium' | 'low';
-export type Screen = 'none' | 'title' | 'garage' | 'modes' | 'lobby' | 'pause' | 'results' | 'busy' | 'controls' | 'settings' | 'shop';
+export type Screen = 'none' | 'title' | 'garage' | 'modes' | 'lobby' | 'pause' | 'results' | 'busy' | 'controls' | 'settings' | 'shop' | 'profile';
 /** One line of the race standings. fin: finish time (s) or -1; d: distance covered (m); dnf: out of the race. */
 export interface Standing { name: string; you: boolean; fin: number; d: number; best: number; ai: boolean; dnf?: boolean; why?: string }
 export interface ResultData { total: number; best: number; laps: number[]; laps_target: number; standings: Standing[]; routeLength: number; online: boolean; /** credits paid for this race */ earned?: number }
@@ -110,6 +112,16 @@ export class Menu {
   sp!: SpCareer;
   mp!: MpCareer;
   cloud!: Cloud;
+  /** username and friends (identity.ts) */
+  identity!: Identity;
+  private unameDraft: string | null = null;
+  private unameNote = '';
+  private unameBusy = false;
+  private unameSeq = 0;
+  private friendDraft = '';
+  private friendNote = '';
+  private profileFrom: Screen = 'title';
+  private friendsTimer = 0;
   /** the career the garage and shop show (single player / online) */
   get career(): Career { return this.sel.career === 'mp' ? this.mp : this.sp; }
   /** the online race room's verdict on the last party race */
@@ -132,11 +144,15 @@ export class Menu {
     this.root.addEventListener('keydown', (e) => {
       const t = e.target as HTMLElement;
       if (e.key === 'Enter' && t.id === 'joincode') this.hooks.partyJoin(this.joinCode);
+      if (e.key === 'Enter' && t.id === 'uname') void this.saveName();
+      if (e.key === 'Enter' && t.id === 'fadd') void this.friendAct(this.friendDraft, 'add');
       if (t.tagName === 'INPUT' && (t as HTMLInputElement).type === 'text') e.stopPropagation();   // typing a name or code never drives the car
     });
   }
 
   show(s: Screen, busyText = '') {
+    clearInterval(this.friendsTimer);
+    if (s === 'profile') { void this.identity.loadFriends(); this.friendsTimer = window.setInterval(() => void this.identity.loadFriends(), 20_000); }
     this.screen = s;
     this.busyText = busyText;
     this.root.hidden = s === 'none';
@@ -171,7 +187,7 @@ export class Menu {
     const rightScroll = this.root.querySelector('.g-right')?.scrollTop ?? 0;
     const html = {
       none: () => '', title: () => this.title(), garage: () => this.garage(), modes: () => this.modes(), lobby: () => this.lobby(),
-      pause: () => this.pause(), controls: () => this.ctl?.html() ?? '', settings: () => this.settings(), shop: () => this.shop(), results: () => (this.lastResults ? this.results(this.lastResults) : ''),
+      pause: () => this.pause(), controls: () => this.ctl?.html() ?? '', settings: () => this.settings(), shop: () => this.shop(), profile: () => this.profile(), results: () => (this.lastResults ? this.results(this.lastResults) : ''),
       busy: () => '',   // the loading screen (loading.ts) covers it
     }[this.screen]();
     this.root.innerHTML = html;
@@ -208,10 +224,14 @@ export class Menu {
         <button class="primary" data-act="invite" ${dis}>Join Party</button><button class="small" data-act="noinvite" aria-label="Dismiss">✕</button></div>` : '';
     const last = this.sp.last ?? this.mp.last;
     const earned = last && (last.xp || last.cr) ? `<div class="earned">+${fmtXp(last.xp)}${last.cr ? ` · +${fmt(last.cr)}` : ''} <span class="dim">${esc(last.reason)}</span>${last.levelUp ? ` <b class="lvup">LEVEL ${last.levelUp}</b>` : ''}</div>` : '';
+    if (this.identity.needsPick && !this.tuning) return this.pickName();
+    const me = `<button class="me-chip" data-act="profile-open" ${dis}><span class="avatar">${helmetSvg(skinOf(this.sel.skin), 26)}</span><b>${esc(this.identity.name)}</b>
+      <span class="dim">${this.identity.friends.incoming.length ? `· ${this.identity.friends.incoming.length} friend request${this.identity.friends.incoming.length > 1 ? 's' : ''}` : '· Profile &amp; friends'}</span></button>`;
     return `${this.tuning ? '<div class="cover"><div class="card center"><div class="spin"></div><p>Calibrating WebGPU pipeline…</p><span class="dim">Optimizing resolution &amp; reflections for this display.</span></div></div>' : ''}
       <div class="title">
         <div class="kicker">OPEN-WORLD STREET RACING // PACEJKA MF 6.1</div>
         <div class="logo">OPEN<span>GRID</span></div>
+        ${me}
         <div class="sub">Active vehicle: <b>${esc(curCar.name)}</b></div>
         <div class="careers">${this.careerCard('sp')}${this.careerCard('mp')}</div>
         ${earned}
@@ -482,7 +502,7 @@ export class Menu {
   private lobby() {
     const p = this.party, sel = this.sel;
     const note = this.partyNote ? `<div class="pnote ${/^(✓|Copied)/.test(this.partyNote) ? '' : 'bad'}">${esc(this.partyNote)}</div>` : '';
-    const nameRow = `<label class="field"><span class="dim">YOUR NAME</span><input id="pname" type="text" maxlength="18" value="${esc(sel.name)}" placeholder="Driver" spellcheck="false" autocomplete="off" /></label>`;
+    const nameRow = `<div class="field"><span class="dim">YOU RACE AS</span><b class="uname">${esc(sel.name)}</b><button class="small" data-act="profile-open">Change · Friends</button></div>`;
     if (!p) {
       return `<div class="lobby-screen"><div class="card lobby-card">
         <div class="lobby-head"><button data-act="modes" class="back-btn">← Game Modes</button><div><div class="kicker">MULTIPLAYER</div><h2>Party</h2></div></div>
@@ -634,6 +654,13 @@ export class Menu {
       case 'play': this.sp.last = this.mp.last = null; this.show('modes'); break;
       case 'garage-open': this.show('garage'); this.hooks.preview(); break;
       case 'home': this.show('title'); break;
+      case 'profile-open': this.profileFrom = this.screen === 'profile' ? this.profileFrom : this.screen; this.unameDraft = null; this.unameNote = ''; this.friendNote = ''; this.show('profile'); break;
+      case 'profile-back': this.show(this.profileFrom); break;
+      case 'uname-save': void this.saveName(); break;
+      case 'friend-add': void this.friendAct(this.friendDraft, 'add'); break;
+      case 'friend-accept': void this.friendAct(v, 'accept'); break;
+      case 'friend-remove': void this.friendAct(v, 'remove'); break;
+      case 'friend-join': this.joinCode = v; this.setCareer('mp'); this.show('lobby'); this.hooks.partyJoin(v); break;
       case 'shop-open': this.shopNote = ''; this.shopCar = sel.car; this.shopTab = this.garageTab === 'perf' ? 'upgrades' : 'cars'; this.show('shop'); break;
       case 'shop-gear': this.shopNote = ''; this.shopTab = 'gear'; this.show('shop'); break;
       case 'stab': this.shopTab = v as typeof this.shopTab; this.render(); break;
@@ -730,6 +757,96 @@ export class Menu {
     this.hooks.preview();
   }
 
+  // ---- username and friends (identity.ts) -----------------------------------------------------------------------------------
+  /** First start: a username before anything else (how friends find you; shown in races and on your plate). */
+  private pickName() {
+    const draft = this.unameDraft ?? (usernameError(this.sel.name) ? '' : this.sel.name);
+    return `<div class="lobby-screen"><div class="card lobby-card pick-card">
+      <div class="kicker">WELCOME TO OPENGRID</div><h2>Choose your username</h2>
+      <p class="dim">Friends add you by it, and everyone sees it in races: on the leaderboard, over your car and on your number plate.
+        ${this.cloud.available ? 'It is yours alone: nobody else can take it.' : ''}</p>
+      ${this.unameField(draft)}
+      <div class="lobby-foot"><span class="dim small-note">${USERNAME_MIN}-${USERNAME_MAX} characters · letters, digits, _ . - · no #</span>
+        <button class="primary huge" data-act="uname-save" ${this.unameBusy ? 'disabled' : ''}>Continue ▶</button></div>
+    </div></div>`;
+  }
+  private unameField(draft: string) {
+    const bad = this.unameNote && !this.unameNote.startsWith('✓');
+    return `<div class="joinrow"><input id="uname" type="text" maxlength="${USERNAME_MAX}" value="${esc(draft)}" placeholder="username" spellcheck="false" autocomplete="off" autocapitalize="off" />
+      ${this.screen === 'profile' ? `<button class="primary" data-act="uname-save" ${this.unameBusy ? 'disabled' : ''}>Save</button>` : ''}</div>
+      <div class="pnote ${bad ? 'bad' : ''}" id="uname-note">${this.unameBusy ? '<span class="spin inline"></span> ' : ''}${esc(this.unameNote)}</div>`;
+  }
+  private async liveCheck(u: string) {
+    const seq = ++this.unameSeq;
+    const local = usernameError(u.trim());
+    if (local || !u.trim()) { this.unameNote = u.trim() ? local! : ''; this.paintNote(); return; }
+    await new Promise((r) => setTimeout(r, 350));   // typing: ask the server once it pauses
+    if (seq !== this.unameSeq) return;
+    const why = await this.identity.check(u.trim());
+    if (seq !== this.unameSeq) return;
+    this.unameNote = why || (this.cloud.available ? '✓ Available' : '');
+    this.paintNote();
+  }
+  /** the note under the username input, without re-rendering (the input keeps its caret) */
+  private paintNote() {
+    const el = document.getElementById('uname-note');
+    if (!el) return;
+    el.textContent = this.unameNote;
+    el.classList.toggle('bad', !!this.unameNote && !this.unameNote.startsWith('✓'));
+  }
+  private async saveName() {
+    const u = (this.unameDraft ?? this.sel.name).trim();
+    this.unameBusy = true; this.render();
+    const why = await this.identity.pick(u);
+    this.unameBusy = false;
+    if (why) { this.unameNote = why; this.render(); return; }
+    this.unameDraft = null;
+    this.unameNote = this.identity.note || '✓ Saved';
+    this.hooks.partyMe();
+    this.render();
+  }
+  private async friendAct(u: string, action: 'add' | 'accept' | 'remove') {
+    if (!u.trim()) return;
+    this.friendNote = await this.identity.friend(u, action);
+    if (action === 'add' && this.friendNote.startsWith('✓')) this.friendDraft = '';
+    this.render();
+  }
+  private profile() {
+    const id = this.identity, f = id.friends, online = this.cloud.available;
+    const draft = this.unameDraft ?? this.sel.name;
+    const status = !online ? 'Saved on this device. The online service is not set up for this build, so the name cannot be reserved yet.'
+      : id.claimed ? '✓ Reserved for you on the online service.' : id.note || 'Not confirmed by the online service yet.';
+    const friend = (x: { username: string; level: number; online: boolean; party: string | null }) => `<div class="member">
+        <span class="avatar"><i class="dot ${x.online ? 'on' : ''}"></i></span>
+        <div class="mtext"><div class="mname"><b>${esc(x.username)}</b><span class="pill">Lv ${x.level}</span></div>
+        <span class="dim">${x.online ? (x.party ? `online · in party ${esc(x.party)}` : 'online') : 'offline'}</span></div>
+        ${x.party && !this.party ? `<button class="small primary" data-act="friend-join" data-v="${esc(x.party)}">Join</button>` : ''}
+        <button class="small" data-act="friend-remove" data-v="${esc(x.username)}" title="Remove friend">✕</button>
+      </div>`;
+    const incoming = f.incoming.map((u) => `<div class="member"><div class="mtext"><div class="mname"><b>${esc(u)}</b></div><span class="dim">wants to be friends</span></div>
+        <button class="small primary" data-act="friend-accept" data-v="${esc(u)}">Accept</button><button class="small" data-act="friend-remove" data-v="${esc(u)}">Decline</button></div>`).join('');
+    const outgoing = f.outgoing.map((u) => `<div class="member"><div class="mtext"><div class="mname"><b>${esc(u)}</b></div><span class="dim">request sent</span></div>
+        <button class="small" data-act="friend-remove" data-v="${esc(u)}">Cancel</button></div>`).join('');
+    const friendsBlock = !online ? `<div class="dim note">${esc(id.friendsNote || 'Friends need the online service, which is not set up for this build.')}</div>` : `
+      <div class="joinrow"><input id="fadd" type="text" maxlength="${USERNAME_MAX}" value="${esc(this.friendDraft)}" placeholder="Add a friend by username" spellcheck="false" autocomplete="off" autocapitalize="off" />
+        <button class="primary" data-act="friend-add" ${id.claimed ? '' : 'disabled'}>Add</button></div>
+      ${this.friendNote ? `<div class="pnote ${this.friendNote.startsWith('✓') ? '' : 'bad'}">${esc(this.friendNote)}</div>` : ''}
+      ${id.friendsNote ? `<div class="pnote bad">${esc(id.friendsNote)}</div>` : ''}
+      ${incoming ? `<h3>Requests</h3><div class="members">${incoming}</div>` : ''}
+      <h3>Friends <small class="dim">${f.friends.filter((x) => x.online).length} online · ${f.friends.length}</small></h3>
+      <div class="members">${f.friends.map(friend).join('') || '<div class="dim note">No friends yet. Share your username, or add theirs above.</div>'}</div>
+      ${outgoing ? `<h3>Sent</h3><div class="members">${outgoing}</div>` : ''}`;
+    return `<div class="lobby-screen"><div class="card lobby-card profile-card">
+      <div class="lobby-head"><button data-act="profile-back" class="back-btn">← Back</button><div><div class="kicker">PROFILE</div><h2>${esc(this.sel.name)}</h2></div></div>
+      <h3>Username</h3>
+      <p class="dim">Friends add you by it; it shows on the race leaderboard, over your car and on your number plate (up to ${PLATE_MAX} characters).
+        ${online ? 'You can change it once every 30 days.' : ''}</p>
+      ${this.unameField(draft)}
+      <div class="dim note">${esc(status)}</div>
+      <h3>Friends</h3>${friendsBlock}
+    </div></div>`;
+  }
+
   private copyLink() {
     if (!this.party) return;
     const link = this.party.link;
@@ -741,12 +858,12 @@ export class Menu {
     const t = e.target as HTMLInputElement;
     if (t.id === 'custom') { this.sel.paint[this.sel.car] = t.value; this.hooks.preview(); }   // live while dragging
     if (t.id === 'joincode') { const c = cleanCode(t.value); if (c !== t.value) t.value = c; this.joinCode = c; }
-    if (t.id === 'pname') this.sel.name = t.value.slice(0, 18);
+    if (t.id === 'uname') { this.unameDraft = t.value; void this.liveCheck(t.value); }
+    if (t.id === 'fadd') this.friendDraft = t.value;
     if (t.type === 'range') this.ctl?.slide(t);
   }
   private change(e: Event) {
     const t = e.target as HTMLInputElement;
     if (t.id === 'custom') { this.save(); this.render(); }
-    if (t.id === 'pname') { this.sel.name = t.value.trim().slice(0, 18) || 'Driver'; this.save(); this.hooks.partyMe(); }
   }
 }

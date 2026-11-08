@@ -36,7 +36,7 @@ export class RaceRoom extends DurableObject<Env> {
     server.accept();
     if (!acct) { server.send(JSON.stringify({ t: 'error', error: 'unknown account' })); server.close(4001, 'auth'); return new Response(null, { status: 101, webSocket: client }); }
     const p: Player = {
-      ws: server, id: acct.id, name: acct.name, net: await netOf(req, this.env), created: acct.created, xp: acct.xp, banned: !!acct.banned,
+      ws: server, id: acct.id, name: acct.username ?? acct.name, net: await netOf(req, this.env), created: acct.created, xp: acct.xp, banned: !!acct.banned,
       car: 'vela_gt', assistsOff: 0, manual: false, host: false,
       ownedCars: JSON.parse(acct.cars), ownedMods: JSON.parse(acct.mods), unowned: '',
       prog: null, gridDist: 0, lastMs: 0, lastX: 0, lastY: 0, hist: [],

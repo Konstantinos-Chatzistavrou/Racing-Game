@@ -42,6 +42,8 @@ import { Menu, rank, type Gfx, type Screen, type Standing } from './menu';
 import { applyMods, customOf, loadSelection, modsOf, paintOf, type CatalogCar, type Mode } from './garage';
 import { skinOf } from './scene/driver';
 import { AiTraffic } from './ai';
+import { Identity } from './identity';
+import { usernameError } from './username';
 import { formatLap } from './hud';
 import { autoCap, benchClose, benchProgress, benchResults, measureRefresh, recommend, stats, type BenchReport, type PhaseResult, type SoakWindow } from './bench';
 
@@ -180,6 +182,10 @@ async function main() {
   const sp = new SpCareer(import.meta.env.DEV && (params.get('unlockall') === '1' || params.has('car')));
   const cloud = new Cloud();
   const mp = new MpCareer(cloud, catalog);
+  // username (unique online, shown in races and on the plates) and friends: identity.ts
+  // dev tests (drive.mjs): ?user=NAME skips the first-start username card
+  if (import.meta.env.DEV && params.get('user') && !usernameError(params.get('user')!)) sel.name = params.get('user')!;
+  const identity = new Identity(sel, cloud);
   const careerOf = () => (sel.career === 'mp' ? mp : sp);
   if (sel.career === 'mp') sel.career = 'sp';   // the game opens on the single-player career; the lobby switches
   // driving assists (Settings): levels of the core's existing aids
@@ -233,6 +239,7 @@ async function main() {
   const loadedCar = await carLoadP;
   let visualCfg = loadedCar.cfg;
   let visual = loadedCar.vis;
+  visual.setPlate(sel.name);
   drawEarly(visual.model);   // cars stay visible inside a wall breach (breach.ts portal)
   scene.add(visual.root);
   visual.setPaint(paintOf(sel, catalog), sel.finish);
@@ -715,10 +722,15 @@ async function main() {
   menu.loader = loader;
   menu.sp = sp;
   menu.mp = mp;
-  mp.onChange = () => {
-    if (mp.profile && mp.profile.name !== sel.name && sel.name.trim()) void cloud.setName(sel.name).then((p) => { mp.profile = p; }).catch(() => {}); if (['title', 'shop', 'garage', 'lobby', 'results', 'settings'].includes(menu.screen)) menu.render(); };
+  const rerender = () => { if (['title', 'shop', 'garage', 'lobby', 'results', 'settings', 'profile'].includes(menu.screen)) menu.render(); };
+  let syncedProfile: unknown = null;
+  mp.onChange = () => { if (mp.profile && mp.profile !== syncedProfile) { syncedProfile = mp.profile; void identity.sync(mp.profile); } rerender(); };
+  identity.onChange = () => { party?.updateMe(meForParty()); visual.setPlate(sel.name); rerender(); };
   menu.cloud = cloud;
+  menu.identity = identity;
   if (cloud.id) void mp.refresh();   // an online account exists on this device: show its level / credits on the title
+  else if (cloud.available && !identity.needsPick && !identity.claimed) void identity.pick(sel.name);   // claim the name picked offline
+  const presenceBeat = identity.startPresence(() => party?.code ?? null);
   menu.assists = assistSet;
   applyLook();
   const drivingLine = new DrivingLine(scene, ai);
@@ -755,6 +767,7 @@ async function main() {
   function attachParty(p: Party) {
     party = p;
     menu.party = p;
+    presenceBeat();   // friends see the party at once
     menu.partyNote = '';
     menu.invite = '';
     if (params.has('party')) history.replaceState(null, '', location.pathname + location.search.replace(/[?&]party=[^&]*/, '').replace(/^&/, '?'));
@@ -785,6 +798,7 @@ async function main() {
   function detachParty(reason: string) {
     party = null;
     menu.party = null;
+    presenceBeat();
     menu.partyNote = reason;
     if (driving() || state === 'busy') quitSession('lobby');
     else if (menu.screen === 'lobby') menu.render();
@@ -796,7 +810,7 @@ async function main() {
   function standings(): Standing[] {
     const L = lap?.routeLength ?? route.length_m;
     const myFin = lap?.finished ? lapTimes.reduce((a, b) => a + b, 0) : -1;
-    const list: Standing[] = [{ name: party ? sel.name : 'You', you: true, fin: myFin, d: lap?.distance ?? -L, best: lap?.best ?? 0, ai: false, dnf: !!myDnf, why: myDnf }];
+    const list: Standing[] = [{ name: sel.name, you: true, fin: myFin, d: lap?.distance ?? -L, best: lap?.best ?? 0, ai: false, dnf: !!myDnf, why: myDnf }];
     if (sel.mode === 'race') ai.cars.forEach((c, i) => { const r = aiRace[i]; if (r) list.push({ name: c.name, you: false, fin: r.fin, d: r.lap?.distance ?? 0, best: r.lap?.best ?? 0, ai: true }); });
     if (sel.mode === 'online' && party) for (const m of party.members) {
       if (m.id === party.selfId) continue;
@@ -932,6 +946,7 @@ async function main() {
       scene.remove(visual.root);
       damage.dispose();
       visualPath = path; visualCfg = cfg; visual = next; shape = shapeOf(cfg);
+      visual.setPlate(sel.name);
       drawEarly(visual.model);
       carSwapped = true;
       visual.renderDt = capInterval ? capInterval / 1000 : 1 / 60;

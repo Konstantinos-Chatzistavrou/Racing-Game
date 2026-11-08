@@ -9,7 +9,8 @@
     "db:local": "wrangler d1 migrations apply opengrid --local",
     "db:remote": "wrangler d1 migrations apply opengrid --remote",
     "deploy": "wrangler deploy",
-    "test": "node test/sim.mjs"
+    "test": "node test/sim.mjs",
+    "test:social": "node test/social.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261108.1",

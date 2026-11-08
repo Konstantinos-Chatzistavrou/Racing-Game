@@ -14,6 +14,7 @@ export interface Env {
 export interface AccountRow {
   id: string; token_hash: string; name: string; created: number; xp: number; credits: number;
   cars: string; mods: string; skins: string; clean: number; strikes: number; banned: number; net: string | null;
+  username: string | null; username_at: number | null; seen: number | null; party: string | null;
 }
 
 export const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -63,7 +64,7 @@ export async function accountOf(req: Request, env: Env): Promise<AccountRow | nu
 }
 
 export const profileOf = (a: AccountRow) => ({
-  id: a.id, name: a.name, xp: a.xp, credits: a.credits,
+  id: a.id, name: a.username ?? a.name, username: a.username, usernameAt: a.username_at, xp: a.xp, credits: a.credits,
   cars: JSON.parse(a.cars) as string[], mods: JSON.parse(a.mods), skins: JSON.parse(a.skins) as string[],
   clean: a.clean, strikes: a.strikes, banned: !!a.banned, created: a.created,
 });

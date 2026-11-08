@@ -1,6 +1,7 @@
 // Car visuals: glTF model, wheels driven by the core's suspension output, headlights, brake lights,
 // soft ground contact shadow, and realistic radial spoke motion blur.
 import * as THREE from 'three/webgpu';
+import { applyPlate } from './plate';
 import { float, smoothstep, texture, uniform, uv, vec4 } from 'three/tsl';
 import { OUT } from '../physics/core';
 import { materialsOf } from './city';
@@ -480,6 +481,9 @@ export class CarVisual {
   }
 
   /** Spot intensity from the switch and the damage state. */
+  /** The driver's name on the number plate (plate.ts). */
+  setPlate(name: string) { applyPlate(this.model, name); }
+
   applyHeadlights() {
     for (const s of this.headlights) s.intensity = this.lightsOn && !this.lightsBroken ? this.headlightIntensity * this.dim : 0;
   }

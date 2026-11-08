@@ -1,6 +1,6 @@
 // Drives the game in the system Chrome with WebGPU enabled (Linux needs the flags) through the
 // DevTools protocol: load, idle, full throttle, brake. Prints telemetry + fps, saves screenshots.
-// Usage: node tools/drive.mjs [url] [outdir] [straight|crash|mobile|bench|profile|night|menu|race6|follow|dnf|poles|walls|devices]   (parties: tools/party_test.mjs, tools/party_game_test.mjs)   (CDP_PORT=9334 to change the DevTools port)
+// Usage: node tools/drive.mjs [url] [outdir] [straight|crash|mobile|bench|profile|night|menu|race6|raceperf|social|follow|dnf|poles|walls|devices]   (parties: tools/party_test.mjs, tools/party_game_test.mjs)   (CDP_PORT=9334 to change the DevTools port)
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -8,7 +8,9 @@ import path from 'node:path';
 
 // ?menu=0: straight into a free run (the title and garage are for people). ?menu=1 in the URL keeps them.
 const url0 = process.argv[2] ?? 'http://127.0.0.1:5173/';
-const url = /[?&]menu=/.test(url0) ? url0 : url0 + (url0.includes('?') ? '&' : '?') + 'menu=0';
+const url1 = /[?&]menu=/.test(url0) ? url0 : url0 + (url0.includes('?') ? '&' : '?') + 'menu=0';
+// a username, so the first-start card does not block the title (USER_NAME= picks another; USER_NAME=- leaves it unset)
+const url = process.env.USER_NAME === '-' || /[?&]user=/.test(url1) ? url1 : url1 + `&user=${process.env.USER_NAME ?? 'drive_test'}`;
 const out = process.argv[3] ?? path.join(os.tmpdir(), 'drive');
 const scenario = process.argv[4] ?? 'straight';
 fs.mkdirSync(out, { recursive: true });
@@ -96,7 +98,13 @@ try {
   if (process.env.CPU_THROTTLE) await send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.CPU_THROTTLE) });
   await sleep(Number(process.env.SETTLE ?? 4000));
   console.log('idle  ', JSON.stringify(await evaluate(info)));
-  if (process.env.PROBE) console.log('probe', await evaluate(fs.readFileSync(process.env.PROBE, 'utf8')));
+  if (process.env.PROBE) {
+    // a probe may ask for screenshots while it runs: window.__shotNow = 'name' -> <name>.png
+    let done = false;
+    const p = evaluate(fs.readFileSync(process.env.PROBE, 'utf8')).finally(() => { done = true; });
+    while (!done) { await sleep(150); const n = await evaluate(`(() => { const n = window.__shotNow; window.__shotNow = ''; return n || ''; })()`).catch(() => ''); if (n) await shot(`${n}.png`); }
+    console.log('probe', await p);
+  }
   if (process.env.PROBE) await shot('probe.png');
   if (scenario === 'bench') {
     await sleep(2000);
@@ -142,6 +150,42 @@ try {
       await click('[data-act=modes]'); await sleep(300); await click('[data-act=start-free]'); await sleep(4000);
       console.log('free roam (expect no rivals, no board):', await evaluate(`JSON.stringify({ state: window.__game.state, ai: window.__game.ai.mode, board: !document.getElementById('board').hidden })`));
     }
+  }
+  if (scenario === 'social') {
+    // Username and friends (run with ?menu=1 and USER_NAME=-; needs the local online service: cd cloud && npm run dev).
+    // First start: the username card; a taken name is refused, a free one claimed; the title chip; a second account
+    // (made here over HTTP) asks to be friends, the player accepts on the Profile screen; a race shows the name + #Bots.
+    const click = (q) => evaluate(`(() => { const e = document.querySelector('${q}'); if (!e) return 'MISSING ${q}'; e.click(); return 'ok'; })()`);
+    const type = (q, v) => evaluate(`(() => { const e = document.querySelector('${q}'); if (!e) return 'MISSING'; e.focus(); e.value = ${JSON.stringify(v)}; e.dispatchEvent(new Event('input', { bubbles: true })); return 'ok'; })()`);
+    const note = () => evaluate(`document.getElementById('uname-note')?.textContent ?? document.querySelector('.pnote')?.textContent ?? ''`);
+    const API = 'http://127.0.0.1:8787', run = Math.random().toString(36).slice(2, 7);
+    const mk = async (u) => { const a = await (await fetch(API + '/v1/account', { method: 'POST', headers: { 'x-test-ip': `10.9.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}` }, body: '{}' })).json();
+      const auth = `${a.id}.${a.token}`; const r = await fetch(API + '/v1/username', { method: 'POST', headers: { authorization: `Bearer ${auth}`, 'content-type': 'application/json' }, body: JSON.stringify({ username: u }) }); return { auth, ok: r.ok }; };
+    const other = await mk(`Rival_${run}`);
+    console.log('other account', other.ok);
+    for (let i = 0; i < 90 && (await evaluate(`window.__game.menu().tuning`)); i++) await sleep(500);
+    console.log('first start shows the card:', await evaluate(`!!document.querySelector('.pick-card') && !document.querySelector('[data-act=play]')`));
+    await shot('p1_pick.png');
+    await type('#uname', '#Bot1'); await sleep(200); console.log('#Bot1 ->', await note());
+    await type('#uname', `rival_${run}`); await sleep(900); console.log(`rival_${run} (taken, other capitals) ->`, await note());
+    await type('#uname', `Kostas_${run}`); await sleep(900); console.log(`Kostas_${run} ->`, await note());
+    await shot('p2_pick_ok.png');
+    await click('[data-act=uname-save]'); await sleep(1500);
+    console.log('title chip:', await evaluate(`document.querySelector('.me-chip')?.textContent.replace(/\\s+/g, ' ').trim()`));
+    await shot('p3_title.png');
+    // the other player asks to be friends
+    await fetch(API + '/v1/friends', { method: 'POST', headers: { authorization: `Bearer ${other.auth}`, 'content-type': 'application/json' }, body: JSON.stringify({ username: `Kostas_${run}`, action: 'add' }) });
+    await fetch(API + '/v1/presence', { method: 'POST', headers: { authorization: `Bearer ${other.auth}`, 'content-type': 'application/json' }, body: JSON.stringify({ party: 'QWERT' }) });
+    await click('[data-act=profile-open]'); await sleep(1500);
+    console.log('request shown:', await evaluate(`[...document.querySelectorAll('.profile-card .member')].map((e) => e.textContent.replace(/\\s+/g, ' ').trim()).join(' | ')`));
+    await shot('p4_request.png');
+    await click('[data-act=friend-accept]'); await sleep(1500);
+    console.log('after accept:', await evaluate(`[...document.querySelectorAll('.profile-card .member')].map((e) => e.textContent.replace(/\\s+/g, ' ').trim()).join(' | ')`));
+    await shot('p5_friends.png');
+    await click('[data-act=profile-back]'); await sleep(400);
+    await click('[data-act=play]'); await sleep(600); await click('[data-act=laps][data-v="1"]'); await click('[data-act=start-race]'); await sleep(7000);
+    console.log('board:', await evaluate(`[...document.querySelectorAll('#board .b')].map((e) => e.textContent).join(' | ')`));
+    await shot('p6_race.png');
   }
   if (scenario === 'raceperf') {
     // A 6-car race (run with ?menu=1; MOBILE=1 for the phone viewport) with the player's car on an autopilot (pure pursuit
@@ -368,7 +412,7 @@ try {
     const click = (q) => evaluate(`(() => { const e = document.querySelector('${q}'); if (!e) return 'MISSING ${q}'; e.click(); return 'ok'; })()`);
     const g = (e) => evaluate(`JSON.stringify(${e})`);
     for (let i = 0; i < 90 && (await evaluate(`window.__game.menu().tuning`)); i++) await sleep(500);
-    console.log('title careers', await g(`[...document.querySelectorAll('.ccard')].map((c) => c.textContent.replace(/\s+/g, ' ').trim())`));
+    console.log('title careers', await g(`[...document.querySelectorAll('.ccard')].map((c) => c.textContent.replace(/\\s+/g, ' ').trim())`));
     await shot('c1_title.png');
     await click('[data-act=shop-open]'); await sleep(400);
     console.log('shop (single player)', await g(`[...document.querySelectorAll('.scard')].map((c) => c.querySelector('b').textContent + ': ' + c.querySelector('button').textContent)`));
@@ -385,7 +429,7 @@ try {
     await key('keyDown', 'KeyW', 'w'); await sleep(9000); await key('keyUp', 'KeyW', 'w');
     await evaluate(`(window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape' })), 1)`); await sleep(400);
     await click('[data-act=quit]'); await sleep(1500);
-    console.log('after free roam', await g(`{ earned: document.querySelector('.earned')?.textContent, sp: [...document.querySelectorAll('.ccard')][0]?.textContent.replace(/\s+/g, ' ').trim() }`));
+    console.log('after free roam', await g(`{ earned: document.querySelector('.earned')?.textContent, sp: [...document.querySelectorAll('.ccard')][0]?.textContent.replace(/\\s+/g, ' ').trim() }`));
     await shot('c4_title_xp.png');
     await click('[data-act=play]'); await sleep(300); await click('[data-act=lobby]'); await sleep(800);
     console.log('lobby career', await evaluate(`window.__game.menu().sel.career`));
@@ -444,7 +488,7 @@ try {
     await sleep(4500); console.log('out', await st()); await shot('d2_spectate.png');
     await click('#spectate [data-sp="1"]'); await sleep(1500); console.log('next', await st()); await shot('d3_spectate_next.png');
     await click('#spectate [data-sp="res"]'); await sleep(800);
-    console.log('results', await evaluate(`JSON.stringify({ state: window.__game.state, h2: document.querySelector('#menu h2')?.textContent, earned: document.querySelector('.earned')?.textContent, rows: [...document.querySelectorAll('.srow')].map((e) => e.textContent.replace(/\s+/g, ' ').trim()) })`));
+    console.log('results', await evaluate(`JSON.stringify({ state: window.__game.state, h2: document.querySelector('#menu h2')?.textContent, earned: document.querySelector('.earned')?.textContent, rows: [...document.querySelectorAll('.srow')].map((e) => e.textContent.replace(/\\s+/g, ' ').trim()) })`));
     await shot('d4_results.png');
     await click('[data-act=quit]'); await sleep(1000);
     await click('[data-act=settings-open]'); await click('[data-act=realism][data-v="0"]'); await click('[data-act=settings-back]'); await click('[data-act=play]'); await sleep(400); await click('[data-act=start-race]');
@@ -839,8 +883,7 @@ try {
     await send('Profiler.start');
     if (process.env.PROFILE_EARLY) await key('keyDown', 'KeyW', 'w');
     await sleep(4000);
-    if (process.env.RP_JS) console.log('rp_js', await evaluate(fs.readFileSync(process.env.RP_JS, 'utf8')));
-    const { profile } = prof ? await send('Profiler.stop') : { profile: { nodes: [], samples: [], timeDeltas: [] } };
+    const { profile } = await send('Profiler.stop');
     await key('keyUp', 'KeyW', 'w');
     const self = new Map(), byId = new Map(profile.nodes.map((n) => [n.id, n]));
     const dts = profile.timeDeltas; let total = 0;

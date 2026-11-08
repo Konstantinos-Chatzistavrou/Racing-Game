@@ -7,6 +7,7 @@
 // type the code) and land in the leader's lobby. The leader picks Free Roam or a Race and starts;
 // everyone loads, the leader waits until all are on the grid, then sends GO (race: 3-2-1 together).
 // ?peer=host:port[/path] uses your own PeerJS server instead of the public one (see server/).
+import { USERNAME_MAX } from './username';
 import Peer, { type DataConnection, type PeerOptions } from 'peerjs';
 import { cleanCustom, type Custom } from './scene/custom';
 import { skinOf } from './scene/driver';
@@ -98,7 +99,8 @@ function cleanPose(p: unknown): Pose | null {
   if (finite(p as Record<string, unknown>, ['vx', 'vy', 'vz']) && Math.hypot(q.vx!, q.vy!, q.vz!) < 150) { out.vx = q.vx; out.vy = q.vy; out.vz = q.vz; }
   return out;
 }
-const cleanName = (s: unknown) => (typeof s === 'string' ? s.replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 18) : '') || 'Driver';
+// usernames (username.ts): '#' is the bots' mark and never part of a player's name
+const cleanName = (s: unknown) => (typeof s === 'string' ? s.replace(/[\u0000-\u001f<>#\s]/g, '').trim().slice(0, USERNAME_MAX) : '') || 'Driver';
 
 export class Party {
   members: Member[] = [];
@@ -326,7 +328,13 @@ export class Party {
             this.members.push(mem);
             this.conns.set(from, c);
           }
-          mem.name = cleanName(m.name);
+          const nm = cleanName(m.name);
+          // two players with one username in a party: the newcomer is turned away (usernames are unique online)
+          if (this.members.some((x) => x.id !== from && x.name.toLowerCase() === nm.toLowerCase())) {
+            this.members = this.members.filter((x) => x.id !== from); this.conns.delete(from);
+            c.send({ t: 'bye', reason: `${nm} is already in this party.` } satisfies Msg); setTimeout(() => c.close(), 300); this.pushLobby(); return;
+          }
+          mem.name = nm;
           mem.car = typeof m.car === 'string' ? m.car.slice(0, 32) : '';
           mem.paint = Number.isInteger(m.paint) && m.paint >= 0 && m.paint <= 0xffffff ? m.paint : 0;
           mem.skin = skinOf(m.skin).id;

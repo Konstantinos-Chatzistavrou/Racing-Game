@@ -1,19 +1,28 @@
 // OpenGrid online service (Cloudflare Worker). Routes:
 //   POST /v1/account               create an anonymous account -> { id, token }      (max 5 per network per day)
 //   GET  /v1/me                    the online career profile
-//   POST /v1/name   { name }       display name
+//   GET  /v1/username?u=NAME       is that username free (and valid)?  (no account needed)
+//   POST /v1/username { username } claim / change the account's username (unique; a change once per 30 days)
+//   GET  /v1/friends               friends (online, party), incoming and outgoing requests
+//   POST /v1/friends { username, action: 'add' | 'accept' | 'remove' }   (remove also declines / cancels)
+//   POST /v1/presence { party }    heartbeat while the game is open (friends see online + party)
 //   POST /v1/buy    { kind, id, stage }   buy a car / upgrade stage / driver gear (level + credits checked here)
 //   POST /v1/report { raceId, player, why }
 //   POST /v1/replay/:race { data } upload a requested input recording (replay check)
 //   GET  /v1/room/:party           WebSocket: the party's race room (Durable Object, room.ts)
 //   GET  /v1/replays/pending, POST /v1/replays/:race/:account   replay checker (GitHub Actions; VERIFIER_KEY)
 import { CAR_REQ, MOD_REQ, SKIN_REQ, levelOf } from '../../web/src/progression';
+import { usernameError } from '../../web/src/username';
 import { RaceRoom } from './room';
 import { type Env, accountOf, cors, day, json, netOf, profileOf, randomId, sha256, strike, type AccountRow } from './util';
 
 export { RaceRoom };
 
 const MOD_KEYS = ['engine', 'tyres', 'weight', 'aero'] as const;
+const RENAME_MS = 30 * 24 * 3600 * 1000;   // one username change per 30 days (the first pick is free)
+const ONLINE_MS = 150_000;                 // presence: seen within 2.5 min = online (the game beats every 60 s)
+const MAX_FRIENDS = 200;
+const byName = (env: Env, u: string) => env.DB.prepare('SELECT * FROM accounts WHERE username = ? COLLATE NOCASE').bind(u).first<AccountRow>();
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -64,17 +73,89 @@ async function route(req: Request, env: Env): Promise<Response> {
     return stub.fetch(req);
   }
 
+  if (path === '/v1/username' && req.method === 'GET') {
+    const u = (url.searchParams.get('u') ?? '').trim(), err = usernameError(u);
+    if (err) return json({ ok: false, error: err });
+    return json((await byName(env, u)) ? { ok: false, error: 'That username is taken.' } : { ok: true });
+  }
+
   // everything below: an account
   const acct = await accountOf(req, env);
   if (!acct) return json({ error: 'sign in again (unknown account)' }, 401);
 
   if (path === '/v1/me' && req.method === 'GET') return json(profileOf(acct));
 
-  if (path === '/v1/name' && req.method === 'POST') {
-    const { name } = await req.json<{ name?: string }>();
-    const clean = String(name ?? '').replace(/[<>&"'`]/g, '').trim().slice(0, 18) || acct.name;
-    await env.DB.prepare('UPDATE accounts SET name = ? WHERE id = ?').bind(clean, acct.id).run();
-    return json(profileOf({ ...acct, name: clean }));
+  if ((path === '/v1/username' || path === '/v1/name') && req.method === 'POST') {
+    const b = await req.json<{ username?: string; name?: string }>();
+    const u = String(b.username ?? b.name ?? '').trim(), err = usernameError(u);
+    if (err) return json({ error: err }, 400);
+    if (acct.username === u) return json(profileOf(acct));
+    const sameIgnoringCase = acct.username?.toLowerCase() === u.toLowerCase();   // only the capitals change: always allowed
+    if (acct.username && !sameIgnoringCase && acct.username_at && Date.now() - acct.username_at < RENAME_MS) {
+      const days = Math.ceil((acct.username_at + RENAME_MS - Date.now()) / 86_400_000);
+      return json({ error: `You can change your username again in ${days} day${days > 1 ? 's' : ''}.` }, 429);
+    }
+    const at = sameIgnoringCase ? acct.username_at : Date.now();
+    try {
+      await env.DB.prepare('UPDATE accounts SET username = ?, name = ?, username_at = ? WHERE id = ?').bind(u, u, at, acct.id).run();
+    } catch {   // the unique index: someone else has it (any capitals)
+      return json({ error: 'That username is taken.' }, 409);
+    }
+    return json(profileOf({ ...acct, username: u, name: u, username_at: at }));
+  }
+
+  if (path === '/v1/presence' && req.method === 'POST') {
+    const b = await req.json<{ party?: string }>().catch(() => ({} as { party?: string }));
+    const party = /^[A-Za-z0-9]{4,10}$/.test(String(b.party ?? '')) ? String(b.party).toUpperCase() : null;
+    await env.DB.prepare('UPDATE accounts SET seen = ?, party = ? WHERE id = ?').bind(Date.now(), party, acct.id).run();
+    return json({ ok: true });
+  }
+
+  if (path === '/v1/friends' && req.method === 'GET') {
+    const rows = await env.DB.prepare(`SELECT f.state, f.a, f.b, x.username, x.xp, x.seen, x.party FROM friends f JOIN accounts x
+      ON x.id = CASE WHEN f.a = ? THEN f.b ELSE f.a END WHERE (f.a = ? OR (f.b = ? AND f.state = 'pending')) AND x.username IS NOT NULL ORDER BY x.username COLLATE NOCASE`)
+      .bind(acct.id, acct.id, acct.id).all<{ state: string; a: string; b: string; username: string; xp: number; seen: number | null; party: string | null }>();
+    const now = Date.now(), friends = [], incoming = [], outgoing = [];
+    for (const r of rows.results) {
+      if (r.state === 'friends') {
+        const online = !!r.seen && now - r.seen < ONLINE_MS;
+        friends.push({ username: r.username, level: levelOf(r.xp).level, online, party: online ? r.party : null });
+      } else if (r.a === acct.id) outgoing.push(r.username);
+      else incoming.push(r.username);
+    }
+    return json({ friends, incoming, outgoing });
+  }
+
+  if (path === '/v1/friends' && req.method === 'POST') {
+    const b = await req.json<{ username?: string; action?: string }>();
+    if (!acct.username) return json({ error: 'Pick your username first.' }, 400);
+    const other = await byName(env, String(b.username ?? '').trim());
+    if (!other) return json({ error: 'No player with that username.' }, 404);
+    if (other.id === acct.id) return json({ error: "That's you." }, 400);
+    const get = (a: string, c: string) => env.DB.prepare('SELECT state FROM friends WHERE a = ? AND b = ?').bind(a, c).first<{ state: string }>();
+    const mine = await get(acct.id, other.id), theirs = await get(other.id, acct.id);
+    const both = () => env.DB.batch([
+      env.DB.prepare("INSERT INTO friends (a, b, state, created) VALUES (?, ?, 'friends', ?) ON CONFLICT (a, b) DO UPDATE SET state = 'friends'").bind(acct.id, other.id, Date.now()),
+      env.DB.prepare("INSERT INTO friends (a, b, state, created) VALUES (?, ?, 'friends', ?) ON CONFLICT (a, b) DO UPDATE SET state = 'friends'").bind(other.id, acct.id, Date.now()),
+    ]);
+    if (b.action === 'remove') {
+      await env.DB.prepare('DELETE FROM friends WHERE (a = ? AND b = ?) OR (a = ? AND b = ?)').bind(acct.id, other.id, other.id, acct.id).run();
+      return json({ ok: true, state: 'none' });
+    }
+    if (b.action === 'accept') {
+      if (theirs?.state !== 'pending') return json({ error: 'No request from that player.' }, 400);
+      await both();
+      return json({ ok: true, state: 'friends' });
+    }
+    if (b.action === 'add') {
+      if (mine?.state === 'friends') return json({ ok: true, state: 'friends' });
+      if (theirs?.state === 'pending') { await both(); return json({ ok: true, state: 'friends' }); }   // they asked first: friends now
+      const n = await env.DB.prepare('SELECT COUNT(*) AS n FROM friends WHERE a = ?').bind(acct.id).first<{ n: number }>();
+      if ((n?.n ?? 0) >= MAX_FRIENDS) return json({ error: `At most ${MAX_FRIENDS} friends and requests.` }, 400);
+      await env.DB.prepare("INSERT OR IGNORE INTO friends (a, b, state, created) VALUES (?, ?, 'pending', ?)").bind(acct.id, other.id, Date.now()).run();
+      return json({ ok: true, state: 'pending' });
+    }
+    return json({ error: 'bad request' }, 400);
   }
 
   if (path === '/v1/buy' && req.method === 'POST') {

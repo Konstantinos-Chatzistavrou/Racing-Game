@@ -12,6 +12,7 @@
 import * as THREE from 'three/webgpu';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { setupCarMaterials, type CarVisual } from './scene/car';
+import { applyPlate } from './scene/plate';
 import { CarCustomizer, cleanCustom, type Custom } from './scene/custom';
 import { Driver, skinOf } from './scene/driver';
 import { assetUrl, loadGLTF } from './scene/loaders';
@@ -191,7 +192,11 @@ export class RemoteCars {
   }
   /** Names changed (lobby update). */
   refreshTags() {
-    for (const [id, r] of this.remotes) if (r.tag) r.tag.textContent = this.names.get(id) ?? 'Driver';
+    for (const [id, r] of this.remotes) {
+      if (r.tag) r.tag.textContent = this.names.get(id) ?? 'Driver';
+      const model = r.root.userData.model as THREE.Object3D | undefined;
+      if (model) applyPlate(model, this.names.get(id) ?? 'Driver');
+    }
   }
 
   /** A copy of the loaded car with its own paint colour (geometry and other materials shared). */
@@ -218,6 +223,8 @@ export class RemoteCars {
     drv.setSkin(skinOf(lk?.skin));
     model.add(drv.root);
     root.userData.cz = cz;
+    root.userData.model = model;
+    applyPlate(model, this.names.get(id) ?? 'Driver');   // their username on the plate (plate.ts; a registration if it does not fit)
     root.add(model);
     drawEarly(model);
     return root;
