@@ -62,3 +62,46 @@ server-authoritative simulation with server-side physics, (c) cross-region rooms
 adds too much latency. Then a single always-free VM (Oracle Cloud's Arm free tier, 4 OCPU / 24 GB) running a Go or
 Node relay is the cheapest step, with Cloudflare still in front for auth, D1 and TLS. Do not move before (a): the free
 tier is a real budget, not a trial.
+
+## Capacity, corrected and priced (2026-11-09)
+
+My earlier '~300 race-hours a day free' was wrong by an order of magnitude: the free plan is 100,000 DO requests per
+day, and one 6-player room at 15 Hz relay bills 90 messages/s / 20 = 4.5 requests/s = 16,200 requests per room-hour.
+The honest numbers, per 6-player room:
+
+| | 4 Hz (tracking, today) | 15 Hz (relay, full multiplayer) |
+|---|---|---|
+| requests per room-hour | 4,320 | 16,200 |
+| duration per room-hour (128 MB) | 461 GB-s | 461 GB-s |
+| Free plan, per day (100k req / 13k GB-s) | ~23 room-hours | ~6 room-hours |
+| Free plan, per month | ~690 room-hours | ~185 room-hours |
+| Workers Paid $5: included | 1M req + 400k GB-s | 1M req + 400k GB-s |
+| Workers Paid $5: room-hours included | ~231 | **~62** |
+| cost beyond included | ~$0.006/room-hour | ~$0.008/room-hour |
+
+The counter-intuitive part: the **free** plan's monthly request allowance (~3M, 100k/day) is *larger* than the paid
+plan's included 1M - the $5 buys the right to exceed it without a hard stop, not a bigger base. Free fails at 00:00
+UTC; paid meters at $0.15/million requests and $12.50/million GB-s.
+
+Concurrency is not capped by Cloudflare; you pay per room-hour. Examples at 15 Hz, 8 h/day, 30 days:
+
+| rooms | players | room-hours/month | bill |
+|---|---|---|---|
+| 1 | 6 | 240 | ~$6.5 |
+| 10 | 60 | 2,400 | ~$19 |
+| 17 | 100 | 4,080 | ~$33 |
+
+## The alternatives, with their real free limits
+
+| option | free realtime allowance | authoritative rooms | verdict |
+|---|---|---|---|
+| **Cloudflare DO** | 100k req/day, 13k GB-s/day | yes (it is the room) | best fit: stateful room, storage, no egress bill |
+| Supabase Realtime | 200 connections but **100 messages/s** | no | one 15 Hz room saturates the cap; lobby/presence only |
+| Ably | 500 connections, 6M messages/month | no | 6M / 90 msg/s = ~18 room-hours/month |
+| Firebase RTDB | 100 simultaneous connections, ~10 GB/month download | no | no server authority, no anti-cheat story |
+| Oracle Always Free VM | 4 OCPU / 24 GB ARM, 10 TB egress | yes, full control | the only real 'better' - unlimited messages, own physics; costs ops |
+| Colyseus (self-host) | framework, no hosting | yes | pairs well with the Oracle VM |
+
+Verdict unchanged for now: Cloudflare is the best free-tier option for authoritative rooms at this scale, and at
+$0.008 per room-hour the paid plan is cheap long before it matters. Move to an Oracle free VM only when you need a
+60 Hz server-side simulation or unlimited relay traffic - that is a determinism/anti-cheat decision, not a price one.
