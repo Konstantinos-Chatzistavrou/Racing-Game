@@ -57,3 +57,10 @@ npm run test:social       # usernames and friends (a few seconds)
 the top 3 of every ranked race for a recording and has the endpoints for a checker; what is missing is a game simulation
 that is exactly reproducible from inputs (measured: the same scripted drive in two sessions ends 1.3 m apart after
 15 s; the city's collision tiles stream in on their own schedule). Until then nothing is voided by replays.
+
+
+## Live instance (2026-11-10)
+
+- Service: **https://opengrid.opengrid-racing.workers.dev** (Workers + D1 + Durable Objects, free plan, region EEUR)
+- Account: the project owner's Cloudflare account; `wrangler login` credentials stay on the machine that deployed it
+- Game: Vercel project `opengrid` has `VITE_CLOUD_URL` set for Production and rebuilds on every push to `main`
