@@ -126,3 +126,23 @@ shrink VRAM by about 2 MB per car but add hundreds of KB to the download. Not wo
 already spent where the megabytes were.
 
 Current scene (phone viewport, ultra): 41 textures, 28 block-compressed, 36.3 MB, **0 without mips**.
+## Where ultra's frame goes (2026-11-09)
+
+Measured on one pinned vantage (7th Avenue, 1280x657, ultra, uncapped, car disabled) so every run renders
+the same scene: 262 draw calls, 968 k triangles. FPS over 3 s.
+
+| ultra setting | fps | vs baseline |
+|---|---|---|
+| baseline | 25.6 | - |
+| SSR off | 27.9 | +9 % |
+| SSR target 0.35 (was 0.5) | 27.4 | +7 % |
+| bloom off | 27.1 | +6 % |
+
+SSR's target resolution was almost its whole cost: the node now renders the reflection at **0.35** of the
+canvas instead of 0.5. The reflection is a roughness-blurred mirror, so the pinned screenshots before/after
+are indistinguishable, and the 7 % goes back to the frame. Bloom is the next 6 %; AA and headlight shadows
+measured inside the noise.
+
+With SSR at 0.35 the same vantage gives **31.0 fps at render scale 0.85** and **31.6 at 0.8**, against 27.4
+at 1.0 - the 30 fps target. Render scale belongs to the auto-tuner, which lowers resolution before it drops
+an effect: the cheaper SSR is headroom it spends on a sharper picture at the same 30 fps, not a preset change.

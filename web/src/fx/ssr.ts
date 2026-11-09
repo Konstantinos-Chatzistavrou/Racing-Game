@@ -33,7 +33,9 @@ export interface SsrOptions {
   /** reflections fade out this far (0..1 of the screen) from the screen border */
   edgeFade: number;
 }
-export const SSR_DEFAULTS: SsrOptions = { resolution: 0.5, quality: 0.14, maxDistance: 45, thickness: 0.6, roughLo: 0.12, roughHi: 0.5, intensity: 1, maxLuminance: 4, binaryRefine: true, edgeFade: 0.2 };
+// resolution 0.35 (was 0.5): the reflection is a roughness-blurred mirror on wet asphalt and glass, so the smaller
+// target costs about 7 % of the frame less and is indistinguishable at this blur radius (measured, docs/performance.md).
+export const SSR_DEFAULTS: SsrOptions = { resolution: 0.35, quality: 0.14, maxDistance: 45, thickness: 0.6, roughLo: 0.12, roughHi: 0.5, intensity: 1, maxLuminance: 4, binaryRefine: true, edgeFade: 0.2 };
 
 /** Options with the ?ssr=quality:0.5,maxDistance:40,... tuning aid applied. */
 export function ssrOptions(o: Partial<SsrOptions> = {}): SsrOptions {
