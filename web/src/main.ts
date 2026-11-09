@@ -587,7 +587,7 @@ async function main() {
     if (!document.hidden) { frameTimes.length = 0; if (tuning) winStart = performance.now() + 1000; prev = performance.now(); }
   });
   let frameNo = 0;
-  g.__game = { city, nyc, ai, visual, audio, rig, damage, trace, input, renderer, camera, scene, post, stats: () => frameStats(scene, renderer), texStats: () => sceneTextureStats(scene, 0),
+  g.__game = { city, nyc, ai, visual, audio, rig, damage, trace, input, renderer, camera, scene, post, THREE, stats: () => frameStats(scene, renderer), texStats: () => sceneTextureStats(scene, 0),
     get car() { return car; }, get core() { return core; }, get state() { return state; }, ticksNow: () => ticks, routeSamples: route.samples, menu: () => menu, sel,
     get party() { return party; }, get remote() { return remote; }, streetProps, obstacles, standings: () => standings(), get lap() { return lap; },
     bench: (soak = false) => runBench(soak),
