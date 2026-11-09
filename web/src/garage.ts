@@ -139,6 +139,24 @@ export function kitEffect(kind: 'splitter' | 'diffuser' | 'skirt', id: string) {
   return { df: 0.004 + i * 0.0015, drag: 0.002 + i * 0.001, kg: 0.4 + i * 0.06 };
 }
 
+/** One-line "what it does" for a part, shown as the chip's tooltip and in the section hint. */
+export function wingHint(id: string): string {
+  const e = WING_EFFECT.find((x) => x.re.test(id));
+  if (!e) return id === 'none' ? 'No wing: least drag, no downforce' : 'The model\'s own wing';
+  return '+' + e.df.toFixed(2) + ' m² downforce · +' + e.drag.toFixed(3) + ' drag · +' + e.kg.toFixed(1) + ' kg';
+}
+export function kitHint(kind: 'splitter' | 'diffuser' | 'skirt', id: string): string {
+  if (id === 'stock') return 'Stock: no extra drag';
+  const e = kitEffect(kind, id);
+  return '+' + e.df.toFixed(2) + ' m² downforce · +' + e.drag.toFixed(3) + ' drag · +' + e.kg.toFixed(1) + ' kg';
+}
+export function rimHint(id: string): string {
+  if (!id || id === 'stock') return 'Factory wheels';
+  const e = RIM_EFFECT.find((x) => x.re.test(id));
+  if (!e) return 'Generated design';
+  return (e.kg < 0 ? '' : '+') + e.kg.toFixed(1) + ' kg unsprung' + (e.kg < 0 ? ' (lighter)' : '');
+}
+
 const KEY = 'nr.garage.v1';
 export function loadSelection(cars: CatalogCar[], params: URLSearchParams): Selection {
   const starter = cars.find((c) => c.id === 'vela_gt')?.id ?? cars[0].id;

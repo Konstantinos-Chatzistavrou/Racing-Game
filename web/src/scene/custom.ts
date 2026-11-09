@@ -82,6 +82,8 @@ export class CarCustomizer {
   /** generated rim designs: four copies each, parented to the wheel nodes */
   private wheelRims: Record<string, THREE.Object3D[]> = {};
   private rimMat!: THREE.MeshPhysicalMaterial;
+  /** the model's own rim meshes: hidden when a generated rim is fitted */
+  private rimMeshes: THREE.Mesh[] = [];
   private wheelNodes: THREE.Object3D[] = [];
   private glow: THREE.Mesh;
   /** the pool's real size: the warm-up trick scales optional parts to ~0 and restores 1, which is not the pool's size */
@@ -122,7 +124,7 @@ export class CarCustomizer {
       const mats = Array.isArray(m.material) ? m.material : [m.material];
       mats.forEach((mat, i) => {
         const n = mat.name ?? '';
-        if (/^rim/i.test(n)) mine(m, i, mat, this.rim);
+        if (/^rim/i.test(n)) { mine(m, i, mat, this.rim); if (!this.rimMeshes.includes(m)) this.rimMeshes.push(m); }
         else if (n === 'caliper') mine(m, i, mat, this.caliper);
         else if (/exhaust_chrome/.test(n) || (/exhaust_tips/.test(m.name) && n === 'chrome')) mine(m, i, mat, this.exhaust);
         else if (/^light_head$|^headlight_lens$/.test(n) || /^drl_/.test(m.name)) { const c = mine(m, i, mat, this.lens); if (!this.lensBase.has(c)) this.lensBase.set(c, c.emissive ? Math.max(c.emissive.r, c.emissive.g, c.emissive.b) : 0); }
@@ -148,6 +150,9 @@ export class CarCustomizer {
     // aero kits: splitters / diffusers / skirts
     for (const spec of AERO_SPECS) {
       const g = spec.build({ box: this.box, mat: this.aeroMat });
+      // the designs are authored flush with the bumpers; push them out so they actually show
+      if (spec.kind === 'splitter') g.position.z += 0.22;
+      else if (spec.kind === 'diffuser') g.position.z -= 0.22;
       g.name = 'kit_' + spec.id;
       g.visible = false;
       this.kits[spec.id] = g;
@@ -244,6 +249,7 @@ export class CarCustomizer {
     for (const [k, w] of Object.entries(this.wings)) if (w) w.visible = c.wing === k;
     for (const [k, w] of Object.entries(this.kits)) w.visible = c.splitter === k || c.diffuser === k || c.skirt === k;
     for (const [k, list] of Object.entries(this.wheelRims)) for (const r of list) r.visible = c.rims === k;
+    for (const m of this.rimMeshes) m.visible = c.rims === 'stock';
     this.glow.visible = !!c.underglow;
   }
 

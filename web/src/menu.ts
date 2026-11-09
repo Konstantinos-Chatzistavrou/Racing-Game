@@ -6,7 +6,7 @@
 //       title -> Garage (cars, paint, upgrades only) -> Main Menu, or Continue -> game modes
 import type { Identity } from './identity';
 import { PLATE_MAX, USERNAME_MAX, USERNAME_MIN, usernameError } from './username';
-import { FINISHES, LOOK_PRESETS, MODS, MOD_KEYS, RIM_EFFECT, SWATCHES, WING_EFFECT, applyLookPreset, applyMods, customOf, kitEffect, modsOf, paintOf, saveSelection, statsOf,
+import { FINISHES, LOOK_PRESETS, MODS, MOD_KEYS, RIM_EFFECT, SWATCHES, WING_EFFECT, applyLookPreset, applyMods, customOf, kitEffect, kitHint, modsOf, paintOf, rimHint, saveSelection, statsOf, wingHint,
   type CatalogCar, type Finish, type Mode, type ModKey, type Selection } from './garage';
 import { formatLap } from './hud';
 import { MAX_MEMBERS, cleanCode, type Party, type PartyMode } from './party';
@@ -476,8 +476,8 @@ export class Menu {
     if (live) live.innerHTML = this.liveStats();
   }
   // ---- garage tabs (each a list of rows; every choice is data-act="cu" data-k=<Custom key> data-v=<value>) ----
-  private cu(k: keyof Custom, v: string | number | boolean, label: string, on: boolean) {
-    return `<button class="chip ${on ? 'on' : ''}" data-act="cu" data-k="${k}" data-v="${v}">${label}</button>`;
+  private cu(k: keyof Custom, v: string | number | boolean, label: string, on: boolean, hint = '') {
+    return `<button class="chip ${on ? 'on' : ''}" data-act="cu" data-k="${k}" data-v="${v}" title="${esc(hint || label)}">${label}</button>`;
   }
   private swatches(k: keyof Custom, cur: string, list = PART_COLOURS) {
     return `<div class="sws">${list.map((c) => c ? `<button class="sw ${c === cur ? 'on' : ''}" style="background:${c}" data-act="cu" data-k="${k}" data-v="${c}" aria-label="${c}"></button>`
@@ -505,15 +505,15 @@ export class Menu {
   }
   private gAero() {
     const c = customOf(this.sel);
-    return `<h3>Rear wing</h3><div class="chips">${(Object.keys(WINGS) as (keyof typeof WINGS)[]).map((k) => this.cu('wing', k, WINGS[k], c.wing === k)).join('')}</div>
-      <h3>Front splitter</h3><div class="chips">${(Object.keys(SPLITTERS) as string[]).map((k) => this.cu('splitter', k, SPLITTERS[k], c.splitter === k)).join('')}</div>
-      <h3>Rear diffuser</h3><div class="chips">${(Object.keys(DIFFUSERS) as string[]).map((k) => this.cu('diffuser', k, DIFFUSERS[k], c.diffuser === k)).join('')}</div>
-      <h3>Side skirts</h3><div class="chips">${(Object.keys(SKIRTS) as string[]).map((k) => this.cu('skirt', k, SKIRTS[k], c.skirt === k)).join('')}</div>
+    return `<h3>Rear wing <small class="dim">grip in corners, costs top speed</small></h3><div class="chips">${(Object.keys(WINGS) as (keyof typeof WINGS)[]).map((k) => this.cu('wing', k, WINGS[k], c.wing === k, wingHint(k as string))).join('')}</div>
+      <h3>Front splitter <small class="dim">front-end bite</small></h3><div class="chips">${(Object.keys(SPLITTERS) as string[]).map((k) => this.cu('splitter', k, SPLITTERS[k], c.splitter === k, kitHint('splitter', k))).join('')}</div>
+      <h3>Rear diffuser <small class="dim">rear stability</small></h3><div class="chips">${(Object.keys(DIFFUSERS) as string[]).map((k) => this.cu('diffuser', k, DIFFUSERS[k], c.diffuser === k, kitHint('diffuser', k))).join('')}</div>
+      <h3>Side skirts <small class="dim">side stability</small></h3><div class="chips">${(Object.keys(SKIRTS) as string[]).map((k) => this.cu('skirt', k, SKIRTS[k], c.skirt === k, kitHint('skirt', k))).join('')}</div>
       <h3>Splitter, diffuser &amp; wing finish</h3><div class="chips">${(Object.keys(AERO_FINISHES) as (keyof typeof AERO_FINISHES)[]).map((k) => this.cu('aero', k, AERO_FINISHES[k], c.aero === k)).join('')}</div>`;
   }
   private gWheels() {
     const c = customOf(this.sel);
-    return `<h3>Rim design</h3><div class="chips">${(Object.keys(RIMS) as string[]).map((k) => this.cu('rims', k, RIMS[k], c.rims === k)).join('')}</div>
+    return `<h3>Rim design <small class="dim">lighter = quicker launch</small></h3><div class="chips">${(Object.keys(RIMS) as string[]).map((k) => this.cu('rims', k, RIMS[k], c.rims === k, rimHint(k))).join('')}</div>
       <h3>Rim colour</h3>${this.swatches('rimColor', c.rimColor)}
       <h3>Rim finish</h3><div class="chips">${(Object.keys(RIM_FINISHES) as (keyof typeof RIM_FINISHES)[]).map((k) => this.cu('rimFinish', k, RIM_FINISHES[k], c.rimFinish === k)).join('')}</div>
       <h3>Brake calipers</h3>${this.swatches('caliper', c.caliper)}`;
