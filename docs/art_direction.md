@@ -42,3 +42,21 @@ auto-tuner spends resolution for that; docs/performance.md).
   before/after screenshot at the same spot, and the tuner must still hold 30 fps.
 - No quality changes while driving (front end only), as decided.
 - Reflections stay screen-space (SSR); a planar mirror pass for the road is a later option if the budget allows.
+
+## Parametric parts instead of authored kits (2026-11-10)
+
+The garage's geometry variety is generated in code (`web/src/scene/custom.ts`), not modelled: every part is built from
+the car's own bounding box so it fits whatever body it is attached to, merged into the same aero material, and hidden
+until chosen - no extra draw calls for the options you are not using.
+
+**Rear wings: 9 options** - Stock, No wing, Ducktail, GT wing, Lip, Swan neck, GT XL (two-element, deep endplates),
+Dual element (stacked JDM), Chassis mount (low blade). Verified: picking one shows exactly that mesh and hides the
+rest (swan 3 meshes, GT XL 6, dual 4, chassis 3, lip 1).
+
+Blender 5.2.3 LTS is installed at `~/opt/blender-5.2.3-linux-x64` for authored parts, but the hero GLB carries
+KTX2 (basisu) textures that Blender's glTF importer rejects (`KHR_texture_basisu`), so an authored-parts pipeline
+needs a decode step first (strip/convert textures before import). Geometry-only work can proceed without it.
+
+Why not 30 authored options per part: 30 x ~10 parts is 300 bespoke meshes (7-14 months of modelling for one car),
+and kits like Rocket Bunny are trademarked designs. Parametric parts + materials + liveries give the variety without
+either problem; authored kits, if ever wanted, are a separate content track.

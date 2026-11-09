@@ -10,7 +10,7 @@ import { Fn, abs, float, materialColor, mix, positionWorld, smoothstep, texture,
 /** a colour uniform as an rgb node (the typings keep 'color' and 'vec3' apart; the shader does not) */
 const rgb = (u: THREE.UniformNode<'color', THREE.Color>) => u as unknown as THREE.Node<'vec3'>;
 
-import { AERO_FINISHES, HEAD_TINTS, RIM_FINISHES, WINGS, cleanCustom, defaultCustom, type AeroFinish, type Custom, type HeadTint, type RimFinish, type WingKind } from '../custom-data';
+import { AERO_FINISHES, HEAD_TINTS, RIM_FINISHES, WINGS, WING_KINDS, cleanCustom, defaultCustom, type AeroFinish, type Custom, type HeadTint, type RimFinish, type WingKind } from '../custom-data';
 export { AERO_FINISHES, GLOW_COLOURS, HEAD_TINTS, LIVERIES, PART_COLOURS, RIM_FINISHES, WINGS, cleanCustom, defaultCustom } from '../custom-data';
 export type { AeroFinish, Custom, HeadTint, RimFinish, WingKind } from '../custom-data';
 
@@ -130,7 +130,12 @@ export class CarCustomizer {
     this.aeroMat = carbon ?? new THREE.MeshPhysicalMaterial({ color: 0x101215, roughness: 0.3, metalness: 0.2, clearcoat: 0.8, name: 'carbon' });
     this.wings.ducktail = this.makeDucktail(wb);
     this.wings.gt = this.makeGtWing(wb);
-    for (const k of ['ducktail', 'gt'] as WingKind[]) model.add(this.wings[k]!);
+    this.wings.lip = this.makeLip(wb);
+    this.wings.swan = this.makeSwanWing(wb);
+    this.wings.gtxl = this.makeGtXl(wb);
+    this.wings.dual = this.makeDualWing(wb);
+    this.wings.chassis = this.makeChassisWing(wb);
+    for (const k of WING_KINDS) if (this.wings[k]) model.add(this.wings[k]!);
     // underglow: a soft additive pool on the ground under the car (no light: adding lights recompiles everything).
     // Underground reads as a bright core about a car wide with a fast falloff, so the plane is generous (the geometry
     // is built once) and the VISIBLE pool is shaped by the falloff uniforms: ?glow=outer:0.95 widens it, inner tightens
@@ -203,6 +208,107 @@ export class CarCustomizer {
     return grp;
   }
 
+  /**
+   * Cambered airfoil section extruded along the span, centred on x with the chord along z - the same section the GT
+   * wing uses, shared by every procedural wing so they all read as the same car's aero.
+   */
+  private blade(chord: number, span: number) {
+    const s = new THREE.Shape();
+    s.moveTo(0, 0); s.bezierCurveTo(0.06, 0.05, 0.2, 0.05, chord, 0.012); s.lineTo(chord, -0.004);
+    s.bezierCurveTo(0.2, 0.012, 0.06, 0.004, 0, 0);
+    const g = new THREE.ExtrudeGeometry(s, { depth: span, bevelEnabled: false, curveSegments: 6 });
+    g.translate(-chord / 2, 0, -span / 2); g.rotateY(Math.PI / 2);
+    return g;
+  }
+
+  private wingSpan(frac: number, cap = 1.95) { return Math.min(cap, (this.box.max.x - this.box.min.x) * frac); }
+  private wingZ(wb: THREE.Box3, dz = 0) { return (wb.max.z + wb.min.z) / 2 + dz - 0.08; }
+  private wingX(wb: THREE.Box3) { return (wb.max.x + wb.min.x) / 2; }
+
+  /** A lip: a short blade sitting on the boot lid, no struts - the subtle end of the range. */
+  private makeLip(wb: THREE.Box3) {
+    const g = new THREE.Group(); g.name = 'wing_lip';
+    const b = new THREE.Mesh(this.blade(0.17, this.wingSpan(0.9)), this.aeroMat);
+    b.rotation.x = -0.05;
+    b.position.set(this.wingX(wb), wb.min.y + 0.015, this.wingZ(wb, 0.04));
+    g.add(b);
+    return g;
+  }
+
+  /** Swan neck: the blade sits high on two forward-leaning posts - the modern time-attack look. */
+  private makeSwanWing(wb: THREE.Box3) {
+    const g = new THREE.Group(); g.name = 'wing_swan';
+    const span = this.wingSpan(0.92), x = this.wingX(wb), z = this.wingZ(wb, 0.02);
+    const y = wb.max.y + 0.30;
+    const b = new THREE.Mesh(this.blade(0.33, span), this.aeroMat);
+    b.position.set(x, y, z); b.rotation.x = -0.14;
+    g.add(b);
+    for (const sx of [-1, 1]) {
+      const st = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.34, 0.06), this.aeroMat);
+      st.position.set(x + sx * span * 0.3, (wb.max.y + y) / 2, z + 0.06);
+      st.rotation.x = -0.55;   // leans forward: the "neck"
+      g.add(st);
+    }
+    return g;
+  }
+
+  /** GT XL: a tall two-element wing with deep endplates - the loudest legal option. */
+  private makeGtXl(wb: THREE.Box3) {
+    const g = new THREE.Group(); g.name = 'wing_gtxl';
+    const span = this.wingSpan(1.0, 2.0), x = this.wingX(wb), z = this.wingZ(wb, 0.02);
+    const y = wb.max.y + 0.36;
+    const main = new THREE.Mesh(this.blade(0.40, span), this.aeroMat);
+    main.position.set(x, y, z); main.rotation.x = -0.16;
+    g.add(main);
+    const flap = new THREE.Mesh(this.blade(0.15, span * 0.98), this.aeroMat);
+    flap.position.set(x, y + 0.10, z + 0.20); flap.rotation.x = -0.24;
+    g.add(flap);
+    for (const sx of [-1, 1]) {
+      const plate = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.26, 0.46), this.aeroMat);
+      plate.position.set(x + (sx * span) / 2, y + 0.02, z + 0.10);
+      g.add(plate);
+      const st = new THREE.Mesh(new THREE.BoxGeometry(0.022, y - wb.min.y + 0.05, 0.10), this.aeroMat);
+      st.position.set(x + sx * span * 0.28, (y + wb.min.y) / 2, z + 0.02);
+      st.rotation.x = 0.08;
+      g.add(st);
+    }
+    return g;
+  }
+
+  /** Dual element: two slim blades stacked, linked by endplates - the old-school JDM look. */
+  private makeDualWing(wb: THREE.Box3) {
+    const g = new THREE.Group(); g.name = 'wing_dual';
+    const span = this.wingSpan(0.92), x = this.wingX(wb), z = this.wingZ(wb);
+    const levels: [number, number, number][] = [[0.16, 0.24, -0.10], [0.30, 0.30, -0.18]];
+    for (const [dy, chord, tilt] of levels) {
+      const b = new THREE.Mesh(this.blade(chord, span), this.aeroMat);
+      b.position.set(x, wb.max.y + dy, z); b.rotation.x = tilt;
+      g.add(b);
+    }
+    for (const sx of [-1, 1]) {
+      const p = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.22, 0.40), this.aeroMat);
+      p.position.set(x + (sx * span) / 2, wb.max.y + 0.23, z + 0.02);
+      g.add(p);
+    }
+    return g;
+  }
+
+  /** Chassis mount: a low blade bolted to the deck between tall endplates - the clean circuit look. */
+  private makeChassisWing(wb: THREE.Box3) {
+    const g = new THREE.Group(); g.name = 'wing_chassis';
+    const span = this.wingSpan(0.94), x = this.wingX(wb), z = this.wingZ(wb, 0.05);
+    const y = wb.min.y + 0.10;
+    const b = new THREE.Mesh(this.blade(0.30, span), this.aeroMat);
+    b.position.set(x, y, z); b.rotation.x = -0.08;
+    g.add(b);
+    for (const sx of [-1, 1]) {
+      const p = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.20, 0.34), this.aeroMat);
+      p.position.set(x + (sx * span) / 2, y + 0.02, z + 0.02);
+      g.add(p);
+    }
+    return g;
+  }
+
   /** Apply a full set of choices (cheap: uniforms and visibility only). paintHex: the body colour (aero 'body'). */
   apply(c: Custom, paintHex?: string) {
     this.current = c;
@@ -239,12 +345,11 @@ export class CarCustomizer {
     this.showOptional();
   }
 
-  private optional() { return [this.wings.ducktail!, this.wings.gt!, this.glow]; }
+  private optional() { return [...(Object.values(this.wings) as THREE.Object3D[]), this.glow]; }
   private showOptional() {
     if (this.warm > 0) return;   // still warming: stay drawn, tiny
     const c = this.current;
-    this.wings.ducktail!.visible = c.wing === 'ducktail';
-    this.wings.gt!.visible = c.wing === 'gt';
+    for (const k of WING_KINDS) { const w = this.wings[k]; if (w) w.visible = c.wing === k; }
     this.glow.visible = !!c.underglow;
   }
 
