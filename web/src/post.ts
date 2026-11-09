@@ -21,7 +21,7 @@ import { Fn, clamp, float, int, log, max, min, pass, positionView, rtt, screenUV
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import * as SMAAModule from 'three/addons/tsl/display/SMAANode.js';
 import { fxaa } from 'three/addons/tsl/display/FXAANode.js';
-import { CURVES, GRADE, filmGrain, toneGrade, type CurveName } from './fx/grade';
+import { CURVES, GRADE, LOOKS, applyLook, filmGrain, toneGrade, type CurveName } from './fx/grade';
 import { DepthFx } from './fx/depthFx';
 import { ClusteredLighting } from 'three/addons/lighting/ClusteredLighting.js';
 
@@ -40,19 +40,29 @@ export interface Preset {
   grain: boolean;
   /** screen-space reflections on wet road / glass (fx/ssr.ts); rides on the ultra MRT pass (needs `ao`) */
   ssr?: boolean;
+  /** optional bloom overrides (defaults in BLOOM): a preset is where the halo is biased toward emitters */
+  bloomStrength?: number; bloomRadius?: number; bloomThreshold?: number; bloomKnee?: number;
 }
 // Ordered best -> cheapest. The GPU cost differences are small but real on the iGPU (measured with
 // timestamp queries, see docs/web_port.md): SMAA = 3 passes, FXAA = 1, bloom = ~11 small passes.
 export const PRESETS: Record<PresetName, Preset> = {
-  max: { aa: 'smaa', ao: true, ssr: true, bloom: 0.25, shadowEvery: 1, grade: 'full', grain: true },
-  ultra: { aa: 'smaa', ssr: true, bloom: 0.25, shadowEvery: 2, grade: 'full', grain: true },
-  high: { aa: 'smaa', bloom: 0.25, shadowEvery: 3, grade: 'full', grain: true },
-  medium: { aa: 'fxaa', bloom: 0.25, shadowEvery: 3, grade: 'full', grain: false },
+  // The bloom numbers are per preset and bias the halo to emitters (see BLOOM): the better the preset, the more
+  // the signs are allowed to bloom and the less the car body washes out.
+  max: { aa: 'smaa', ao: true, ssr: true, bloom: 0.25, shadowEvery: 1, grade: 'full', grain: true, bloomStrength: 0.7, bloomRadius: 0.6, bloomThreshold: 1.5 },
+  ultra: { aa: 'smaa', ssr: true, bloom: 0.25, shadowEvery: 2, grade: 'full', grain: true, bloomStrength: 0.62, bloomRadius: 0.58, bloomThreshold: 1.45 },
+  high: { aa: 'smaa', bloom: 0.25, shadowEvery: 3, grade: 'full', grain: true, bloomStrength: 0.55, bloomRadius: 0.55, bloomThreshold: 1.35 },
+  medium: { aa: 'fxaa', bloom: 0.25, shadowEvery: 3, grade: 'full', grain: false, bloomStrength: 0.45, bloomRadius: 0.5, bloomThreshold: 1.25 },
   low: { aa: 'none', bloom: 0, shadowEvery: 4, grade: 'tone', grain: false },
 };
 /** final-image look defaults (fx/grade.ts); ?tm=agx|aces|neutral|uchimura, ?grade=0 for A/B */
 const DEFAULT_CURVE: CurveName = 'neutral';
-const BLOOM = { strength: 0.45, radius: 0.45, threshold: 1.0, knee: 0.5 };
+// Emitter-biased bloom (docs/art_direction.md). The old threshold of 1.0 bloomed everything bright, which washed
+// the car's paint into a haze. 1.45 keeps the car body's diffuse and most speculars under the threshold while neon
+// signs, lamp bulbs, headlights and tail lights (emissive >= 1.5) still bloom; strength and radius go up so the
+// remaining halo reads bigger, the way Underground's signs bleed. Trade-off: the car loses its soft overall glow -
+// if the signs feel dim, lower ?bt= (or raise the signs' emissive in the city materials). Presets tune the numbers
+// above; ?bs= ?br= ?bt= ?bk= override all of them for an A/B.
+const BLOOM = { strength: 0.62, radius: 0.58, threshold: 1.45, knee: 0.55 };
 export const PRESET_ORDER: PresetName[] = ['max', 'ultra', 'high', 'medium', 'low'];
 
 export interface PostOptions { bloom: boolean; aa: boolean; scale: number; preset: PresetName }
@@ -161,11 +171,16 @@ export class Post {
     const q = new URLSearchParams(location.search);
     const curve: CurveName = (CURVES as string[]).includes(q.get('tm') ?? '') ? (q.get('tm') as CurveName) : DEFAULT_CURVE;
     const grading = q.get('grade') !== '0';
+    // ?look=underground applies the named grade (fx/grade.ts) first, so the individual ?contrast= etc. still win
+    const look = q.get('look');
+    if (look && look in LOOKS) applyLook(look as keyof typeof LOOKS);
     for (const k of ['contrast', 'sat', 'split', 'grain', 'lift', 'exposure'] as const) if (q.has(k)) (GRADE[k] as { value: number }).value = Number(q.get(k));
     const bloomStrength = Number(q.get('bs') ?? BLOOM.strength), bloomRadius = Number(q.get('br') ?? BLOOM.radius);
     const bloomThreshold = Number(q.get('bt') ?? BLOOM.threshold), bloomKnee = Number(q.get('bk') ?? BLOOM.knee);
     let sharedBloom: BloomNode | null = null;
+    let sharedBloomKey = '';
     let sharedTonedFull: THREE.RTTNode | null = null;
+    let sharedTonedKey = '';
     const ssrOn = q.get('ssr') !== '0';
     const aoOn = q.get('ao') !== '0';
     for (const name of PRESET_ORDER) {
@@ -178,25 +193,30 @@ export class Post {
         ? (this.depthFx ??= new DepthFx(this.scenePass, camera, { resScale: 0.5, quality: 0.16, maxDistance: 55, intensity: 0.6, carPos: this.carPos }))
         : null;
       let lit: THREE.Node<'vec4'> = fx ? fx.color : lite ? lite.color : color;
+      // bloom numbers are per preset (emitter bias, see BLOOM); presets with the same numbers share one node, presets
+      // that ask for a different halo get their own (fx/lite always do: their colour node differs)
+      const bloomKey = opts.bloom && pr.bloom > 0
+        ? `${pr.bloomStrength ?? bloomStrength}|${pr.bloomRadius ?? bloomRadius}|${pr.bloomThreshold ?? bloomThreshold}|${pr.bloomKnee ?? bloomKnee}`
+        : '';
       if (opts.bloom && pr.bloom > 0) {
-        if (!fx && !lite && sharedBloom) {
+        if (!fx && !lite && sharedBloom && sharedBloomKey === bloomKey) {
           lit = lit.add(sharedBloom);
         } else {
-          const b = bloom(lit, bloomStrength, bloomRadius, bloomThreshold);
-          (b as unknown as { smoothWidth: { value: number } }).smoothWidth.value = bloomKnee;
+          const b = bloom(lit, pr.bloomStrength ?? bloomStrength, pr.bloomRadius ?? bloomRadius, pr.bloomThreshold ?? bloomThreshold);
+          (b as unknown as { smoothWidth: { value: number } }).smoothWidth.value = pr.bloomKnee ?? bloomKnee;
           this.blooms.push({ node: b, res: pr.bloom });
-          if (!fx && !lite) sharedBloom = b;
+          if (!fx && !lite) { sharedBloom = b; sharedBloomKey = bloomKey; }
           lit = lit.add(b);
         }
       }
       // display-referred image at the render size (AA and the sharpening limiter expect 0..1)
       let toned: THREE.RTTNode;
-      if (!fx && !lite && opts.bloom && pr.bloom > 0 && pr.grade === 'full' && sharedTonedFull) {
+      if (!fx && !lite && opts.bloom && pr.bloom > 0 && pr.grade === 'full' && sharedTonedFull && sharedTonedKey === bloomKey) {
         toned = sharedTonedFull;
       } else {
         toned = rtt8(toneGrade(lit, curve, pr.grade === 'full' && grading));
         this.scaled.push(toned);
-        if (!fx && !lite && opts.bloom && pr.bloom > 0 && pr.grade === 'full') sharedTonedFull = toned;
+        if (!fx && !lite && opts.bloom && pr.bloom > 0 && pr.grade === 'full') { sharedTonedFull = toned; sharedTonedKey = bloomKey; }
       }
       let src: THREE.TextureNode = toned;
       const aa = opts.aa ? pr.aa : 'none';

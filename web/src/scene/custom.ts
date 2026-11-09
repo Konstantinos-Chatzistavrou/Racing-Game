@@ -18,10 +18,15 @@ export type { AeroFinish, Custom, HeadTint, RimFinish, WingKind } from '../custo
 export interface LiveryUniforms {
   style: THREE.UniformNode<'float', number>; color: THREE.UniformNode<'color', THREE.Color>;
   inv: THREE.UniformNode<'mat4', THREE.Matrix4>; bottom: THREE.UniformNode<'float', number>; top: THREE.UniformNode<'float', number>;
+  /** underglow: the colour and how much of it the sills pick up (uniforms: no light, no recompile) */
+  glow: THREE.UniformNode<'color', THREE.Color>; glowAmt: THREE.UniformNode<'float', number>;
 }
 /** Paint: base colour (material.color, set by the garage) with a livery mask in model space. */
 export function installLivery(paint: THREE.MeshPhysicalMaterial): LiveryUniforms {
-  const u: LiveryUniforms = { style: uniform(0), color: uniform(new THREE.Color(1, 1, 1)), inv: uniform(new THREE.Matrix4()), bottom: uniform(0.15), top: uniform(1.25) };
+  const u: LiveryUniforms = {
+    style: uniform(0), color: uniform(new THREE.Color(1, 1, 1)), inv: uniform(new THREE.Matrix4()), bottom: uniform(0.15), top: uniform(1.25),
+    glow: uniform(new THREE.Color(0x000000)), glowAmt: uniform(0),
+  };
   const mask = Fn(() => {
     const p = u.inv.mul(vec4(positionWorld, 1)).xyz;
     const ax = abs(p.x), aa = float(0.006);
@@ -35,6 +40,11 @@ export function installLivery(paint: THREE.MeshPhysicalMaterial): LiveryUniforms
     return twin.mul(is(1)).add(wide.mul(is(2))).add(side.mul(is(3))).add(two.mul(is(4))).clamp(0, 1);
   })();
   paint.colorNode = mix(materialColor, rgb(u.color), mask);
+  // Underground: the underglow washes the sills and the underside of the body. Emissive at the bottom of the model,
+  // driven by two uniforms, so a colour change (or turning it off) is a uniform write - no light, no recompile.
+  const hLow = u.inv.mul(vec4(positionWorld, 1)).xyz.y.sub(u.bottom).div(u.top.sub(u.bottom));
+  const under = float(1).sub(smoothstep(0.02, 0.2, hLow));
+  paint.emissiveNode = rgb(u.glow).mul(u.glowAmt.mul(under).mul(0.5));
   return u;
 }
 export interface AeroUniforms { flat: THREE.UniformNode<'float', number>; color: THREE.UniformNode<'color', THREE.Color>; rough: THREE.UniformNode<'float', number> }
@@ -65,7 +75,14 @@ export class CarCustomizer {
   private stockWing: THREE.Object3D[] = [];
   private wings: Partial<Record<WingKind, THREE.Object3D>> = {};
   private glow: THREE.Mesh;
+  /** the pool's real size: the warm-up trick scales optional parts to ~0 and restores 1, which is not the pool's size */
+  private glowScale = new THREE.Vector3(1, 1, 1);
   private glowColor = uniform(new THREE.Color(0xff2d55));
+  /** Underglow look (all uniforms, so it tunes without a rebuild). ?glow=strength:3.4,outer:0.95,inner:0.16,power:1.6 */
+  private glowStrength = uniform(3.2);
+  private glowInner = uniform(0.16);
+  private glowOuter = uniform(0.9);
+  private glowPower = uniform(1.6);
   private box = new THREE.Box3();
   private aeroMat: THREE.MeshPhysicalMaterial;
   current = defaultCustom();
@@ -114,13 +131,26 @@ export class CarCustomizer {
     this.wings.ducktail = this.makeDucktail(wb);
     this.wings.gt = this.makeGtWing(wb);
     for (const k of ['ducktail', 'gt'] as WingKind[]) model.add(this.wings[k]!);
-    // underglow: a soft additive pool on the ground under the car (no light: adding lights recompiles everything)
+    // underglow: a soft additive pool on the ground under the car (no light: adding lights recompiles everything).
+    // Underground reads as a bright core about a car wide with a fast falloff, so the plane is generous (the geometry
+    // is built once) and the VISIBLE pool is shaped by the falloff uniforms: ?glow=outer:0.95 widens it, inner tightens
+    // the core, strength and power set the punch. Tuning never touches geometry.
+    for (const kv of (new URLSearchParams(location.search).get('glow') ?? '').split(',')) {
+      const [k, v] = kv.split(':'); const n = Number(v);
+      if (!Number.isFinite(n)) continue;
+      if (k === 'strength') this.glowStrength.value = n;
+      else if (k === 'inner') this.glowInner.value = n;
+      else if (k === 'outer') this.glowOuter.value = n;
+      else if (k === 'power') this.glowPower.value = n;
+    }
     const gm = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
     const d = uv().sub(0.5).mul(2);
-    const fall = float(1).sub(smoothstep(0.35, 1.0, d.length()));
-    gm.colorNode = vec4(rgb(this.glowColor).mul(fall.mul(1.6)), fall);
+    const fall = float(1).sub(smoothstep(this.glowInner, this.glowOuter, d.length())).pow(this.glowPower);
+    gm.colorNode = vec4(rgb(this.glowColor).mul(fall.mul(this.glowStrength)), fall);
     const sx = this.box.max.x - this.box.min.x, sz = this.box.max.z - this.box.min.z;
-    this.glow = new THREE.Mesh(new THREE.PlaneGeometry(sx * 1.5, sz * 1.25), gm);
+    this.glow = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), gm);
+    this.glow.scale.set(sx * 3.0, 1, sz * 2.2);   // the falloff uniforms decide how much of that is lit
+    this.glowScale.copy(this.glow.scale);
     this.glow.rotation.x = -Math.PI / 2;
     this.glow.position.set((this.box.max.x + this.box.min.x) / 2, this.box.min.y + 0.02, (this.box.max.z + this.box.min.z) / 2);
     this.glow.name = 'wheel_underglow';   // 'wheel_' prefix: never dented
@@ -199,7 +229,13 @@ export class CarCustomizer {
     for (const m of this.lens) if (m.emissive) m.emissive.copy(hc).multiplyScalar(this.lensBase.get(m) ?? 0);
     for (const m of this.tail) m.color.copy(this.tailBase.get(m) ?? m.color).multiplyScalar(c.smokedTails ? 0.25 : 1);
     if (this.glass) { this.glass.opacity = [0.5, 0.64, 0.86][c.tint]; this.glass.color.setHex([0x101418, 0x06080c, 0x020203][c.tint]); }
-    if (c.underglow) this.glowColor.value.set(c.underglow);
+    // Underglow on the car itself: the paint's sills take the colour and the rims pick it up. Emissive on materials
+    // that already have the input is a uniform write, so this costs nothing per frame and compiles nothing.
+    const glow = c.underglow;
+    if (glow) this.glowColor.value.set(glow);
+    const lv = this.paint?.userData.livery as LiveryUniforms | undefined;
+    if (lv) { lv.glow.value.set(glow || 0x000000); lv.glowAmt.value = glow ? 1 : 0; }
+    for (const m of this.rim) { m.emissive.set(glow || 0x000000); m.emissiveIntensity = glow ? 0.28 : 0; }
     this.showOptional();
   }
 
@@ -214,7 +250,7 @@ export class CarCustomizer {
 
   /** Every frame, after the car root moved (root at pos / quat, in the scene): the livery's model-space matrix. */
   sync(pos: THREE.Vector3, quat: THREE.Quaternion) {
-    if (this.warm > 0 && --this.warm === 0) { for (const o of this.optional()) o.scale.setScalar(1); this.showOptional(); }
+    if (this.warm > 0 && --this.warm === 0) { for (const o of this.optional()) { if (o === this.glow) o.scale.copy(this.glowScale); else o.scale.setScalar(1); } this.showOptional(); }
     const lu = this.paint?.userData.livery as LiveryUniforms | undefined;
     if (!lu || lu.style.value === 0) return;
     this.model.updateMatrix();

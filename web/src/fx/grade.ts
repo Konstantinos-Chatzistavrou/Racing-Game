@@ -27,6 +27,37 @@ export const GRADE = {
   grain: uniform(0.009),
 };
 
+/**
+ * A named look is just a set of the uniforms above. Nothing here is applied by default.
+ *
+ * `natural`  - exactly the numbers the game ships with today (documented so a look can be compared against it).
+ * `underground` - the Need for Speed Underground direction (docs/art_direction.md): more exposure in the lights,
+ *   harder contrast, saturated colour, a magenta lift in the highlights against teal shadows, a touch more grain.
+ *   The lead tunes it against screenshots: `?look=underground` turns it on, and the per-knob overrides
+ *   (`?contrast= ?sat= ?split= ?lift= ?exposure= ?grain=`) win over it when both are given.
+ */
+export interface Look {
+  exposure: number; contrast: number; lift: number; gamma: number; sat: number; split: number; grain: number;
+  shadowTint: [number, number, number]; highlightTint: [number, number, number];
+}
+export const LOOKS: Record<'natural' | 'underground', Look> = {
+  natural: { exposure: 1.45, contrast: 0.1, lift: 0.006, gamma: 1.0, sat: 1.08, split: 0.25, grain: 0.009, shadowTint: [0.0, 0.10, 0.16], highlightTint: [0.16, 0.08, 0.0] },
+  underground: { exposure: 1.62, contrast: 0.3, lift: 0.012, gamma: 1.04, sat: 1.34, split: 0.55, grain: 0.014, shadowTint: [-0.01, 0.10, 0.24], highlightTint: [0.26, 0.05, 0.20] },
+};
+/** Apply a named look to the live uniforms (called by post.ts for ?look=; safe at any time). */
+export function applyLook(name: keyof typeof LOOKS) {
+  const l = LOOKS[name];
+  GRADE.exposure.value = l.exposure;
+  GRADE.contrast.value = l.contrast;
+  GRADE.lift.value = l.lift;
+  GRADE.gamma.value = l.gamma;
+  GRADE.sat.value = l.sat;
+  GRADE.split.value = l.split;
+  GRADE.grain.value = l.grain;
+  GRADE.shadowTint.value.set(...l.shadowTint);
+  GRADE.highlightTint.value.set(...l.highlightTint);
+}
+
 /** Uchimura "GT" curve (Gran Turismo), per channel, linear in/out, P = 1. */
 const uchimura = Fn(([x]: [F]) => {
   const P = 1.0, a = 1.0, m = 0.22, l = 0.4, c = 1.33, b = 0.0;

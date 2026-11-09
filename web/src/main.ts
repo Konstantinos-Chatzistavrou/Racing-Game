@@ -42,6 +42,7 @@ import { Menu, rank, type Gfx, type Screen, type Standing } from './menu';
 import { applyMods, customOf, loadSelection, modsOf, paintOf, saveSelection, type CatalogCar, type Mode } from './garage';
 import { cleanCustom } from './custom-data';
 import { frameStats, sceneTextureStats } from './stats';
+import { GRADE } from './fx/grade';
 import { skinOf } from './scene/driver';
 import { AiTraffic } from './ai';
 import { Identity } from './identity';
@@ -587,7 +588,7 @@ async function main() {
     if (!document.hidden) { frameTimes.length = 0; if (tuning) winStart = performance.now() + 1000; prev = performance.now(); }
   });
   let frameNo = 0;
-  g.__game = { city, nyc, ai, visual, audio, rig, damage, trace, input, renderer, camera, scene, post, THREE, stats: () => frameStats(scene, renderer), texStats: () => sceneTextureStats(scene, 0),
+  g.__game = { city, nyc, ai, visual, audio, rig, damage, trace, input, renderer, camera, scene, post, THREE, grade: GRADE, stats: () => frameStats(scene, renderer), texStats: () => sceneTextureStats(scene, 0),
     get car() { return car; }, get core() { return core; }, get state() { return state; }, ticksNow: () => ticks, routeSamples: route.samples, menu: () => menu, sel,
     get party() { return party; }, get remote() { return remote; }, streetProps, obstacles, standings: () => standings(), get lap() { return lap; },
     bench: (soak = false) => runBench(soak),
