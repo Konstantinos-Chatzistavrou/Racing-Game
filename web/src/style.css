@@ -537,3 +537,137 @@ body.touch #heat { position: absolute; top: calc(20px + env(safe-area-inset-top)
 #cops { font: 800 12px/1.2 "Inter", system-ui, sans-serif; letter-spacing: .12em; color: #ff5d7a;
   text-shadow: 0 1px 8px #000, 0 0 18px #ff2d5560; min-height: 15px; }
 body.touch #cops { position: absolute; top: calc(44px + env(safe-area-inset-top)); right: calc(12px + env(safe-area-inset-right)); font-size: 10px; }
+
+/* ---- garage shell: NFS Heat-inspired UI/UX (layout and feel only, all art is ours) -------------
+   Heat's garage keeps the car centre stage and puts the controls at the edges: categories on a vertical
+   rail, the parts list beside it, the car name/class/stats readout top-left, one loud action at the
+   bottom. Dark clipped panels, uppercase italic labels, a skewed neon accent. */
+.garage { position: fixed; inset: 0; display: grid;
+  grid-template-columns: 202px minmax(0, 1fr) 132px 268px;
+  grid-template-rows: 64px minmax(0, 1fr) 62px;
+  gap: 10px; padding: 12px; pointer-events: none; }
+.garage > * { pointer-events: auto; }
+.garage::before { content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(90deg, #04060ae6 0%, #04060a80 22%, transparent 46%),
+              radial-gradient(120% 90% at 50% 112%, #ff2d5518, transparent 62%); }
+.garage::after { content: ''; position: absolute; inset: 0; pointer-events: none; opacity: .05;
+  background: repeating-linear-gradient(0deg, #fff 0 1px, transparent 1px 3px); }
+
+.g-head { grid-column: 1 / -1; grid-row: 1; display: flex; align-items: center; gap: 18px; }
+.g-brand { font-size: 25px; font-style: italic; font-weight: 900; letter-spacing: .01em; text-transform: uppercase;
+  display: flex; align-items: baseline; gap: 10px; }
+.g-brand span { font-size: 8px; font-style: normal; font-weight: 800; letter-spacing: .34em; color: var(--accent); }
+.g-carsum { display: flex; flex-direction: column; gap: 3px; }
+.g-name { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+.g-name i { font-style: normal; font-size: 9px; font-weight: 800; letter-spacing: .18em; padding: 2px 7px;
+  border: 1px solid var(--accent); color: var(--accent); border-radius: 3px; }
+.g-stats { display: flex; gap: 14px; font-size: 9px; letter-spacing: .18em; text-transform: uppercase; color: var(--dim); }
+.g-stats b { color: var(--fg); font-size: 12px; letter-spacing: .02em; }
+.g-cams { margin-left: auto; display: flex; gap: 6px; }
+.g-cams .chip { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; padding: 6px 11px; }
+
+.g-carlist { grid-column: 1; grid-row: 2; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 7px; }
+.g-carlist h3 { margin: 2px 0 4px; }
+.g-carlist .car { padding: 9px 11px; }
+.g-carlist .car span { font-size: 10px; line-height: 1.35; }
+
+.g-rail { grid-column: 3; grid-row: 2; display: flex; flex-direction: column; gap: 5px; justify-content: center; }
+.g-rail .rail { display: flex; align-items: center; gap: 9px; padding: 10px 11px; cursor: pointer;
+  background: #0b0e14d8; border: 1px solid #ffffff12; color: var(--dim); text-align: left;
+  transform: skewX(-7deg); transition: background .15s, color .15s, box-shadow .15s; }
+.g-rail .rail i { font-style: normal; font-size: 8px; letter-spacing: .14em; opacity: .55; transform: skewX(7deg); }
+.g-rail .rail b { font-size: 10px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; transform: skewX(7deg); }
+.g-rail .rail:hover { background: #141924; color: var(--fg); }
+.g-rail .rail.on { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; border-color: transparent;
+  box-shadow: 0 0 26px #ff2d5555; }
+
+.g-stage { grid-column: 4; grid-row: 2; overflow-y: auto; padding: 10px 12px;
+  background: linear-gradient(180deg, #070a10e0, #05070bf5); border: 1px solid #ffffff12; }
+.g-stage h3 { margin: 12px 0 6px; }
+.g-stage h3:first-child { margin-top: 0; }
+.g-stage .chips { display: flex; flex-direction: column; gap: 6px; }
+.g-stage .chip { text-align: left; padding: 9px 12px; border-radius: 4px; font-size: 10px; font-weight: 800;
+  letter-spacing: .1em; text-transform: uppercase; background: #0e1219e0; border: 1px solid #ffffff16; }
+.g-stage .chip:hover { border-color: #ffffff55; background: #141a24; }
+.g-stage .chip.on { border-color: var(--accent); background: #1b1019; box-shadow: inset 3px 0 0 var(--accent); }
+
+.g-foot { grid-column: 1 / -1; grid-row: 3; display: flex; align-items: center; gap: 12px; }
+.g-foot .back-btn { padding: 10px 16px; }
+.g-foot .g-summary { margin-left: auto; text-align: right; display: flex; flex-direction: column; gap: 2px; }
+.g-foot .g-summary b { font-size: 12px; letter-spacing: .1em; text-transform: uppercase; }
+.g-foot .g-summary span { font-size: 10px; }
+.g-foot .go { transform: skewX(-7deg); text-transform: uppercase; letter-spacing: .16em; }
+
+body.touch .garage { grid-template-columns: 118px minmax(0, 1fr) 84px 176px; grid-template-rows: 44px minmax(0, 1fr) 50px; gap: 5px; padding: 6px; }
+body.touch .g-brand { font-size: 15px; }
+body.touch .g-brand span, body.touch .g-stats { display: none; }
+body.touch .g-name { font-size: 10px; }
+body.touch .g-rail .rail { padding: 7px 8px; gap: 5px; }
+body.touch .g-rail .rail i { display: none; }
+body.touch .g-rail .rail b { font-size: 8px; letter-spacing: .1em; }
+body.touch .g-stage { padding: 6px 7px; }
+body.touch .g-stage .chip { padding: 6px 8px; font-size: 8px; }
+body.touch .g-stage h3 { font-size: 8px; margin: 7px 0 4px; }
+body.touch .g-foot .go { font-size: 12px; padding: 8px 14px; }
+body.touch .g-foot .g-summary { display: none; }
+
+
+/* garage v2: parts list beside the car, categories on the far edge (solid, readable over the bright body) */
+.garage { grid-template-columns: 202px minmax(0, 1fr) 272px 128px; grid-template-rows: 72px minmax(0, 1fr) 62px; }
+.g-stage { grid-column: 3; grid-row: 2; border-left: 1px solid #ffffff10; }
+.g-rail { grid-column: 4; grid-row: 2; }
+.g-rail .rail { background: #0a0d13; border-color: #ffffff1c; color: #c8d0e0; }
+.g-rail .rail b { letter-spacing: .14em; }
+.g-rail .rail.on { color: #fff; }
+.g-name { line-height: 1.15; }
+.g-stats { margin-top: 2px; }
+.g-stage { padding-top: 12px; }
+body.touch .garage { grid-template-columns: 118px minmax(0, 1fr) 176px 84px; grid-template-rows: 44px minmax(0, 1fr) 50px; }
+body.touch .g-stage { grid-column: 3; }
+body.touch .g-rail { grid-column: 4; }
+
+
+/* garage v3: the parts panel leads with the category, not the career chips */
+.g-stage .career-bar { display: none; }
+.g-tabtitle { position: sticky; top: 0; z-index: 2; margin: -12px -12px 6px; padding: 10px 12px;
+  background: linear-gradient(180deg, #05070bf8, #05070be8); border-bottom: 1px solid #ffffff14;
+  font-size: 11px; font-weight: 900; font-style: italic; letter-spacing: .22em; color: var(--fg); }
+.g-stage .look-now, .g-stage .look { font-size: 9px; opacity: .8; }
+
+
+/* garage v4: compact layout keyed off the pointer/size, not the late body.touch class; panels opaque enough to read */
+@media (pointer: coarse), (max-width: 1100px) {
+  .garage { grid-template-columns: 104px minmax(0, 1fr) 196px 72px; grid-template-rows: 42px minmax(0, 1fr) 46px; gap: 5px; padding: 5px; }
+  .g-head { gap: 8px; }
+  .g-brand { font-size: 14px; }
+  .g-brand span, .g-stats { display: none; }
+  .g-name { font-size: 10px; }
+  .g-name i { font-size: 7px; padding: 1px 4px; }
+  .g-cams .chip { font-size: 8px; padding: 4px 7px; }
+  .g-carlist { padding: 5px; gap: 4px; }
+  .g-carlist h3 { font-size: 7px; }
+  .g-carlist .car { padding: 6px 7px; }
+  .g-carlist .car span, .g-carlist .mini { display: none; }
+  .g-rail .rail { padding: 6px; }
+  .g-rail .rail i { display: none; }
+  .g-rail .rail b { font-size: 7px; letter-spacing: .08em; }
+  .g-stage { padding: 6px 7px; }
+  .g-stage .chip { padding: 5px 7px; font-size: 8px; }
+  .g-stage h3 { font-size: 7px; margin: 6px 0 3px; }
+  .g-tabtitle { margin: -6px -7px 4px; padding: 6px 7px; font-size: 9px; }
+  .g-stage .look-now, .g-stage .look { font-size: 7px; }
+  .g-foot .back-btn { padding: 6px 9px; font-size: 9px; }
+  .g-foot .go { font-size: 11px; padding: 7px 12px; }
+  .g-foot .g-summary { display: none; }
+}
+.g-carlist, .g-stage { background: #070a10ee; }
+.g-rail .rail { background: #080b11; }
+
+
+/* compact car cards: name + badge only */
+@media (pointer: coarse), (max-width: 1100px) {
+  .g-carlist .car > span, .g-carlist .mini { display: none !important; }
+  .g-carlist .car-head b { font-size: 11px; line-height: 1.15; }
+  .g-carlist { background: #070a10f7; }
+}
+

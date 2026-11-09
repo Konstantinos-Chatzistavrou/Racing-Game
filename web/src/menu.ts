@@ -382,24 +382,35 @@ export class Menu {
     const tabs = GTABS.map((t) => `<button class="gtab ${this.garageTab === t.id ? 'on' : ''}" data-act="gtab" data-v="${t.id}">${t.label}</button>`).join('');
     const body = ({ paint: () => this.gPaint(), aero: () => this.gAero(), wheels: () => this.gWheels(), lights: () => this.gLights(),
       glass: () => this.gGlass(), driver: () => this.gDriver(), perf: () => this.gPerf() } as Record<string, () => string>)[this.garageTab]?.() ?? '';
+    const rail = GTABS.map((t, i) => `<button class="rail ${this.garageTab === t.id ? 'on' : ''}" data-act="gtab" data-v="${t.id}"><i>0${i + 1}</i><b>${t.label}</b></button>`).join('');
+    const cls = now.power > 420 ? 'S' : now.power > 330 ? 'A' : now.power > 250 ? 'B' : 'C';
     return `<div class="garage">
-      <div class="g-top">
-        <div class="g-title">GARAGE <span>// BUILD YOUR CAR</span></div>
+      <header class="g-head">
+        <div class="g-brand">GARAGE<span>BUILD YOUR CAR</span></div>
+        <div class="g-carsum">
+          <div class="g-name">${esc(this.car().name)}<i>CLASS ${cls}</i></div>
+          <div class="g-stats">
+            <span><b>${Math.round(now.power)}</b> kW</span>
+            <span><b>${Math.round(now.mass)}</b> kg</span>
+            <span><b>${now.grip.toFixed(2)}</b> µ</span>
+          </div>
+        </div>
         <div class="g-cams">
           <button class="chip" data-act="cam" data-v="0.8,0.17,6.5">3/4</button>
           <button class="chip" data-act="cam" data-v="1.57,0.08,6.4">Side</button>
           <button class="chip" data-act="cam" data-v="3.14,0.15,6.0">Rear</button>
           <button class="chip" data-act="cam" data-v="0,0.14,6.0">Front</button>
         </div>
-      </div>
-      <div class="g-left panel"><h3>Your cars (${this.cars.filter((c) => w.owns(c.id)).length}/${this.cars.length})</h3>${cards}
-        ${this.cars.some((c) => !w.owns(c.id)) ? '<button class="small more-cars" data-act="shop-open">🛒 More cars in the Shop</button>' : ''}</div>
-      <div class="g-right panel">${this.careerBar()}<div class="gtabs">${tabs}</div>${this.lookNow()}${body}</div>
-      <div class="g-bottom">
+      </header>
+      <aside class="g-carlist panel"><h3>Your cars (${this.cars.filter((c) => w.owns(c.id)).length}/${this.cars.length})</h3>${cards}
+        ${this.cars.some((c) => !w.owns(c.id)) ? '<button class="small more-cars" data-act="shop-open">🛒 More cars in the Shop</button>' : ''}</aside>
+      <nav class="g-rail">${rail}</nav>
+      <section class="g-stage panel"><div class="g-stage-scroll"><div class="g-tabtitle">${this.garageTab.toUpperCase()}</div>${this.lookNow()}${body}</div></section>
+      <footer class="g-foot">
         <button data-act="home" class="back-btn">← Main Menu</button>
-        <div class="g-summary"><b>${esc(this.car().name)}</b><span class="dim">${stages ? `${stages} upgrade stage${stages > 1 ? 's' : ''} fitted` : 'Stock'} · ${FINISHES[sel.finish].label} paint · ${Math.round(now.power)} kW · ${Math.round(now.mass)} kg</span></div>
+        <div class="g-summary"><b>${esc(this.car().name)}</b><span class="dim">${stages ? `${stages} upgrade stage${stages > 1 ? 's' : ''} fitted` : 'Stock'} · ${FINISHES[sel.finish].label} paint · ${Math.round(now.power)} kW</span></div>
         <button class="primary huge go" data-act="play">Continue ▶</button>
-      </div>
+      </footer>
     </div>`;
   }
 

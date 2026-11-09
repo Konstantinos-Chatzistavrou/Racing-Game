@@ -7,7 +7,7 @@ compatibility_date = "2026-10-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "opengrid"
-database_id = "00000000-0000-0000-0000-000000000000"   # replaced by the real id after `wrangler d1 create opengrid`
+database_id = "b98ba429-a11d-44ad-89c4-e0dc34d81e42"   # region EEUR
 migrations_dir = "migrations"
 
 [[durable_objects.bindings]]
