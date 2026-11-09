@@ -18,6 +18,7 @@ import { Breaches } from './breach';
 import { NycProps, type BuildingColliderBox } from './props';
 import { applyNycAtmosphere, type NycAtmosphere } from './atmosphere';
 import { generateProceduralNycTile, type ProceduralNycTileData } from './infiniteNyc';
+import { CityBatcher } from './batch';
 
 // ---- content discovery (see index.ts for the expected exports) -------------------------------------------------------------------------
 export interface NycPropsLike {
@@ -132,6 +133,8 @@ export class NycStreamer {
   private stat = { streamMs: 0, streamMax: 0, commitMs: 0, loaded: 0, loadMs: 0 };
   private overlay: HTMLDivElement | null = null; private overlayT = 0;
   private disposed = false;
+  /** ?batchcity=1: every near tile's geometry goes into one buffer per material (docs/raw_city_pass.md) */
+  private batcher: CityBatcher | null = null;
   private centre = new THREE.Vector3();
 
   constructor(private scene: THREE.Scene, private renderer: THREE.WebGPURenderer, private pw: PhysicsWorld, private camera: THREE.Camera, opts: NycOptions) {
@@ -180,6 +183,9 @@ export class NycStreamer {
       document.body.appendChild(d);
       this.overlay = d;
     }
+    // On by default (measured: 261 -> 208 draws, render CPU 17.9 -> 13.5 ms at the pinned vantage); ?batchcity=0 keeps
+    // the per-tile path for A/B and for debugging a tile.
+    if (typeof location === 'undefined' || new URLSearchParams(location.search).get('batchcity') !== '0') this.batcher = new CityBatcher(scene);
     this.readyP = this.init();
   }
 
@@ -429,6 +435,13 @@ export class NycStreamer {
           g.scene.traverse((o) => { if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh); });
           grp.add(g.scene);
         }
+        // ?batchcity=1: hand the tile's meshes to the per-material batch and keep only the ones it refused
+        if (this.batcher) {
+          const rest: THREE.Mesh[] = [];
+          for (const m of meshes) if (!this.batcher.add(t.key, m)) rest.push(m);
+          meshes.length = 0;
+          for (const m of rest) meshes.push(m);
+        }
         t.nearGroup = grp; t.near = 2;
         this.stat.loaded++; this.stat.loadMs += performance.now() - t0;
         // jobs: attach (hidden meshes), then one reveal per mesh (GPU upload spread over frames), then props + hide far
@@ -552,6 +565,7 @@ export class NycStreamer {
   }
 
   private unloadNear(t: Tile) {
+    this.batcher?.removeTile(t.key);
     if (t.propsSet) { this.props?.removeTile(t.key); t.propsSet = false; }
     const g = t.nearGroup;
     t.nearGroup = null; t.near = 0; t.gen.near++;
@@ -726,6 +740,8 @@ export class NycStreamer {
   // ---- teardown -----------------------------------------------------------------------------------------------------------------------
   dispose() {
     this.disposed = true;
+    this.batcher?.dispose();
+    this.batcher = null;
     for (const t of this.tiles.values()) {
       if (t.nearGroup) this.disposeObject(t.nearGroup);
       if (t.farGroup) this.disposeObject(t.farGroup);

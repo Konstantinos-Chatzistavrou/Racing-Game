@@ -212,3 +212,21 @@ anything, which is why the tuner needs scale 0.6 rather than 0.8. The lever with
 `matrixWorldAutoUpdate = false` after their first world update, so the scene graph stops walking them; on this
 scene the change is inside the noise (the remaining traversal is props and cars), but it removes the work by
 construction.
+## City batching (2026-11-09)
+
+Near-city tiles are handed to a per-material batch (`scene/nyc/batch.ts`): one growable vertex/index buffer per
+material, a slot allocator per tile, attributes dequantized to one layout, one draw per material. Pinned vantage,
+ultra, scale 0.25, cap off:
+
+| | draws | render CPU | `post` CPU | fps |
+|---|---|---|---|---|
+| per-tile | 261 | 17.9 ms | 14.2 ms | 48.6 |
+| batched | **208** | **13.5 ms** | **10.3 ms** | **55.2** |
+
+The first attempt regressed to 29 fps: the batch buffers were `DynamicDrawUsage`, which r186 re-uploads in full at
+every draw (~8 MB per frame for 158 k vertices). `StaticDrawUsage` + update ranges is the fix - the same lesson as
+the instancing work above. `?batchcity=0` keeps the per-tile path for A/B.
+
+Known gaps: far tiles stay per-tile (their visibility is toggled per tile, which one batch mesh cannot express), and
+`breach.ts` raycasts `nearGroup` for facades, so a batched facade makes the wall-breach depth fall back to its
+default. Both are next.
