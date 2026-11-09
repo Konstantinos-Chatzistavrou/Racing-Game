@@ -207,14 +207,6 @@ body.touch #warn { right: auto; left: calc(8px + env(safe-area-inset-left)); tra
 
 /* garage */
 #menu .garage { position: absolute; inset: 0; }
-#menu .g-top { position: absolute; left: 20px; right: 20px; top: 16px; display: flex; align-items: center; gap: 18px; }
-#menu .g-title { font-size: 22px; font-weight: 900; font-style: italic; letter-spacing: .1em; text-shadow: 0 2px 10px #000; }
-#menu .g-title span { color: var(--accent); font-size: 13px; font-style: normal; letter-spacing: .2em; }
-#menu .g-cams { margin-left: auto; display: flex; gap: 6px; padding: 5px; background: var(--panel); border: 1px solid var(--line); border-radius: 999px; }
-#menu .g-left, #menu .g-right { position: absolute; top: 68px; bottom: 124px; padding: 16px; overflow-y: auto; overscroll-behavior: contain;
-  contain: strict; scrollbar-width: thin; scrollbar-color: #ffffff30 transparent; }
-#menu .g-left { left: 20px; width: 280px; }
-#menu .g-right { right: 20px; width: 330px; }
 #menu .car { display: block; width: 100%; text-align: left; margin-bottom: 10px; padding: 12px 14px; background: var(--panel2); }
 #menu .car.on { border-color: var(--accent); background: linear-gradient(135deg, #ff2d5524, #ff2d5508); }
 #menu .car-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
@@ -242,7 +234,6 @@ body.touch #warn { right: auto; left: calc(8px + env(safe-area-inset-left)); tra
 #menu .bar { position: relative; height: 6px; border-radius: 3px; background: #ffffff14; }
 #menu .bar i { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, #ffffffa0, #fff); border-radius: 3px; }
 #menu .bar u { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--accent); }
-#menu .g-bottom { position: absolute; left: 20px; right: 20px; bottom: 18px; min-height: 88px; padding: 12px 16px; display: flex; align-items: center; gap: 18px; }
 #menu .modes { display: flex; gap: 8px; }
 #menu .mode { text-align: left; padding: 9px 16px; min-width: 128px; }
 #menu .mode b { display: block; font-weight: 800; }
@@ -266,8 +257,6 @@ body.touch #warn { right: auto; left: calc(8px + env(safe-area-inset-left)); tra
 #countdown.show { opacity: 1; animation: cd .9s ease-out; }
 @keyframes cd { from { transform: scale(1.5); opacity: 0; } 25% { opacity: 1; } to { transform: scale(1); } }
 @media (max-width: 900px) {
-  #menu .g-left { width: 210px; } #menu .g-right { width: 240px; }
-  #menu .g-bottom { flex-wrap: wrap; } #menu .g-cams { display: none; }
 }
 body.touch #menu .g-right, body.touch #menu .g-left { font-size: 12px; }
 
@@ -538,136 +527,149 @@ body.touch #heat { position: absolute; top: calc(20px + env(safe-area-inset-top)
   text-shadow: 0 1px 8px #000, 0 0 18px #ff2d5560; min-height: 15px; }
 body.touch #cops { position: absolute; top: calc(44px + env(safe-area-inset-top)); right: calc(12px + env(safe-area-inset-right)); font-size: 10px; }
 
-/* ---- garage shell: NFS Heat-inspired UI/UX (layout and feel only, all art is ours) -------------
-   Heat's garage keeps the car centre stage and puts the controls at the edges: categories on a vertical
-   rail, the parts list beside it, the car name/class/stats readout top-left, one loud action at the
-   bottom. Dark clipped panels, uppercase italic labels, a skewed neon accent. */
+/* =============================================================================================
+   GARAGE - NFS Heat language, our own art.
+   Near-opaque panels with cut corners, heavy italic display type, neon reserved for STATE
+   (active category, selected option, the one action). The centre stays clear for the car.
+   ============================================================================================= */
 .garage { position: fixed; inset: 0; display: grid;
-  grid-template-columns: 202px minmax(0, 1fr) 132px 268px;
-  grid-template-rows: 64px minmax(0, 1fr) 62px;
-  gap: 10px; padding: 12px; pointer-events: none; }
-.garage > * { pointer-events: auto; }
-.garage::before { content: ''; position: absolute; inset: 0; pointer-events: none;
-  background: linear-gradient(90deg, #04060ae6 0%, #04060a80 22%, transparent 46%),
-              radial-gradient(120% 90% at 50% 112%, #ff2d5518, transparent 62%); }
-.garage::after { content: ''; position: absolute; inset: 0; pointer-events: none; opacity: .05;
-  background: repeating-linear-gradient(0deg, #fff 0 1px, transparent 1px 3px); }
+  grid-template-columns: 196px minmax(0, 1fr) 286px 116px;
+  grid-template-rows: 56px minmax(0, 1fr) 58px;
+  gap: 8px; padding: 10px; pointer-events: none;
+  --g-bg: #080b11; --g-bg2: #0b0f16; --g-line: #ffffff1c; --g-line2: #ffffff38; }
+.garage > * { pointer-events: auto; position: relative; z-index: 1; }
+/* legibility only where the car list sits; nothing dims the car */
+.garage::before { content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 0;
+  background: linear-gradient(90deg, #04060ad9 0%, #04060a40 14%, transparent 30%); }
 
-.g-head { grid-column: 1 / -1; grid-row: 1; display: flex; align-items: center; gap: 18px; }
-.g-brand { font-size: 25px; font-style: italic; font-weight: 900; letter-spacing: .01em; text-transform: uppercase;
-  display: flex; align-items: baseline; gap: 10px; }
-.g-brand span { font-size: 8px; font-style: normal; font-weight: 800; letter-spacing: .34em; color: var(--accent); }
-.g-carsum { display: flex; flex-direction: column; gap: 3px; }
-.g-name { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
-.g-name i { font-style: normal; font-size: 9px; font-weight: 800; letter-spacing: .18em; padding: 2px 7px;
-  border: 1px solid var(--accent); color: var(--accent); border-radius: 3px; }
-.g-stats { display: flex; gap: 14px; font-size: 9px; letter-spacing: .18em; text-transform: uppercase; color: var(--dim); }
-.g-stats b { color: var(--fg); font-size: 12px; letter-spacing: .02em; }
-.g-cams { margin-left: auto; display: flex; gap: 6px; }
-.g-cams .chip { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; padding: 6px 11px; }
+/* ---- header -------------------------------------------------------------------------------- */
+#menu .g-head { grid-column: 1 / -1; grid-row: 1; display: flex; align-items: center; gap: 16px; min-width: 0; }
+#menu .g-brand { display: flex; align-items: baseline; gap: 10px; font-size: 27px; line-height: 1; font-style: italic;
+  font-weight: 900; letter-spacing: -.03em; text-transform: uppercase; }
+#menu .g-brand span { font-size: 8px; font-style: normal; font-weight: 800; letter-spacing: .36em; color: var(--accent); }
+#menu .g-carsum { display: flex; flex-direction: column; gap: 2px; padding-left: 14px; border-left: 1px solid var(--g-line); min-width: 0; }
+#menu .g-name { display: flex; align-items: center; gap: 8px; font-size: 14px; font-style: italic; font-weight: 900;
+  letter-spacing: .03em; text-transform: uppercase; white-space: nowrap; }
+#menu .g-name i { font-style: normal; font-size: 8px; font-weight: 800; letter-spacing: .2em; color: #07090d;
+  background: var(--accent); padding: 3px 8px; clip-path: polygon(6px 0, 100% 0, calc(100% - 6px) 100%, 0 100%); }
+#menu .g-stats { display: flex; gap: 14px; font-size: 8px; font-weight: 700; letter-spacing: .22em; color: var(--dim); text-transform: uppercase; }
+#menu .g-stats b { font-size: 12px; font-weight: 800; letter-spacing: 0; color: var(--fg); font-variant-numeric: tabular-nums; }
+#menu .g-cams { margin-left: auto; display: flex; gap: 5px; background: none; border: 0; padding: 0; border-radius: 0; }
+#menu .g-cams .chip { padding: 8px 12px; font-size: 9px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase;
+  color: var(--dim); background: var(--g-bg2); border: 1px solid var(--g-line); border-radius: 0;
+  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%);
+  transition: color .12s ease, background .12s ease, border-color .12s ease; }
+#menu .g-cams .chip:hover { color: var(--fg); background: #141a24; border-color: var(--g-line2); }
 
-.g-carlist { grid-column: 1; grid-row: 2; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 7px; }
-.g-carlist h3 { margin: 2px 0 4px; }
-.g-carlist .car { padding: 9px 11px; }
-.g-carlist .car span { font-size: 10px; line-height: 1.35; }
+/* ---- panels: opaque, cut corner, shadow -------------------------------------------------- */
+#menu .g-carlist, #menu .g-stage { background: var(--g-bg); border: 1px solid var(--g-line); border-radius: 0;
+  box-shadow: 0 20px 44px #000000a6, inset 0 1px 0 #ffffff0a;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%);
+  scrollbar-width: thin; scrollbar-color: #ffffff33 transparent; }
 
-.g-rail { grid-column: 3; grid-row: 2; display: flex; flex-direction: column; gap: 5px; justify-content: center; }
-.g-rail .rail { display: flex; align-items: center; gap: 9px; padding: 10px 11px; cursor: pointer;
-  background: #0b0e14d8; border: 1px solid #ffffff12; color: var(--dim); text-align: left;
-  transform: skewX(-7deg); transition: background .15s, color .15s, box-shadow .15s; }
-.g-rail .rail i { font-style: normal; font-size: 8px; letter-spacing: .14em; opacity: .55; transform: skewX(7deg); }
-.g-rail .rail b { font-size: 10px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; transform: skewX(7deg); }
-.g-rail .rail:hover { background: #141924; color: var(--fg); }
-.g-rail .rail.on { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; border-color: transparent;
-  box-shadow: 0 0 26px #ff2d5555; }
+/* ---- your cars --------------------------------------------------------------------------- */
+#menu .g-carlist { grid-column: 1; grid-row: 2; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+#menu .g-carlist h3 { margin: 0 0 2px; font-size: 8px; letter-spacing: .24em; }
+#menu .g-carlist .car { position: relative; display: block; width: 100%; text-align: left; margin: 0; padding: 9px 11px;
+  background: var(--g-bg2); border: 1px solid #ffffff12; border-radius: 0;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 9px), calc(100% - 9px) 100%, 0 100%);
+  transition: background .12s ease, border-color .12s ease; }
+#menu .g-carlist .car:hover { background: #121722; border-color: #ffffff30; }
+#menu .g-carlist .car.on { background: linear-gradient(90deg, #ff2d5526, #0b0f16 62%); border-color: #ff2d5588; }
+#menu .g-carlist .car.on::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--accent); }
+#menu .g-carlist .car-head b { font-size: 13px; font-weight: 900; font-style: italic; letter-spacing: .02em; text-transform: uppercase; }
+#menu .g-carlist .car-badge { font-size: 7px; letter-spacing: .16em; padding: 2px 5px; border-radius: 0;
+  color: var(--dim); background: #ffffff0d; border: 1px solid #ffffff1a; }
+#menu .g-carlist .car.on .car-badge { color: var(--accent); background: #ff2d551a; border-color: #ff2d5566; }
+#menu .g-carlist .car > span { margin: 4px 0 0; font-size: 9px; line-height: 1.35; color: var(--dim); }
+#menu .g-carlist .mini { margin-top: 6px; gap: 6px; font-size: 8px; }
+#menu .g-carlist .mini em { padding: 1px 5px; border-radius: 0; background: #ffffff0d; color: #cfd6e4; }
+#menu .g-carlist .more-cars { margin-top: 2px; font-size: 9px; }
 
-.g-stage { grid-column: 4; grid-row: 2; overflow-y: auto; padding: 10px 12px;
-  background: linear-gradient(180deg, #070a10e0, #05070bf5); border: 1px solid #ffffff12; }
-.g-stage h3 { margin: 12px 0 6px; }
-.g-stage h3:first-child { margin-top: 0; }
-.g-stage .chips { display: flex; flex-direction: column; gap: 6px; }
-.g-stage .chip { text-align: left; padding: 9px 12px; border-radius: 4px; font-size: 10px; font-weight: 800;
-  letter-spacing: .1em; text-transform: uppercase; background: #0e1219e0; border: 1px solid #ffffff16; }
-.g-stage .chip:hover { border-color: #ffffff55; background: #141a24; }
-.g-stage .chip.on { border-color: var(--accent); background: #1b1019; box-shadow: inset 3px 0 0 var(--accent); }
+/* ---- category rail ----------------------------------------------------------------------- */
+#menu .g-rail { grid-column: 4; grid-row: 2; min-height: 0; display: flex; flex-direction: column; gap: 4px; justify-content: center; }
+#menu .g-rail .rail { display: flex; align-items: center; gap: 8px; padding: 8px 9px; cursor: pointer; text-align: left;
+  color: var(--dim); background: var(--g-bg); border: 1px solid #ffffff14; border-radius: 0;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%);
+  transition: background .12s ease, color .12s ease, border-color .12s ease, transform .12s ease; }
+#menu .g-rail .rail i { font-style: normal; font-size: 8px; font-weight: 700; color: #ffffff4d; font-variant-numeric: tabular-nums; }
+#menu .g-rail .rail b { font-size: 9px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
+#menu .g-rail .rail:hover { color: var(--fg); background: #121722; border-color: var(--g-line2); transform: translateX(-3px); }
+#menu .g-rail .rail.on { color: #fff; border-color: transparent; background: linear-gradient(135deg, var(--accent), var(--accent2));
+  box-shadow: 0 10px 26px #ff2d5540; }
+#menu .g-rail .rail.on i { color: #ffffffb3; }
 
-.g-foot { grid-column: 1 / -1; grid-row: 3; display: flex; align-items: center; gap: 12px; }
-.g-foot .back-btn { padding: 10px 16px; }
-.g-foot .g-summary { margin-left: auto; text-align: right; display: flex; flex-direction: column; gap: 2px; }
-.g-foot .g-summary b { font-size: 12px; letter-spacing: .1em; text-transform: uppercase; }
-.g-foot .g-summary span { font-size: 10px; }
-.g-foot .go { transform: skewX(-7deg); text-transform: uppercase; letter-spacing: .16em; }
+/* ---- parts panel ------------------------------------------------------------------------- */
+#menu .g-stage { grid-column: 3; grid-row: 2; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 12px 12px; }
+#menu .g-tabtitle { position: sticky; top: 0; z-index: 2; margin: 0 -12px 8px; padding: 12px 12px 9px;
+  background: linear-gradient(180deg, #080b11 72%, #080b11e6); border-bottom: 1px solid #ff2d5540;
+  font-size: 10px; font-weight: 900; font-style: italic; letter-spacing: .24em; color: var(--fg); }
+#menu .g-tabtitle::after { content: ''; display: block; width: 26px; height: 2px; margin-top: 6px; background: var(--accent); }
+#menu .g-stage .look-now, #menu .g-stage .look, #menu .g-stage .g-look { font-size: 8px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
+#menu .g-stage h3 { margin: 14px 0 6px; font-size: 8px; letter-spacing: .24em; color: var(--dim); }
+#menu .g-stage h3::before { width: 2px; height: 9px; }
+#menu .g-stage .chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(116px, 1fr)); gap: 5px; }
+#menu .g-stage .chip { position: relative; min-width: 0; text-align: left; padding: 9px 10px 9px 12px; border-radius: 0;
+  color: #cfd6e4; background: var(--g-bg2); border: 1px solid #ffffff12; font-size: 9px; font-weight: 800;
+  letter-spacing: .1em; text-transform: uppercase;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 7px), calc(100% - 7px) 100%, 0 100%);
+  transition: color .1s ease, background .1s ease, border-color .1s ease; }
+#menu .g-stage .chip:hover { color: #fff; background: #141a24; border-color: var(--g-line2); }
+#menu .g-stage .chip.on { color: #fff; border-color: #ff2d5599; background: linear-gradient(90deg, #ff2d5533, #0b0f16 58%); }
+#menu .g-stage .chip.on::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--accent); }
 
-body.touch .garage { grid-template-columns: 118px minmax(0, 1fr) 84px 176px; grid-template-rows: 44px minmax(0, 1fr) 50px; gap: 5px; padding: 6px; }
-body.touch .g-brand { font-size: 15px; }
-body.touch .g-brand span, body.touch .g-stats { display: none; }
-body.touch .g-name { font-size: 10px; }
-body.touch .g-rail .rail { padding: 7px 8px; gap: 5px; }
-body.touch .g-rail .rail i { display: none; }
-body.touch .g-rail .rail b { font-size: 8px; letter-spacing: .1em; }
-body.touch .g-stage { padding: 6px 7px; }
-body.touch .g-stage .chip { padding: 6px 8px; font-size: 8px; }
-body.touch .g-stage h3 { font-size: 8px; margin: 7px 0 4px; }
-body.touch .g-foot .go { font-size: 12px; padding: 8px 14px; }
-body.touch .g-foot .g-summary { display: none; }
+/* ---- bottom bar -------------------------------------------------------------------------- */
+#menu .g-foot { grid-column: 1 / -1; grid-row: 3; display: flex; align-items: center; gap: 12px; }
+#menu .g-foot .back-btn { padding: 9px 14px; border-radius: 0; background: transparent; border: 1px solid var(--g-line);
+  color: var(--dim); font-size: 9px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase;
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 100%, 0 100%);
+  transition: color .12s ease, border-color .12s ease, background .12s ease; }
+#menu .g-foot .back-btn:hover { color: var(--fg); border-color: var(--g-line2); background: var(--g-bg2); }
+#menu .g-foot .g-summary { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+#menu .g-foot .g-summary b { font-size: 12px; font-weight: 900; font-style: italic; letter-spacing: .06em; text-transform: uppercase; }
+#menu .g-foot .g-summary span { font-size: 9px; letter-spacing: .1em; color: var(--dim); }
+#menu .g-foot .go { margin-left: 0; padding: 14px 34px; border: 0; border-radius: 0; color: #fff;
+  background: linear-gradient(135deg, var(--accent), var(--accent2)); font-size: 12px; font-weight: 900; font-style: italic;
+  letter-spacing: .18em; text-transform: uppercase; box-shadow: 0 12px 30px #ff2d5566;
+  clip-path: polygon(10px 0, 100% 0, calc(100% - 10px) 100%, 0 100%);
+  transition: filter .12s ease, transform .12s ease; }
+#menu .g-foot .go:hover { filter: brightness(1.12); transform: translateY(-1px); }
 
-
-/* garage v2: parts list beside the car, categories on the far edge (solid, readable over the bright body) */
-.garage { grid-template-columns: 202px minmax(0, 1fr) 272px 128px; grid-template-rows: 72px minmax(0, 1fr) 62px; }
-.g-stage { grid-column: 3; grid-row: 2; border-left: 1px solid #ffffff10; }
-.g-rail { grid-column: 4; grid-row: 2; }
-.g-rail .rail { background: #0a0d13; border-color: #ffffff1c; color: #c8d0e0; }
-.g-rail .rail b { letter-spacing: .14em; }
-.g-rail .rail.on { color: #fff; }
-.g-name { line-height: 1.15; }
-.g-stats { margin-top: 2px; }
-.g-stage { padding-top: 12px; }
-body.touch .garage { grid-template-columns: 118px minmax(0, 1fr) 176px 84px; grid-template-rows: 44px minmax(0, 1fr) 50px; }
-body.touch .g-stage { grid-column: 3; }
-body.touch .g-rail { grid-column: 4; }
-
-
-/* garage v3: the parts panel leads with the category, not the career chips */
-.g-stage .career-bar { display: none; }
-.g-tabtitle { position: sticky; top: 0; z-index: 2; margin: -12px -12px 6px; padding: 10px 12px;
-  background: linear-gradient(180deg, #05070bf8, #05070be8); border-bottom: 1px solid #ffffff14;
-  font-size: 11px; font-weight: 900; font-style: italic; letter-spacing: .22em; color: var(--fg); }
-.g-stage .look-now, .g-stage .look { font-size: 9px; opacity: .8; }
-
-
-/* garage v4: compact layout keyed off the pointer/size, not the late body.touch class; panels opaque enough to read */
-@media (pointer: coarse), (max-width: 1100px) {
-  .garage { grid-template-columns: 104px minmax(0, 1fr) 196px 72px; grid-template-rows: 42px minmax(0, 1fr) 46px; gap: 5px; padding: 5px; }
-  .g-head { gap: 8px; }
-  .g-brand { font-size: 14px; }
-  .g-brand span, .g-stats { display: none; }
-  .g-name { font-size: 10px; }
-  .g-name i { font-size: 7px; padding: 1px 4px; }
-  .g-cams .chip { font-size: 8px; padding: 4px 7px; }
-  .g-carlist { padding: 5px; gap: 4px; }
-  .g-carlist h3 { font-size: 7px; }
-  .g-carlist .car { padding: 6px 7px; }
-  .g-carlist .car span, .g-carlist .mini { display: none; }
-  .g-rail .rail { padding: 6px; }
-  .g-rail .rail i { display: none; }
-  .g-rail .rail b { font-size: 7px; letter-spacing: .08em; }
-  .g-stage { padding: 6px 7px; }
-  .g-stage .chip { padding: 5px 7px; font-size: 8px; }
-  .g-stage h3 { font-size: 7px; margin: 6px 0 3px; }
-  .g-tabtitle { margin: -6px -7px 4px; padding: 6px 7px; font-size: 9px; }
-  .g-stage .look-now, .g-stage .look { font-size: 7px; }
-  .g-foot .back-btn { padding: 6px 9px; font-size: 9px; }
-  .g-foot .go { font-size: 11px; padding: 7px 12px; }
-  .g-foot .g-summary { display: none; }
-}
-.g-carlist, .g-stage { background: #070a10ee; }
-.g-rail .rail { background: #080b11; }
-
-
-/* compact car cards: name + badge only */
-@media (pointer: coarse), (max-width: 1100px) {
-  .g-carlist .car > span, .g-carlist .mini { display: none !important; }
-  .g-carlist .car-head b { font-size: 11px; line-height: 1.15; }
-  .g-carlist { background: #070a10f7; }
+/* ---- entrance ---------------------------------------------------------------------------- */
+@keyframes g-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+#menu .g-head, #menu .g-foot { animation: g-rise .22s ease-out both; }
+#menu .g-carlist { animation: g-rise .26s cubic-bezier(.2,.7,.2,1) both; }
+#menu .g-stage { animation: g-rise .32s cubic-bezier(.2,.7,.2,1) .04s both; }
+#menu .g-rail { animation: g-rise .3s cubic-bezier(.2,.7,.2,1) .08s both; }
+@media (prefers-reduced-motion: reduce) {
+  #menu .g-head, #menu .g-foot, #menu .g-carlist, #menu .g-stage, #menu .g-rail { animation: none; }
 }
 
+/* ---- compact: phone landscape and small windows ------------------------------------------ */
+@media (pointer: coarse), (max-width: 1100px) {
+  .garage { grid-template-columns: 96px minmax(0, 1fr) 170px 62px; grid-template-rows: 38px minmax(0, 1fr) 46px; gap: 4px; padding: 4px; }
+  #menu .g-head { gap: 8px; }
+  #menu .g-brand { font-size: 14px; letter-spacing: -.02em; }
+  #menu .g-brand span, #menu .g-stats, #menu .g-foot .g-summary { display: none; }
+  #menu .g-carsum { padding-left: 0; border-left: 0; }
+  #menu .g-name { font-size: 10px; gap: 5px; }
+  #menu .g-name i { font-size: 6px; padding: 2px 5px; }
+  #menu .g-cams { gap: 3px; }
+  #menu .g-cams .chip { padding: 4px 6px; font-size: 7px; letter-spacing: .1em; }
+  #menu .g-carlist { padding: 5px; gap: 4px; }
+  #menu .g-carlist h3 { font-size: 6px; }
+  #menu .g-carlist .car { padding: 6px 7px; }
+  #menu .g-carlist .car-head b { font-size: 9px; }
+  #menu .g-carlist .car-badge, #menu .g-carlist .car > span, #menu .g-carlist .mini { display: none; }
+  #menu .g-rail .rail { padding: 5px 6px; gap: 4px; }
+  #menu .g-rail .rail i { font-size: 6px; }
+  #menu .g-rail .rail b { font-size: 7px; letter-spacing: .08em; }
+  #menu .g-stage { padding: 0 6px 6px; }
+  #menu .g-tabtitle { margin: 0 -6px 5px; padding: 7px 6px 6px; font-size: 8px; letter-spacing: .16em; }
+  #menu .g-stage h3 { margin: 8px 0 4px; font-size: 6px; }
+  #menu .g-stage .chips { grid-template-columns: repeat(auto-fill, minmax(66px, 1fr)); gap: 3px; }
+  #menu .g-stage .chip { padding: 5px 5px 5px 7px; font-size: 7px; letter-spacing: .03em; }
+  #menu .g-foot .back-btn { padding: 6px 9px; font-size: 7px; }
+  #menu .g-foot .go { padding: 8px 16px; font-size: 9px; }
+}

@@ -1,6 +1,9 @@
 // Car looks as data (the garage's choices): types, option lists, defaults and the validator. No three.js, so the online
 // service (cloud/) can check the looks it stores with each car; scene/custom.ts draws them.
-export type WingKind = 'stock' | 'none' | 'ducktail' | 'gt' | 'lip' | 'swan' | 'gtxl' | 'dual' | 'chassis';
+import { WING_SPECS } from './scene/parts/wings';
+
+/** the model's own wing is 'stock'; 'none' removes it; everything else is a generated design */
+export type WingKind = string;
 export type AeroFinish = 'carbon' | 'gloss' | 'matte' | 'body';
 export type RimFinish = 'chrome' | 'gloss' | 'satin' | 'matte';
 export type HeadTint = 'white' | 'ice' | 'yellow';
@@ -20,11 +23,11 @@ export interface Custom {
 }
 export const LIVERIES = ['None', 'Twin stripes', 'Wide stripe', 'Side stripe', 'Two-tone'];
 export const WINGS: Record<WingKind, string> = {
-  stock: 'Stock', none: 'No wing', ducktail: 'Ducktail', gt: 'GT wing',
-  lip: 'Lip', swan: 'Swan neck', gtxl: 'GT XL', dual: 'Dual element', chassis: 'Chassis mount',
+  stock: 'Stock', none: 'No wing',
+  ...Object.fromEntries(WING_SPECS.map((s) => [s.id, s.name])),
 };
-/** every procedural wing, in menu order (stock/none are the model's own parts) */
-export const WING_KINDS = Object.keys(WINGS) as WingKind[];
+/** every wing, in menu order (stock/none are the model's own parts) */
+export const WING_KINDS = Object.keys(WINGS);
 export const AERO_FINISHES: Record<AeroFinish, string> = { carbon: 'Carbon', gloss: 'Gloss black', matte: 'Matte black', body: 'Body colour' };
 export const RIM_FINISHES: Record<RimFinish, string> = { chrome: 'Chrome', gloss: 'Gloss', satin: 'Satin', matte: 'Matte' };
 export const HEAD_TINTS: Record<HeadTint, string> = { white: 'White', ice: 'Ice blue', yellow: 'Yellow' };
