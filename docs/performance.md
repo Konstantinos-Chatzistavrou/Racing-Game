@@ -242,3 +242,23 @@ Two more tuner fixes on top: windows are judged on the median of the last three 
 Result on this laptop (fresh profile, `?menu=1`): **ultra, 90 % resolution**, p50 30-31 ms, 29.7-32.9 fps - versus
 `low, 90 %` before this arc, and compared with 0.6 scale when the cap was missing. Native (100 %) still stutters:
 mean 28.9 fps, p90 50-60 ms.
+## Phones: the tiers were not broken, a submission bottleneck was hiding them (2026-11-09)
+
+Reported: a Poco X8 Pro does 20-30 fps on `max` and 25-30 on `low` - the tiers barely differ. Reproduced with a
+4x CPU throttle on the phone viewport (`MOBILE=1 CPU_THROTTLE=4`, cap off):
+
+| low preset, throttled | fps | draws | CPU total | render submission |
+|---|---|---|---|---|
+| far ring 1000 m | 24.8 | 195 | 37.8 ms | 30.9 ms |
+| far ring 560 m (phones) | **30.2** | **161** | **26.1 ms** | **20.5 ms** |
+
+So the phone was draw-submission bound: the presets only change GPU effects (SSR, GTAO, bloom, AA), which is why
+`max` and `low` landed within a few fps of each other. The far ring loaded to 1000 m - skyline the fog eats anyway -
+and every far tile is a draw. On touch it now stops at 560 m (`?far=` overrides for tests), which is 34 fewer draws
+and +5.4 fps in the throttled test.
+
+Second bug found in the same pass: the tuner protected 45 fps on touch while the cap was 30, so phones over-reduced
+quality. It protects the cap now.
+
+`max` on a phone is still GPU-bound (GTAO + SSR at 1830x824): that is the tier that genuinely differs, and it is not
+a 30 fps tier on this class of GPU. Phone default is `medium`.

@@ -211,6 +211,11 @@ async function main() {
     surfaces: core.info.surfaces,
     debug: params.get('nycdebug') === '1',
     fogDensity: num('fog', 0.0024),
+    // Phones: the far ring is skyline only and the fog eats most of it anyway, but every far tile is a draw and the
+    // phone is draw-submission bound (docs/performance.md "Where the CPU goes"), so it stops at 560 m there. The
+    // near ring is what the player actually drives through. ?far= overrides both for tests.
+    farLoad: num('far', isTouch ? 560 : 1000),
+    farKeep: num('farkeep', isTouch ? 660 : 1150),
     onProgress: (f) => say(`Loading the city… ${Math.round(f * 100)}%`, 20 + f * 55),
   }) : null;
   if (nyc) {
@@ -508,7 +513,8 @@ async function main() {
   // ~30.6 uncapped, not 36 - that number threw a preset tier away for headroom nobody sees. Phones keep their 48.
   const WINDOW = 650, STEP = 0.1, MIN_SCALE = MIN_RENDER, TUNE_TIMEOUT = 15000;
   /** the target the tuner protects (fps), and the median frame time that still holds it, with a 3 % margin */
-  const TUNE_TARGET = isTouch ? 45 : capFps > 0 ? capFps : 60;
+  // protect the cap, not a remembered phone target: with the cap at 30 the phone used to chase 45 and over-reduce
+  const TUNE_TARGET = capFps > 0 ? capFps : isTouch ? 45 : 60;
   const FRAME_BUDGET = (1000 / TUNE_TARGET) * 1.03;
   /** resolution gives way before an effect tier does; phones stop at 0.5 (the old 1x picture) before dropping effects */
   const RES_FLOOR = isTouch ? 0.5 : MIN_SCALE;
