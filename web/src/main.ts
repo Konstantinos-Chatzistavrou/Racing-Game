@@ -76,7 +76,9 @@ const enter = () => {
 };
 enterEl?.addEventListener('click', enter, { once: true });
 enterEl?.addEventListener('touchend', enter, { once: true });
-if (navigator.webdriver && !params.has('gate')) enter();   // headless runs skip the gate unless ?gate=1 asks for it
+// automation gets past the gate (no user gesture to give); ?gate=1 forces it, ?gate=0 skips it everywhere
+const auto = navigator.webdriver || /HeadlessChrome/i.test(navigator.userAgent) || params.get('gate') === '0';
+if (auto && params.get('gate') !== '1') enter();
 const loadFill = document.getElementById('load-fill');
 const loadMsg = document.getElementById('load-msg');
 const say = (s: string, pct?: number) => {

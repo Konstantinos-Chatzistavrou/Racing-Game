@@ -91,6 +91,8 @@ export class CarCustomizer {
   private bodyParts: Record<string, THREE.Object3D> = {};
   /** the model's own bumpers and hood, hidden when a generated one is fitted */
   private bodyStock: { front?: THREE.Object3D; rear?: THREE.Object3D; hood?: THREE.Object3D } = {};
+  /** fender flares, by id: four arch lips */
+  private fenderParts: Record<string, THREE.Object3D> = {};
   private wheelNodes: THREE.Object3D[] = [];
   private glow: THREE.Mesh;
   /** the pool's real size: the warm-up trick scales optional parts to ~0 and restores 1, which is not the pool's size */
@@ -199,9 +201,10 @@ export class CarCustomizer {
       return new THREE.Box3(ctr.clone().sub(size.clone().multiplyScalar(0.5)), ctr.clone().add(size.clone().multiplyScalar(0.5)));
     };
     for (const spec of BODY_SPECS) {
+      if (spec.kind === 'fender') continue;   // flares are built below as arch lips, not shells
       const base = spec.kind === 'front' ? pFront : spec.kind === 'rear' ? pRear : spec.kind === 'hood' ? pHood : new THREE.Box3();
-      const panel = spec.kind === 'fender' ? base : shrink(base, spec.kind === 'hood' ? 0.95 : 0.9);
-      const mat = spec.kind === 'fender' ? this.aeroMat : (this.paint ?? this.aeroMat);
+      const panel = shrink(base, spec.kind === 'hood' ? 0.95 : 0.9);
+      const mat = this.paint ?? this.aeroMat;
       const g = spec.build({ box: this.box, panel, mat });
       g.name = 'body_' + spec.id;
       g.visible = false;
@@ -209,6 +212,23 @@ export class CarCustomizer {
       model.add(g);
     }
     this.bodyStock = { front: model.getObjectByName('bumper_front') ?? undefined, rear: model.getObjectByName('bumper_rear') ?? undefined, hood: model.getObjectByName('hood') ?? undefined };
+    // fender flares: a half-torus arch over each wheel (a full shell read as a black disc), body-coloured
+    const fenderIds = BODY_SPECS.filter((s) => s.kind === 'fender').map((s) => s.id);
+    const halfW = Math.max(this.box.max.x, -this.box.min.x) * 0.92;
+    fenderIds.forEach((id, i) => {
+      const g = new THREE.Group();
+      g.name = 'fender_' + id;
+      const rad = 0.42 + i * 0.022, tube = 0.035 + i * 0.012;
+      for (const [sx, sz] of [[1, 1.18], [-1, 1.18], [1, -1.47], [-1, -1.47]] as [number, number][]) {
+        const arch = new THREE.Mesh(new THREE.TorusGeometry(rad, tube, 5, 20, Math.PI), this.paint ?? this.aeroMat);
+        arch.rotation.y = Math.PI / 2;         // torus plane -> the car's side plane, arch over the top
+        arch.position.set(sx * halfW, 0.34, sz);
+        g.add(arch);
+      }
+      g.visible = false;
+      this.fenderParts[id] = g;
+      model.add(g);
+    });
     // rims: a generated face per wheel, parented to the wheel node so it steers and spins with it
     this.rimMat = new THREE.MeshPhysicalMaterial({ name: 'rim_generated', color: 0x9aa0aa, metalness: 1, roughness: 0.2, clearcoat: 0.4 });
     this.wheelNodes = ['wheel_FL', 'wheel_FR', 'wheel_RL', 'wheel_RR']
@@ -303,7 +323,8 @@ export class CarCustomizer {
     for (const m of this.rimMeshes) m.visible = c.rims === 'stock';
     for (const o of this.stockPanels.splitter) o.visible = c.splitter === 'stock';
     for (const o of this.stockPanels.skirt) o.visible = c.skirt === 'stock';
-    for (const [k, g] of Object.entries(this.bodyParts)) g.visible = k === c.frontB || k === c.rearB || k === c.hood || k === c.fenders;
+    for (const [k, g] of Object.entries(this.bodyParts)) g.visible = k === c.frontB || k === c.rearB || k === c.hood;
+    for (const [k, g] of Object.entries(this.fenderParts)) g.visible = k === c.fenders;
     if (this.bodyStock.front) this.bodyStock.front.visible = c.frontB === 'stock';
     if (this.bodyStock.rear) this.bodyStock.rear.visible = c.rearB === 'stock';
     if (this.bodyStock.hood) this.bodyStock.hood.visible = c.hood === 'stock';
