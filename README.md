@@ -119,7 +119,7 @@ street name ("↰ 7th Avenue · 250 m"). Spectating, the map and the city's deta
 **Two careers.** *Single player*: XP from races and free roam; levels unlock cars, upgrade stages and driver gear
 for free. *Online*: XP and credits come only from **ranked party races** (6+ players who actually race, at most 2 per
 network), kept and checked by the online service (`cloud/`, Cloudflare free plan; see `cloud/README.md`), which times
-every ranked race itself. Each career has its own car, upgrades and gear; paint and visual parts are shared. The Garage
+every ranked race itself. Each career has its own car, upgrades and gear; paint and visual parts are shared, and the online account keeps them so another device shows the same car. The Garage
 and Shop switch between them.
 
 **Race rules** (Settings): **Full Realism** (default) or **Respawns**. In Full Realism there is no reset in a race
