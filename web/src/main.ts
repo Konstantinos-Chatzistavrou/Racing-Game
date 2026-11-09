@@ -45,7 +45,10 @@ import { frameStats, sceneTextureStats } from './stats';
 import { GRADE } from './fx/grade';
 import { HEAT_MAX, Heat } from './heat';
 import { skinOf } from './scene/driver';
-import { AiTraffic } from './ai';
+import RAPIERLib from '@dimforge/rapier3d-compat';
+import { AiTraffic, Lane } from './ai';
+import { Cops } from './cops';
+import { loadGLTF } from './scene/loaders';
 import { Identity } from './identity';
 import { usernameError } from './username';
 import { formatLap } from './hud';
@@ -327,6 +330,27 @@ async function main() {
   };
   renderHeat();
   const bumpHeat = (n: number) => { heat.add(n); renderHeat(); menu.heat = heat.level; };
+  /**
+   * Cops (docs/design/heat-and-cops.md, slice 2): one unmarked car that joins a race you started at 3+ heat - never in
+   * the garage, never while cruising, never while tuning. Escape is distance, not a bar; a bust resets the heat only.
+   */
+  const copsEl = document.getElementById('cops')!;
+  let copMsg = '';
+  let copMsgUntil = 0;
+  const copNote = (t: string, ms = 3500) => { copMsg = t; copMsgUntil = performance.now() + ms; };
+  const cops = new Cops(new Lane(route.samples), {
+    bust: () => { heat.clear(); renderHeat(); menu.heat = 0; copNote('BUSTED · heat reset', 5000); },
+    escaped: () => { copNote('LOST THEM', 4000); },
+  });
+  // unmarked car: the traffic model, loaded in the background; the pursuit logic runs with or without it
+  void loadGLTF('/assets/cars/v3/vela_gt_traffic.glb').then((g) => {
+    const root = g.scene;
+    root.visible = false;
+    root.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) m.frustumCulled = false; });
+    scene.add(root);
+    cops.root = root;
+  }).catch(() => { /* no visual: the chase still works */ });
+  let playerS = 0, copSpawned = false;
   /** test/dev hook: the headless probes set the dial directly */
   const setHeat = (n: number) => { heat.level = Math.max(0, Math.min(HEAT_MAX, n)); heat.lastGain = Date.now(); renderHeat(); menu.heat = heat.level; return heat.level; };
   const audio = new GameAudio();
@@ -619,7 +643,7 @@ async function main() {
     if (!document.hidden) { frameTimes.length = 0; if (tuning) winStart = performance.now() + 1000; prev = performance.now(); }
   });
   let frameNo = 0;
-  g.__game = { city, nyc, ai, visual, audio, rig, damage, trace, input, renderer, camera, scene, post, THREE, grade: GRADE, heat, setHeat, stats: () => frameStats(scene, renderer), texStats: () => sceneTextureStats(scene, 0),
+  g.__game = { city, nyc, ai, visual, audio, rig, damage, trace, input, renderer, camera, scene, post, THREE, grade: GRADE, heat, setHeat, cops, stats: () => frameStats(scene, renderer), texStats: () => sceneTextureStats(scene, 0),
     get car() { return car; }, get core() { return core; }, get state() { return state; }, ticksNow: () => ticks, routeSamples: route.samples, menu: () => menu, sel,
     get party() { return party; }, get remote() { return remote; }, streetProps, obstacles, standings: () => standings(), get lap() { return lap; },
     bench: (soak = false) => runBench(soak),
@@ -1389,6 +1413,22 @@ async function main() {
     pos.lerpVectors(prevPos, physPos, alpha);
     quat.slerpQuaternions(prevQuat, physQuat, alpha);
     post.carPos.copy(pos);
+    // pursuit: track the player's arc length, call the cops once when a race at 3+ heat is underway, then update
+    playerS = cops.nearest(pos, playerS);
+    if (state === 'race' && sel.mode === 'race' && !copSpawned && heat.level >= 3 && ticks > 480) { copSpawned = true; cops.spawn(playerS, pos); }
+    cops.update(frame, playerS, pos, Math.abs(car.out[OUT.speed]) * 3.6);
+    if (cops.active) {
+      // line of sight: a ray from the cop to the car; any building hit means the cop cannot see you
+      const from = cops.world, to = pos;
+      const dx = to.x - from.x, dy = to.y - from.y, dz = to.z - from.z;
+      const len = Math.hypot(dx, dy, dz) || 1;
+      const ray = new RAPIERLib.Ray({ x: from.x, y: from.y + 1.2, z: from.z }, { x: dx / len, y: dy / len, z: dz / len });
+      const hit = pw.world.castRay(ray, len - 2, true);
+      cops.see(!!hit, frame);
+      copsEl.textContent = `🚨 POLICE · ${Math.round(cops.distance)} m`;
+    }
+    else if (performance.now() < copMsgUntil) copsEl.textContent = copMsg;
+    else copsEl.textContent = '';
     const tVis = performance.now();
     {
       const lv = car.body.linvel();
