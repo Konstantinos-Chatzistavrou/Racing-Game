@@ -41,6 +41,7 @@ import { Party, cleanCode, type Progress } from './party';
 import { Menu, rank, type Gfx, type Screen, type Standing } from './menu';
 import { applyMods, customOf, loadSelection, modsOf, paintOf, saveSelection, type CatalogCar, type Mode } from './garage';
 import { cleanCustom } from './custom-data';
+import { frameStats, sceneTextureStats } from './stats';
 import { skinOf } from './scene/driver';
 import { AiTraffic } from './ai';
 import { Identity } from './identity';
@@ -300,6 +301,7 @@ async function main() {
   const input = new Input();
   const rig = new CameraRig(camera, pw, car.body, core.info.redline);
   const hud = new Hud();
+  hud.cap = capFps > 0 ? Math.round(capFps) : 0;
   const audio = new GameAudio();
   audio.prepare();   // the audio device opens now (behind the loading screen), not on the first key press
   let damage = new DamageVisuals(visual, visualCfg, pw, scene);
@@ -573,7 +575,7 @@ async function main() {
     if (!document.hidden) { frameTimes.length = 0; if (tuning) winStart = performance.now() + 1000; prev = performance.now(); }
   });
   let frameNo = 0;
-  g.__game = { city, nyc, ai, visual, audio, rig, damage, trace, input, renderer, camera, scene, post,
+  g.__game = { city, nyc, ai, visual, audio, rig, damage, trace, input, renderer, camera, scene, post, stats: () => frameStats(scene, renderer), texStats: () => sceneTextureStats(scene, 0),
     get car() { return car; }, get core() { return core; }, get state() { return state; }, ticksNow: () => ticks, routeSamples: route.samples, menu: () => menu, sel,
     get party() { return party; }, get remote() { return remote; }, streetProps, obstacles, standings: () => standings(), get lap() { return lap; },
     bench: (soak = false) => runBench(soak),
@@ -1290,7 +1292,7 @@ async function main() {
   }
   setExtra();
 
-  let lastRenderAt = 0;
+  let lastRenderAt = 0, statsAt = 0, statsLogAt = 0;
   renderer.setAnimationLoop(() => {
     const now = performance.now();
     const cb0 = bench.active ? now : 0;
@@ -1406,6 +1408,15 @@ async function main() {
       post.render();
       if (post.preset !== 'low' && post.preset !== 'medium') probe?.update(pos, visual.root);
       hud.rendered(now);
+      if (now - statsAt > 1000) {   // draw calls are per frame; the texture scan is cached for 10 s
+        statsAt = now;
+        const s = frameStats(scene, renderer);
+        hud.stats = s;
+        if (import.meta.env.DEV && now - statsLogAt > 10_000) {
+          statsLogAt = now;
+          console.log(`[stats] ${s.calls} calls · ${s.textures} textures · ${s.textureMB} MB · ${s.noMips} without mips · ${s.triangles} tris`);
+        }
+      }
       if (adaptive && state === 'race' && !bench.active && car.out[OUT.speed] > 5 && frame < 0.095) {
         driveWinTime += frame;
         if (++driveFrames >= 60) {

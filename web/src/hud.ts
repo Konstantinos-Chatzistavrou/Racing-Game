@@ -39,6 +39,12 @@ export class Hud {
   /** full realism: 'ROLLED OVER · OUT IN 3 s' etc. ('' none) */
   outWarn = '';
   fps = 60;
+  /** the frame cap in fps (0 = uncapped), so a 33 ms interval reads as the cap working, not as a slow frame */
+  cap = 0;
+  /** draw calls and texture VRAM of the frame, set by main once a second */
+  stats: { calls: number; textureMB: number; noMips: number } | null = null;
+  /** the largest frame interval of the last second: logged, not shown (one hitch is not the frame time) */
+  lastMax = 0;
   private el = { needle: $('needle'), rev: $('revfill') };
   private needleKey = '';
   private revKey = -1;
@@ -101,10 +107,21 @@ export class Hud {
 
     if (now - this.last < 100) return;   // DOM text at 10 Hz
     this.last = now;
-    const span = this.frames.length > 1 ? this.frames[this.frames.length - 1] - this.frames[0] : 0;
-    const fps = (this.fps = span >= 850 ? this.frames.length : span > 10 ? Math.round(((this.frames.length - 1) * 1000) / span) : 30);
-    const worst = this.frames.reduce((m, t, i, a) => (i ? Math.max(m, t - a[i - 1]) : m), 0);
-    this.text('perf', `${fps} fps   worst ${worst.toFixed(1)} ms\n${this.extra}`);
+    const n = this.frames.length;
+    const span = n > 1 ? this.frames[n - 1] - this.frames[0] : 0;
+    const fps = (this.fps = span >= 850 ? n : span > 10 ? Math.round(((n - 1) * 1000) / span) : 30);
+    // Frame intervals over the last second: the median is the pace the player sees, p95 is the jitter. The old readout
+    // showed the maximum only ("worst 128 ms"), so one shader compile or texture upload made a healthy 30 fps game
+    // look like it ran at 128 ms; the maximum is logged (lastMax) instead of displayed.
+    const gaps: number[] = [];
+    for (let i = 1; i < n; i++) gaps.push(this.frames[i] - this.frames[i - 1]);
+    gaps.sort((a, b) => a - b);
+    const med = gaps.length ? gaps[gaps.length >> 1] : 0;
+    const p95 = gaps.length ? gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * 0.95))] : 0;
+    this.lastMax = gaps.length ? gaps[gaps.length - 1] : 0;
+    const cap = this.cap ? ` (cap ${this.cap})` : '';
+    const st = this.stats ? ` · ${this.stats.calls} calls · ${this.stats.textureMB} MB tex${this.stats.noMips ? ` · ${this.stats.noMips} NO MIPS` : ''}` : '';
+    this.text('perf', `${fps} fps${cap} · ${med.toFixed(0)} ms · p95 ${p95.toFixed(0)}${st}\n${this.extra}`);
     this.text('speed', Math.round(kmh).toString());
     const g = out[OUT.gear];
     this.text('gear', g === 0 ? 'R' : g === 1 ? 'N' : String(g - 1));

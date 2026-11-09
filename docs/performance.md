@@ -75,3 +75,28 @@ unless RP_SHOTS=1.
 Phones now render into a canvas at up to 2x CSS px with the tuned render scale (~0.72 MP to start, sharpened up to the panel)
 instead of a 1x canvas stretched 2.6x by the browser; the tuner lowers that resolution (down to the old picture) before it
 drops any effect. All presets are rendered for real during loading (a mid-race medium -> low fallback built pipelines: 6.5 s).
+## Texture VRAM, draw calls and the frame readout (2026-11-09)
+
+The perf line reports the frame as it is felt: `30 fps (cap 30) · 33 ms · p95 41 · 267 calls · 35 MB tex`.
+`ms` is the median drawn-frame interval of the last second, `p95` the jitter; the maximum is kept in
+`hud.lastMax` and logged, not shown, because one 128 ms hitch used to read as the game's frame time.
+`calls` is `renderer.info.render.drawCalls` (per draw, reset every frame) - not `render.calls`, which
+counts `renderer.render()` invocations for the shadow maps and the reflection probe. `MB tex` is the VRAM
+of every texture reachable from the scene's materials, mip chains included; block-compressed (KTX2)
+textures report their transcoded bytes. `window.__game.stats()` and `texStats()` return the same numbers
+(`src/stats.ts`), and a console line every 10 s in dev logs them.
+
+Measured on the laptop, phone viewport 1830x824, `?menu=0&cap=30` (no auto-tuning), ultra preset:
+
+| | value |
+|---|---|
+| draw calls | 267 |
+| triangles | 1.89 M |
+| textures | 41 (28 block-compressed) |
+| texture VRAM | 36.3 MB |
+| textures without a mip chain | 0 |
+
+Texture bandwidth is not this frame's problem: every sampled texture has mips and the VRAM is small. At
+that size the limit is fill rate on the iGPU (~19 fps) plus the triangle count. The remaining KTX2 gap is
+the v4 car models (`kestrel_gt`, `harrier_gt`), which still embed 3 PNGs each; v3 `vela_gt` and the city
+props are KTX2. Converting them needs KTX-Software in `tools/ktx/` (see `build_car3.sh`) and a visual check.
