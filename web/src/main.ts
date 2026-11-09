@@ -57,6 +57,26 @@ import { autoCap, benchClose, benchProgress, benchResults, measureRefresh, recom
 const params = new URLSearchParams(location.search);
 const num = (k: string, d: number) => (params.has(k) ? Number(params.get(k)) : d);
 const loading = document.getElementById('loading')!;
+/**
+ * First screen is a click-for-fullscreen gate, not the loading bar: the game boots behind it, and the click is the
+ * user gesture the Fullscreen API needs. Once entered, the normal loading screen (if still loading) or the game shows.
+ */
+const enterEl = document.getElementById('enter');
+let gameReady = false;
+const enter = () => {
+  const el = enterEl;
+  if (!el || !el.isConnected) return;
+  el.remove();
+  if (!gameReady) loading.hidden = false;
+  try {
+    if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+      void document.documentElement.requestFullscreen().catch(() => { /* iOS Safari: no element fullscreen, play as is */ });
+    }
+  } catch { /* denied: play in the tab */ }
+};
+enterEl?.addEventListener('click', enter, { once: true });
+enterEl?.addEventListener('touchend', enter, { once: true });
+if (navigator.webdriver && !params.has('gate')) enter();   // headless runs skip the gate unless ?gate=1 asks for it
 const loadFill = document.getElementById('load-fill');
 const loadMsg = document.getElementById('load-msg');
 const say = (s: string, pct?: number) => {
@@ -1371,6 +1391,7 @@ async function main() {
   post.carPos.copy(pos);
 
   // Boot into the title (or, for the test tools with ?menu=0, straight into a free run).
+  gameReady = true;
   { const l = document.getElementById('loading'); if (l) { l.classList.add('out'); setTimeout(() => l.remove(), 450); } }   // fade, not a cut
   if (params.get('menu') === '0') {
     sel.mode = 'free';
