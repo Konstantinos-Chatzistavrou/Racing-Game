@@ -6,7 +6,7 @@
 //       title -> Garage (cars, paint, upgrades only) -> Main Menu, or Continue -> game modes
 import type { Identity } from './identity';
 import { PLATE_MAX, USERNAME_MAX, USERNAME_MIN, usernameError } from './username';
-import { FINISHES, LOOK_PRESETS, MODS, MOD_KEYS, SWATCHES, applyLookPreset, applyMods, customOf, modsOf, paintOf, saveSelection, statsOf,
+import { FINISHES, LOOK_PRESETS, MODS, MOD_KEYS, RIM_EFFECT, SWATCHES, WING_EFFECT, applyLookPreset, applyMods, customOf, modsOf, paintOf, saveSelection, statsOf,
   type CatalogCar, type Finish, type Mode, type ModKey, type Selection } from './garage';
 import { formatLap } from './hud';
 import { MAX_MEMBERS, cleanCode, type Party, type PartyMode } from './party';
@@ -140,11 +140,16 @@ export class Menu {
   loader!: Loader;
   private shopNote = '';
   private garageTab = 'paint';
+  /** the option under the pointer: the live panel previews its effect without applying it */
+  private hover: { k: string; v: string | number } | null = null;
   private shopTab: 'cars' | 'upgrades' | 'gear' = 'cars';
   private shopCar = '';
 
   constructor(readonly sel: Selection, private cars: CatalogCar[], private physics: Record<string, unknown>, private hooks: MenuHooks) {
     this.root.addEventListener('click', (e) => this.click(e));
+    // live previews: hovering a part shows what it would do without applying it
+    this.root.addEventListener('pointerover', (e) => this.hoverPart(e, true));
+    this.root.addEventListener('pointerout', (e) => this.hoverPart(e, false));
     this.root.addEventListener('input', (e) => this.input(e));
     this.root.addEventListener('change', (e) => this.change(e));
     this.root.addEventListener('keydown', (e) => {
@@ -406,6 +411,7 @@ export class Menu {
         ${this.cars.some((c) => !w.owns(c.id)) ? '<button class="small more-cars" data-act="shop-open">🛒 More cars in the Shop</button>' : ''}</aside>
       <nav class="g-rail">${rail}</nav>
       <section class="g-stage panel"><div class="g-stage-scroll"><div class="g-tabtitle">${this.garageTab.toUpperCase()}</div>${this.lookNow()}${body}</div></section>
+      <section class="g-live" id="g-live">${this.liveStats()}</section>
       <footer class="g-foot">
         <button data-act="home" class="back-btn">← Main Menu</button>
         <div class="g-summary"><b>${esc(this.car().name)}</b><span class="dim">${stages ? `${stages} upgrade stage${stages > 1 ? 's' : ''} fitted` : 'Stock'} · ${FINISHES[sel.finish].label} paint · ${Math.round(now.power)} kW</span></div>
@@ -414,6 +420,55 @@ export class Menu {
     </div>`;
   }
 
+  /** Live telemetry: bars show the car as it sits, the delta shows what the hovered part would do. */
+  private liveStats() {
+    const sel = this.sel, parts = customOf(sel);
+    const d = applyMods(this.physics[sel.car] as never, modsOf(sel)) as any;
+    const st = statsOf(d);
+    const fx = (c: ReturnType<typeof customOf>) => {
+      const w = WING_EFFECT.find((e) => e.re.test(String(c.wing)));
+      return { df: w ? w.df : 0, drag: w ? w.drag : 0, kg: w ? w.kg : 0 };
+    };
+    const now = fx(parts);
+    const pv = this.hover ? fx({ ...parts, [this.hover.k]: this.hover.v } as ReturnType<typeof customOf>) : null;
+    const mass = st.mass + now.kg, pmass = pv ? st.mass + pv.kg : null;
+    const drag = st.drag + now.drag, pdrag = pv ? st.drag + pv.drag : null;
+    const vmax = st.vmax * Math.cbrt(st.drag / Math.max(0.2, drag));
+    const pvmax = pdrag ? st.vmax * Math.cbrt(st.drag / Math.max(0.2, pdrag)) : null;
+    const df = st.downforce + now.df, pdf = pv ? st.downforce + pv.df : null;
+    const accel = st.accel * (mass / st.mass), paccel = pmass ? st.accel * (pmass / st.mass) : null;
+    const dl = (a: number, b: number | null, unit: string, digits = 0, lowerBetter = false) => {
+      if (b === null) return '';
+      const dv = b - a;
+      if (Math.abs(dv) < (digits ? 0.005 : 0.5)) return '<em class="flat">±0</em>';
+      return '<em class="' + (lowerBetter ? (dv < 0 ? 'up' : 'down') : (dv > 0 ? 'up' : 'down')) + '">' + (dv > 0 ? '+' : '') + dv.toFixed(digits) + ' ' + unit + '</em>';
+    };
+    const row = (label: string, text: string, sub: string, frac: number, delta: string) =>
+      '<div class="lv"><span>' + label + '</span><div class="lbar">' + bar(frac) + '</div><b>' + text + '</b><i>' + sub + '</i>' + delta + '</div>';
+    return [
+      row('POWER', Math.round(st.power) + ' kW', Math.round(st.hp) + ' hp', st.power / 600, ''),
+      row('WEIGHT', Math.round(mass) + ' kg', 'loaded', (1700 - mass) / 600, dl(mass, pmass, 'kg', 0, true)),
+      row('POWER / T', Math.round(st.pwr) + ' kW/t', Math.round(st.ratio) + ' W/kg', st.pwr / 450, ''),
+      row('0-100', accel.toFixed(1) + ' s', 'estimate', (6.5 - accel) / 5, dl(accel, paccel, 's', 1, true)),
+      row('DOWNFORCE', df.toFixed(2) + ' m²', 'aero', df / 0.95, dl(df, pdf, 'm²', 2)),
+      row('TOP SPEED', Math.round(vmax) + ' km/h', 'drag-limited', vmax / 360, dl(vmax, pvmax, 'km/h')),
+      row('DRAG', drag.toFixed(2) + ' m²', 'CdA', (0.95 - drag) / 0.8, dl(drag, pdrag, 'm²', 2, true)),
+    ].join('');
+  }
+
+  /** pointerover/out on a part chip: swap the live panel to the previewed numbers, no garage re-render. */
+  private hoverPart(e: Event, on: boolean) {
+    const t = (e.target as HTMLElement | null)?.closest?.('[data-act="cu"]') as HTMLElement | null;
+    if (!t || this.screen !== 'garage') return;
+    if (!on) {
+      const to = (e as PointerEvent).relatedTarget as HTMLElement | null;
+      if (to && t.contains(to)) return;
+    }
+    const k = t.dataset.k, v = t.dataset.v;
+    this.hover = on && k && v !== undefined ? { k, v } : null;
+    const live = document.getElementById('g-live');
+    if (live) live.innerHTML = this.liveStats();
+  }
   // ---- garage tabs (each a list of rows; every choice is data-act="cu" data-k=<Custom key> data-v=<value>) ----
   private cu(k: keyof Custom, v: string | number | boolean, label: string, on: boolean) {
     return `<button class="chip ${on ? 'on' : ''}" data-act="cu" data-k="${k}" data-v="${v}">${label}</button>`;

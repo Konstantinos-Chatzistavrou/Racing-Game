@@ -85,7 +85,7 @@ export function applyMods(base: any, m: Mods): any {
   return d;
 }
 
-export interface Stats { power: number; mass: number; grip: number; downforce: number; ratio: number }
+export interface Stats { power: number; hp: number; mass: number; grip: number; downforce: number; drag: number; vmax: number; accel: number; ratio: number; pwr: number }
 const statsCache = new WeakMap<object, Stats>();
 /** Numbers for the garage bars, straight from the physics JSON (cached per object). */
 export function statsOf(d: any): Stats {
@@ -95,11 +95,40 @@ export function statsOf(d: any): Stats {
   }
   const power = Math.max(...d.engine.torque_curve.map(([rpm, t]: [number, number]) => (t * rpm * 2 * Math.PI) / 60)) / 1000;   // kW
   const mass = d.chassis.mass_kg;
-  const st = { power, mass, grip: d.tire_front.lateral.mu, downforce: d.aero.downforce_area_m2, ratio: (power * 1000) / mass };
+  const drag = d.aero.drag_area_m2;
+  // top speed from power vs drag: P = 0.5 rho Cd A v^3 (a good estimate, not a simulation)
+  const vmax = Math.cbrt((2 * power * 1000) / (1.2 * Math.max(0.2, drag))) * 3.6;   // km/h
+  // 0-100: energy over power, floored by the tyres (mu g), with a drivetrain/launch factor
+  const v100 = 100 / 3.6;
+  const tyre = (d.tire_front.lateral.mu * 9.81) / 0.62;
+  const accel = Math.max((0.5 * mass * v100 * v100) / (power * 1000 * 0.45), v100 / tyre);
+  const st = {
+    power, hp: power * 1.34102, mass, grip: d.tire_front.lateral.mu, downforce: d.aero.downforce_area_m2,
+    drag, vmax, accel, ratio: (power * 1000) / mass, pwr: power / (mass / 1000),
+  };
   if (d && typeof d === 'object') statsCache.set(d, st);
   return st;
 }
 
+/** What the cosmetic parts actually do to the car: downforce (m2), drag (m2), mass (kg). */
+export const WING_EFFECT: { re: RegExp; name: string; df: number; drag: number; kg: number }[] = [
+  { re: /^lip/, name: 'lip', df: 0.03, drag: 0.004, kg: 0.5 },
+  { re: /^duck/, name: 'ducktail', df: 0.02, drag: 0.008, kg: 1 },
+  { re: /^basket/, name: 'basket', df: 0.05, drag: 0.020, kg: 1.5 },
+  { re: /^chassis/, name: 'chassis', df: 0.06, drag: 0.030, kg: 2 },
+  { re: /^pillar/, name: 'pillar', df: 0.07, drag: 0.040, kg: 2 },
+  { re: /^gt-/, name: 'GT', df: 0.08, drag: 0.040, kg: 2.5 },
+  { re: /^dual/, name: 'dual', df: 0.09, drag: 0.050, kg: 2.5 },
+  { re: /^swan/, name: 'swan', df: 0.10, drag: 0.050, kg: 2.5 },
+  { re: /^gt2/, name: 'GT2', df: 0.11, drag: 0.060, kg: 3 },
+  { re: /^wide/, name: 'wide', df: 0.12, drag: 0.070, kg: 3 },
+];
+/** Rim families trade mass for stiffness: forged mesh is heavier, deep dish is lighter. */
+export const RIM_EFFECT: { re: RegExp; kg: number }[] = [
+  { re: /^five/, kg: -0.6 }, { re: /^six/, kg: -0.4 }, { re: /^seven/, kg: -0.2 },
+  { re: /^split5/, kg: -0.3 }, { re: /^turbine/, kg: 0 }, { re: /^mesh/, kg: 1.6 },
+  { re: /^concave/, kg: -0.8 }, { re: /^dish/, kg: -0.4 }, { re: /^lip/, kg: 0.4 }, { re: /^rally/, kg: 1.2 },
+];
 const KEY = 'nr.garage.v1';
 export function loadSelection(cars: CatalogCar[], params: URLSearchParams): Selection {
   const starter = cars.find((c) => c.id === 'vela_gt')?.id ?? cars[0].id;

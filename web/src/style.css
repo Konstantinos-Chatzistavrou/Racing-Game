@@ -673,3 +673,52 @@ body.touch #cops { position: absolute; top: calc(44px + env(safe-area-inset-top)
   #menu .g-foot .back-btn { padding: 6px 9px; font-size: 7px; }
   #menu .g-foot .go { padding: 8px 16px; font-size: 9px; }
 }
+
+/* ---- live telemetry strip: what the car is, and what the hovered part would make it ---- */
+.garage { grid-template-rows: 64px minmax(0, 1fr) 74px 54px; }
+.g-live { grid-column: 1 / 4; grid-row: 3; display: flex; gap: 14px; align-items: stretch; padding: 8px 12px;
+  background: #070a10f2; border: 1px solid #ffffff14; box-shadow: 0 16px 40px #000a; }
+.g-live .lv { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.g-live .lv span { font-size: 8px; font-weight: 800; letter-spacing: .2em; color: var(--dim); }
+.g-live .lv b { font-size: 13px; font-style: italic; font-weight: 900; letter-spacing: .01em; white-space: nowrap; }
+.g-live .lv i { font-style: normal; font-size: 8px; color: var(--dim); letter-spacing: .06em; }
+.g-live .lv em { font-style: normal; font-size: 9px; font-weight: 800; }
+.g-live .lv em.up { color: #3dffa8; }
+.g-live .lv em.down { color: #ff5d7a; }
+.g-live .lv em.flat { color: var(--dim); }
+.g-live .lbar { height: 3px; margin: 2px 0 1px; background: #ffffff14; }
+.g-live .lbar i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width .18s ease-out; }
+.g-foot { grid-row: 4; }
+@media (pointer: coarse), (max-width: 1100px) {
+  .garage { grid-template-rows: 42px minmax(0, 1fr) 46px 40px; }
+  .g-live { grid-column: 1 / -1; grid-row: 3; padding: 4px 6px; gap: 6px; }
+  .g-live .lv b { font-size: 9px; }
+  .g-live .lv span, .g-live .lv i { display: none; }
+  .g-live .lv:nth-child(4), .g-live .lv:nth-child(7) { display: none; }
+  .g-foot { grid-row: 4; }
+}
+
+
+/* live strip: pinned above the action bar (grid rows fought with the footer), fewer stats on a phone */
+.garage { position: fixed; }
+.g-live { position: absolute !important; left: 12px; right: 12px; bottom: 72px; grid-row: auto !important; z-index: 6; }
+.g-live .lv { flex: 1 1 0; }
+.g-live .lv span { display: block; }
+@media (pointer: coarse), (max-width: 1100px) {
+  .g-live { left: 5px; right: 5px; bottom: 50px; padding: 4px 6px; gap: 8px; }
+  .g-live .lv span { display: none; }
+  .g-live .lv:nth-child(2), .g-live .lv:nth-child(3), .g-live .lv:nth-child(4), .g-live .lv:nth-child(7) { display: none; }
+  .g-live .lv b { font-size: 9px; }
+}
+
+
+/* live strip, final: its own grid row between the content and the action bar */
+.garage { grid-template-rows: 64px minmax(0, 1fr) 64px 54px !important; }
+.garage > .g-live { position: static !important; grid-column: 1 / 4; grid-row: 3; left: auto; right: auto; bottom: auto; }
+.garage > .g-foot { grid-row: 4 !important; }
+@media (pointer: coarse), (max-width: 1100px) {
+  .garage { grid-template-rows: 42px minmax(0, 1fr) 46px 38px !important; }
+  .garage > .g-live { grid-column: 1 / -1; grid-row: 3; }
+  .garage > .g-foot { grid-row: 4 !important; }
+}
+
