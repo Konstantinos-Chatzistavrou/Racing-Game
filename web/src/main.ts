@@ -1305,8 +1305,12 @@ async function main() {
   setExtra();
 
   let lastRenderAt = 0, statsAt = 0, statsLogAt = 0;
+  /** CPU time per frame section (ms, accumulated): window.__prof. Sections sum to `total`, the whole callback. */
+  const prof = { n: 0, total: 0, sim: 0, vis: 0, city: 0, post: 0, hud: 0, audio: 0 };
+  (globalThis as { __prof?: unknown }).__prof = prof;
   renderer.setAnimationLoop(() => {
     const now = performance.now();
+    const p0 = now;
     const cb0 = bench.active ? now : 0;
     const frame = Math.min(0.1, (now - prev) / 1000);
     prev = now;
@@ -1315,6 +1319,7 @@ async function main() {
     if (bench.active) benchStep(frame);
     if (live) acc += frame; else acc = 0;
     let steps = 0;
+    const tSim = performance.now();
     while (acc >= DT && steps < 24) {
       prevPos.copy(physPos);
       prevQuat.copy(physQuat);
@@ -1345,11 +1350,13 @@ async function main() {
       acc -= DT;
       steps++;
     }
+    prof.sim += performance.now() - tSim;
     if (steps === 24) acc = 0;   // too slow to keep up: drop time rather than spiral
     const alpha = Math.min(1, acc / DT);
     pos.lerpVectors(prevPos, physPos, alpha);
     quat.slerpQuaternions(prevQuat, physQuat, alpha);
     post.carPos.copy(pos);
+    const tVis = performance.now();
     {
       const lv = car.body.linvel();
       visual.velocity.set(lv.x, lv.y, lv.z);
@@ -1359,10 +1366,13 @@ async function main() {
         damage.update(live ? frame : 0, () => core.damage());
       }
     }
+    prof.vis += performance.now() - tVis;
+    const tAud = performance.now();
     if (driving()) audio.update(car.out, car.out[OUT.speed]);
     // force feedback runs every frame (it ramps to zero in the menus); only while the wheel is the driving device
     ffb.update(frame, { driving: state === 'race' && input.device === 'wheel', rackTorque: car.out[OUT.steerTorque], speed: Math.abs(car.out[OUT.speed]),
       wheel: input.wheelPos, wheelVel: input.wheelVel, impactKj: state === 'race' ? rumbleKj : 0 }, input.settings);
+    prof.audio += performance.now() - tAud;
     if (state === 'race') { input.rumble(now, car.out, rumbleKj); rumbleKj = 0; }
     if (state === 'paused' && !menu.ctl?.calibrating) input.menuPoll();
     if (ranked && (state === 'race' || state === 'spectate' || state === 'results') && !myDnf) ranked.pos(now, car.body.translation(), Math.abs(car.out[OUT.speed]));
@@ -1408,7 +1418,9 @@ async function main() {
       }
       audio.impact(Math.max(12, impulse * 0.18), kind === 'shop' || kind === 'wall', kind);
     });
+    const tCity = performance.now();
     city.update(camera);
+    prof.city += performance.now() - tCity;
     // Frame cap (default 30 fps: the quality target; ?cap=0 uncapped, ?cap=45 etc.). Simulation, camera and HUD run every
     // display refresh; only the draw is skipped, so the picture holds still between rendered frames. The cap is off while
     // the graphics tuner measures (it needs the uncapped speed), and the slot clock advances by whole intervals so a
@@ -1417,7 +1429,9 @@ async function main() {
       lastRenderAt = capInterval && !bench.uncap && now - lastRenderAt < capInterval * 1.5 ? lastRenderAt + capInterval : now;
       const hasCasters = ai.mode === 'race' || remote !== null || damage.debrisCount > 0;
       if (hasCasters && ++frameNo % (params.has('se') ? num('se', 2) : PRESETS[post.preset].shadowEvery) === 0) for (const sh of headShadows) sh.needsUpdate = true;
+      const tPost = performance.now();
       post.render();
+      prof.post += performance.now() - tPost;
       if (post.preset !== 'low' && post.preset !== 'medium') probe?.update(pos, visual.root);
       hud.rendered(now);
       if (now - statsAt > 1000) {   // draw calls are per frame; the texture scan is cached for 10 s
@@ -1479,7 +1493,11 @@ async function main() {
         }
       }
     }
-    if (driving() && state !== 'paused' && state !== 'spectate') hud.update(now, frame, car.out, core.info, input.assists, damage.last, lap);
+    if (driving() && state !== 'paused' && state !== 'spectate') {
+      const tHud = performance.now();
+      hud.update(now, frame, car.out, core.info, input.assists, damage.last, lap);
+      prof.hud += performance.now() - tHud;
+    }
     // Graphics tuning (title menu only, behind the cover; see startTuning)
     if (now >= winStart) frameTimes.push(frame * 1000);
     if (tuning && now - winStart >= WINDOW) {
@@ -1513,6 +1531,8 @@ async function main() {
       if (okStreak >= 2 || (now - tuneStart > TUNE_TIMEOUT && !warm)) finishTuning();
       else { winStart = now + 1000; setExtra(); }   // let the resize hitch pass before measuring again
     }
+    prof.total += performance.now() - p0;
+    prof.n++;
     if (bench.active) bench.cb.push(performance.now() - cb0);
   });
 }

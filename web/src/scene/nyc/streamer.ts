@@ -383,7 +383,11 @@ export class NycStreamer {
           }
           t.nearGroup = grp; t.near = 2;
           this.stat.loaded++; this.stat.loadMs += performance.now() - t0;
-          this.queue.push({ tile: t, kind: 'near', gen, cost: 0.3, run: () => { grp.visible = true; t.group.add(grp); this.attach(t); } });
+          // Attach, then stop the scene graph from walking this static tile every frame: `matrixWorldAutoUpdate = false`
+        // skips the subtree in Object3D.updateMatrixWorld (positions were baked by prepare(); nothing in a tile moves).
+        this.queue.push({ tile: t, kind: 'near', gen, cost: 0.3, run: () => {
+          grp.visible = true; t.group.add(grp); grp.updateMatrixWorld(true); grp.matrixWorldAutoUpdate = false; this.attach(t);
+        } });
           for (const m of meshes) this.queue.push({ tile: t, kind: 'near', gen, cost: 0.8, run: () => this.reveal(t, m) });
           this.queue.push({ tile: t, kind: 'near', gen, cost: 0.2, run: () => this.finishNear(t, pd.props) });
         }
@@ -428,7 +432,11 @@ export class NycStreamer {
         t.nearGroup = grp; t.near = 2;
         this.stat.loaded++; this.stat.loadMs += performance.now() - t0;
         // jobs: attach (hidden meshes), then one reveal per mesh (GPU upload spread over frames), then props + hide far
-        this.queue.push({ tile: t, kind: 'near', gen, cost: 0.3, run: () => { grp.visible = true; t.group.add(grp); this.attach(t); } });
+        // Attach, then stop the scene graph from walking this static tile every frame: `matrixWorldAutoUpdate = false`
+        // skips the subtree in Object3D.updateMatrixWorld (positions were baked by prepare(); nothing in a tile moves).
+        this.queue.push({ tile: t, kind: 'near', gen, cost: 0.3, run: () => {
+          grp.visible = true; t.group.add(grp); grp.updateMatrixWorld(true); grp.matrixWorldAutoUpdate = false; this.attach(t);
+        } });
         for (const m of meshes) this.queue.push({ tile: t, kind: 'near', gen, cost: 0.8, run: () => this.reveal(t, m) });
         this.queue.push({ tile: t, kind: 'near', gen, cost: 0.2, run: () => this.finishNear(t, props) });
       }).catch(fail);

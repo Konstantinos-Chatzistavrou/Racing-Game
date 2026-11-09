@@ -185,3 +185,30 @@ Instrumented run on this laptop (1280x657, fresh profile): five warm windows at 
 p50 36 -> 34 -> 35 -> 35 -> 31 ms as the scale went 1.0 -> 0.9 -> 0.8 -> 0.7 -> 0.6. It settles at
 **ultra, 60 % resolution** (~33 fps uncapped, 30 capped) instead of `low, 90 %`. The cost is a longer first
 run: streaming plus up to five steps takes ~20 s behind the cover, once per window size.
+## Where the CPU goes (2026-11-09)
+
+`window.__prof` accumulates the CPU time of each frame section (`main.ts`); read it as a delta over N frames.
+Pinned vantage, ultra, uncapped:
+
+| section | scale 1.0 | scale 0.25 |
+|---|---|---|
+| whole callback | 19.2 ms | 20.6 ms |
+| physics (Rapier steps) | 2.3 ms | 1.7 ms |
+| car visual + AI + damage | 0.2 ms | 0.3 ms |
+| city streamer update | 0.0 ms | 0.0 ms |
+| **`post.render()`** | **14.6 ms** | **16.1 ms** |
+| HUD | 0.1 ms | 0.1 ms |
+| audio | 0.1 ms | 0.1 ms |
+
+So the frame's CPU is almost all render submission: ~15 ms for ~267 draws, and it does not fall when the
+picture shrinks. A CDP CPU profile at scale 0.25 over 4 s is flat - `_update` 5.2 %, `_renderObjectDirect`
+4.0 %, `updateForRender` 4.6 %, `updateMatrixWorld` 3.6 %, `writeBuffer`/setVertexBuffer/setBindGroup/submit
+~7 % - i.e. three's per-draw work spread across every object, no single JS hot spot to fix. Physics and game
+logic together are under 3 ms.
+
+One consequence: at a 30 fps budget (33 ms) the renderer already spends ~15 ms of CPU before the GPU draws
+anything, which is why the tuner needs scale 0.6 rather than 0.8. The lever with real headroom is fewer draws
+(merge per-tile meshes by material), not a faster pass. Static tile subtrees now set
+`matrixWorldAutoUpdate = false` after their first world update, so the scene graph stops walking them; on this
+scene the change is inside the noise (the remaining traversal is props and cars), but it removes the work by
+construction.
