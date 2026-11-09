@@ -237,7 +237,9 @@ async function main() {
   say('Loading car…', 80);
   // Frame cap: uncapped (native display refresh) by default; ?cap=N pins a specific frame rate.
   const hz = await refreshP;
-  const capFps = params.has('cap') ? num('cap', 0) : 0;
+  // 30 fps locked is the product target (docs/performance.md); ?cap=0 uncaps for perf tests, ?cap=45 etc. override.
+  // The tuner protects this number, so an uncapped default made it aim for 60 and spend the whole quality budget.
+  const capFps = num('cap', 30);
   const capInterval = capFps > 0 ? 1000 / capFps : 0;
   const loadedCar = await carLoadP;
   let visualCfg = loadedCar.cfg;
@@ -511,6 +513,9 @@ async function main() {
   /** resolution gives way before an effect tier does; phones stop at 0.5 (the old 1x picture) before dropping effects */
   const RES_FLOOR = isTouch ? 0.5 : MIN_SCALE;
   let winStart = 0, tuning = false, upSteps = 0, wentDown = false, tuneStart = 0, lowStreak = 0, okStreak = 0, quietWindows = 0;
+  /** the last valid windows' median frame times: a single noisy window must not move the scale (title-screen p50 swings 26-39 ms) */
+  const p50s: number[] = [];
+  const medianP50 = () => (p50s.length ? [...p50s].sort((a, b) => a - b)[p50s.length >> 1] : 0);
   /**
    * The title camera streams the city in for a few seconds. fps while it does is CPU-bound and does not move with
    * render scale (measured: 25.3 fps at 1.0, 0.9, 0.8 and 0.7 - docs/performance.md), so those windows must not
@@ -554,7 +559,7 @@ async function main() {
       finishTuning();
       return;
     }
-    tuning = true; wentDown = false; lowStreak = 0; okStreak = 0; quietWindows = 0; tuneStart = performance.now();
+    tuning = true; wentDown = false; lowStreak = 0; okStreak = 0; quietWindows = 0; p50s.length = 0; tuneStart = performance.now();
     upSteps = full ? 1 : 0;
     if (full || Number.isNaN(stored)) { setPreset(PRESET_ORDER.indexOf(defaultPreset)); applyScale(startScale()); }
     frameTimes.length = 0;
@@ -1510,11 +1515,15 @@ async function main() {
       winStart = now;
       quietWindows = citySettled() ? quietWindows + 1 : 0;
       const warm = quietWindows < 2;   // one dry window to settle, one to measure from
-      // judge on the median frame, not the mean: one shader compile or texture upload drags an average below target
-      // while the game itself is holding the cap (the same reason the HUD shows p50/p95 now)
-      const low = !warm && p50 > FRAME_BUDGET, high = !warm && p50 < FRAME_BUDGET * 0.65;
+      // Judge on the median of the last three windows, not one window: the title camera swings p50 by 10 ms between
+      // identical windows (26-39 ms at scale 0.7), and a single bad window used to cost a whole scale step.
+      if (!warm) { p50s.push(p50); if (p50s.length > 3) p50s.shift(); }
+      const p50med = medianP50();
+      // Both the median frame and the window's mean must hold the target: a window whose p50 is fine but whose mean
+      // is 29 fps still stutters (p90 spikes from streaming and uploads), and "30 fps locked" is about the mean.
+      const low = !warm && (p50med > FRAME_BUDGET || fps < TUNE_TARGET * 1.02), high = !warm && p50med < FRAME_BUDGET * 0.65;
       const log = ((globalThis as { __tuneLog?: unknown[] }).__tuneLog ??= []);
-      log.push({ fps: +fps.toFixed(1), p50: Math.round(p50), p90: Math.round(p90), preset: post.preset, scale, warm });
+      log.push({ fps: +fps.toFixed(1), p50: Math.round(p50), p50med: Math.round(p50med), p90: Math.round(p90), preset: post.preset, scale, warm });
       if (log.length > 40) log.shift();
       // a single bad window (a shader compile, a texture upload) must not cost a quality tier: two in a row do it
       lowStreak = low ? lowStreak + 1 : 0;
@@ -1523,8 +1532,8 @@ async function main() {
       // better than a sharp low preset, and it is where the frame is actually lost (the pinned profile in
       // docs/performance.md is fill-bound: 25.6 -> 31.0 fps from scale 1.0 to 0.8).
       if (warm) { tuneStart = now; }   // the timeout clock runs on measurable windows only
-      else if (low && lowStreak >= 2 && scale > RES_FLOOR + 1e-6) { applyScale(scale - STEP); wentDown = true; lowStreak = 0; }
-      else if (low && lowStreak >= 2 && !presetPinned && presetIdx < PRESET_ORDER.length - 1) { setPreset(presetIdx + 1); wentDown = true; lowStreak = 0; }
+      else if (low && lowStreak >= 2 && scale > RES_FLOOR + 1e-6) { applyScale(scale - STEP); wentDown = true; lowStreak = 0; p50s.length = 0; }
+      else if (low && lowStreak >= 2 && !presetPinned && presetIdx < PRESET_ORDER.length - 1) { setPreset(presetIdx + 1); wentDown = true; lowStreak = 0; p50s.length = 0; }
       else if (low && lowStreak >= 2 && scale > MIN_SCALE + 1e-6) { applyScale(scale - STEP); wentDown = true; lowStreak = 0; }
       else if (high && upSteps > 0 && scale < maxScale - 1e-6) { applyScale(scale + STEP); upSteps--; }
       // done when two windows in a row sit in the band (the frame holds the cap) or when time is up

@@ -230,3 +230,15 @@ the instancing work above. `?batchcity=0` keeps the per-tile path for A/B.
 Known gaps: far tiles stay per-tile (their visibility is toggled per tile, which one batch mesh cannot express), and
 `breach.ts` raycasts `nearGroup` for facades, so a batched facade makes the wall-breach depth fall back to its
 default. Both are next.
+## 30 fps locked is now the default (2026-11-09)
+
+The frame cap defaulted to **0 (uncapped)**, so the tuner protected 60 fps and spent the whole quality budget
+driving ultra down to low. The default is 30 now (`?cap=0` still uncaps for perf tests).
+
+Two more tuner fixes on top: windows are judged on the median of the last three p50 values (the title camera swings
+26-39 ms between identical windows), and on the window's mean fps as well - at native resolution the mean was
+28.9 fps with p50 33, which stutters even though the median looks fine.
+
+Result on this laptop (fresh profile, `?menu=1`): **ultra, 90 % resolution**, p50 30-31 ms, 29.7-32.9 fps - versus
+`low, 90 %` before this arc, and compared with 0.6 scale when the cap was missing. Native (100 %) still stutters:
+mean 28.9 fps, p90 50-60 ms.
