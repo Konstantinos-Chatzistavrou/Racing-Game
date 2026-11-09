@@ -114,3 +114,15 @@ range (80 m on max/ultra, `NEAR_TREES`) a crown is a screen-space blob, so its 8
 20-face: **1.885 M -> 0.956 M triangles, 19.5 -> 25.0 fps** at the same camera, draw calls unchanged (~260).
 Inside 80 m `trees.ts` still draws the scanned-leaf photoreal trees, untouched. Props are the next ~2 fps
 (hiding all of `nyc_props` reaches 28.5).
+## Why the v4 cars are not converted to KTX2 (2026-11-09)
+
+Inspected the GLBs: `kestrel_gt_hero.glb` and `harrier_gt_hero.glb` embed three PNGs each (1, 75 and 45 KB),
+all bound to **normal** slots; their paint and trim are flat material colours. `vela_gt_hero.glb` (v3) is the
+one with 12 KTX2 maps (587 KB base colour, 286 KB, 224 KB...).
+
+KTX2 pays off on large colour/normal maps that would otherwise sit in VRAM as RGBA8. These three maps are
+small, and normals need UASTC (ETC1S smears them), which is 8 bits per pixel: converting 512^2 maps would
+shrink VRAM by about 2 MB per car but add hundreds of KB to the download. Not worth it; the KTX2 money is
+already spent where the megabytes were.
+
+Current scene (phone viewport, ultra): 41 textures, 28 block-compressed, 36.3 MB, **0 without mips**.
