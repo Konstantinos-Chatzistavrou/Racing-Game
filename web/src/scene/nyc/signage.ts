@@ -135,7 +135,9 @@ export class InstanceSet {
 
 // ---- the sign material --------------------------------------------------------------------------------------------------------------
 
-const CAP = 2.2;   // max linear emissive per channel after all gains (keeps bloom crisp)
+// ?look=heat pushes the signs a little hotter: more of them cross the bloom threshold, which is what makes the
+// street feel lit by the signs rather than merely decorated with them.
+const CAP = typeof location !== 'undefined' && new URLSearchParams(location.search).get('look') === 'heat' ? 2.6 : 2.2;
 
 export function createSignMaterial(data: THREE.InstancedBufferAttribute) {
   const atlas = getSignAtlasTexture();

@@ -40,12 +40,14 @@ export interface Look {
   exposure: number; contrast: number; lift: number; gamma: number; sat: number; split: number; grain: number;
   shadowTint: [number, number, number]; highlightTint: [number, number, number];
 }
-export const LOOKS: Record<'natural' | 'underground', Look> = {
+export const LOOKS: Record<string, Look> = {
   natural: { exposure: 1.45, contrast: 0.1, lift: 0.006, gamma: 1.0, sat: 1.08, split: 0.25, grain: 0.009, shadowTint: [0.0, 0.10, 0.16], highlightTint: [0.16, 0.08, 0.0] },
   underground: { exposure: 1.62, contrast: 0.3, lift: 0.012, gamma: 1.04, sat: 1.34, split: 0.55, grain: 0.014, shadowTint: [-0.01, 0.10, 0.24], highlightTint: [0.26, 0.05, 0.20] },
+  // Heat: a hot magenta/purple night with cyan-black shadows, stronger contrast and a lifted, coloured black point.
+  heat: { exposure: 1.56, contrast: 0.34, lift: 0.014, gamma: 1.03, sat: 1.42, split: 0.62, grain: 0.012, shadowTint: [-0.015, 0.055, 0.26], highlightTint: [0.33, 0.045, 0.24] },
 };
 /** Apply a named look to the live uniforms (called by post.ts for ?look=; safe at any time). */
-export function applyLook(name: keyof typeof LOOKS) {
+export function applyLook(name: string) {
   const l = LOOKS[name];
   GRADE.exposure.value = l.exposure;
   GRADE.contrast.value = l.contrast;

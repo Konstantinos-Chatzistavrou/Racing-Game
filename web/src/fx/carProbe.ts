@@ -16,11 +16,12 @@ export class CarProbe {
   private face = 0;
   private tick = 0;
   private hidden: THREE.Object3D[] = [];
-  /** probe centre offset above the car origin (m) */
-  height = 0.9;
+  /** probe centre offset above the car origin (m): at 0.9 the cube was mostly tarmac; 1.2 puts the skyline and the
+   *  neon signs behind the car into the upper hemisphere, which is what the coat actually mirrors */
+  height = 1.2;
 
   constructor(private renderer: THREE.WebGPURenderer, private scene: THREE.Scene, private pmrem: THREE.PMREMGenerator,
-    size = 128, private every = 1, near = 0.3, far = 250) {
+    size = 128, private every = 1, near = 0.3, far = 340) {
     this.rt = new THREE.CubeRenderTarget(size, { type: THREE.HalfFloatType, generateMipmaps: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
     this.cube = new THREE.CubeCamera(near, far, this.rt);
     this.cube.layers.set(0);

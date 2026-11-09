@@ -96,7 +96,9 @@ function metallicFlake() {
   }
   flakeTex = new THREE.DataTexture(px, N, N, THREE.RGBAFormat);
   flakeTex.wrapS = flakeTex.wrapT = THREE.RepeatWrapping;
-  flakeTex.repeat.set(56, 56);
+  // 56 repeats over a ~4 m body put each platelet at a few tenths of a millimetre - invisible at 2 m, which read as
+  // "no flake" in the garage. 24 repeats is a ~1.3 mm platelet, the Heat-scale sparkle you can see standing next to it.
+  flakeTex.repeat.set(24, 24);
   flakeTex.generateMipmaps = true;
   flakeTex.minFilter = THREE.LinearMipmapLinearFilter;
   flakeTex.magFilter = THREE.LinearFilter;
@@ -251,11 +253,14 @@ export function setupCarMaterials(model: THREE.Object3D, cfg: CarVisualConfig, p
             paintMat.normalScale.set(0.05, 0.05);
           }
           paintMat.clearcoat = 1;
-          paintMat.clearcoatRoughness = 0.024;
+          paintMat.clearcoatRoughness = 0.018;   // Heat: a hard, near-mirror coat highlight, not a satin sheen
           paintMat.clearcoatNormalMap = orangePeel();
-          paintMat.clearcoatNormalScale.set(0.055, 0.055);
+          // The orange peel used to be 0.055, as strong as the flake normal in the base coat - the two competed and
+          // the clear coat's highlight broke up into a blur. Keep a hint of peel (real paint has it, it is what stops
+          // the reflection looking like a CGI gradient) and let the flake live in the base coat only.
+          paintMat.clearcoatNormalScale.set(0.018, 0.018);
           paintMat.ior = 1.52;
-          paintMat.specularIntensity = 1.0;
+          paintMat.specularIntensity = 1.08;
           paintMat.iridescenceIOR = 1.7;
           paintMat.iridescenceThicknessRange = [200, 520];
           paintMat.envMapIntensity = 1.45;
@@ -470,14 +475,31 @@ export class CarVisual {
     return tyreRadius;
   }
 
+  /**
+   * Paint for a finish. Clearcoat is the layer that makes paint read as paint instead of plastic (Metalness-only paint
+   * looks like coloured plastic); the flake normal is what gives the metallic sparkle under a key light.
+   *
+   * Only a define change may set `needsUpdate`: colour, metalness, roughness, clearcoat and the flake normal scale are
+   * uniforms, and marking the material dirty for those re-compiled the shader every time the garage changed a finish
+   * (a visible hitch while browsing paint).
+   */
   setPaint(hex: string, finish: Finish) {
     const m = this.paint;
     if (!m) return;
     const f = FINISHES[finish];
+    const wasIri = (m.iridescence ?? 0) > 0;
     m.color.set(hex);
-    m.clearcoat = f.clearcoat; m.roughness = f.roughness; m.metalness = f.metalness;
+    m.clearcoat = f.clearcoat;
+    m.clearcoatRoughness = f.ccRough;   // the coat's own highlight: crisp on candy, a sheen on satin
+    m.roughness = f.roughness;
+    m.metalness = f.metalness;
     m.iridescence = f.iridescence ?? 0;
-    m.needsUpdate = true;
+    m.envMapIntensity = f.env;          // how much of the city mirrors in the coat (probe per frame)
+    // NFS Heat read: metallic and candy flake read as glitter standing next to the car, pearl shimmers, gloss has a
+    // quiet grain, satin/matte barely any. normalScale is a uniform, so this costs no recompile.
+    const flake = finish === 'metallic' ? 0.20 : finish === 'candy' ? 0.24 : finish === 'pearl' ? 0.14 : finish === 'satin' ? 0.05 : finish === 'matte' ? 0 : 0.08;
+    m.normalScale.set(flake, flake);
+    if (wasIri !== ((m.iridescence ?? 0) > 0)) m.needsUpdate = true;
   }
 
   /** Spot intensity from the switch and the damage state. */

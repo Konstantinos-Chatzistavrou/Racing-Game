@@ -35,13 +35,24 @@ export interface Selection {
 }
 
 /** iridescence: strength of the angle-dependent colour shift of pearl paint (0 = none). */
-export const FINISHES: Record<Finish, { label: string; clearcoat: number; roughness: number; metalness: number; iridescence?: number }> = {
-  gloss:    { label: 'Gloss',    clearcoat: 1,    roughness: 0.22, metalness: 0.45 },
-  satin:    { label: 'Satin',    clearcoat: 0.35, roughness: 0.42, metalness: 0.32 },
-  metallic: { label: 'Metallic', clearcoat: 1,    roughness: 0.18, metalness: 0.88 },
-  pearl:    { label: 'Pearl',    clearcoat: 1,    roughness: 0.20, metalness: 0.65, iridescence: 1 },
-  candy:    { label: 'Candy',    clearcoat: 1,    roughness: 0.14, metalness: 0.94 },
-  matte:    { label: 'Matte',    clearcoat: 0.04, roughness: 0.72, metalness: 0.15 },
+/**
+ * Each finish is a different *layering*, not one number: the clear coat's own roughness (the crisp highlight), how
+ * much metallic flake shows through it, and how strongly the world (the car's reflection probe) mirrors in it. That
+ * separation is what makes candy, pearl and metallic read as paint instead of plastic - see docs/art_direction.md.
+ */
+export const FINISHES: Record<Finish, {
+  label: string; clearcoat: number; roughness: number; metalness: number; iridescence?: number;
+  /** clear coat roughness: crisp mirror highlight (candy) -> soft sheen (satin) -> none (matte) */
+  ccRough: number;
+  /** envMapIntensity: how much of the world reflects in the coat */
+  env: number;
+}> = {
+  gloss:    { label: 'Gloss',    clearcoat: 1,    ccRough: 0.020, roughness: 0.22, metalness: 0.45, env: 1.45 },
+  satin:    { label: 'Satin',    clearcoat: 0.35, ccRough: 0.120, roughness: 0.42, metalness: 0.32, env: 1.05 },
+  metallic: { label: 'Metallic', clearcoat: 1,    ccRough: 0.028, roughness: 0.18, metalness: 0.88, env: 1.70 },
+  pearl:    { label: 'Pearl',    clearcoat: 1,    ccRough: 0.020, roughness: 0.20, metalness: 0.65, env: 1.60, iridescence: 1 },
+  candy:    { label: 'Candy',    clearcoat: 1,    ccRough: 0.012, roughness: 0.14, metalness: 0.94, env: 1.90 },
+  matte:    { label: 'Matte',    clearcoat: 0.04, ccRough: 0.500, roughness: 0.72, metalness: 0.15, env: 0.65 },
 };
 
 export const SWATCHES = ['#c0160f', '#e8890a', '#e6c619', '#1f9d55', '#0e7c86', '#1d4ed8', '#6d28d9', '#d946a8', '#b9bcc4', '#15171c'];
