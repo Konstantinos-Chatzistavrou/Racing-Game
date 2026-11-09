@@ -105,3 +105,34 @@ Concurrency is not capped by Cloudflare; you pay per room-hour. Examples at 15 H
 Verdict unchanged for now: Cloudflare is the best free-tier option for authoritative rooms at this scale, and at
 $0.008 per room-hour the paid plan is cheap long before it matters. Move to an Oracle free VM only when you need a
 60 Hz server-side simulation or unlimited relay traffic - that is a determinism/anti-cheat decision, not a price one.
+
+## Paying for it, and keeping the bill near zero
+
+- Workers Paid is **$5/month minimum on a card**, billed monthly, metered monthly. There is no VM to rent and no
+  per-seat fee; the $5 is a floor, usage is added on top.
+- Cloudflare has **budget alerts** (email thresholds, Billable Usage dashboard) but they do **not** stop usage - the
+  risk of a surprise bill is real, so set alerts at $5 / $10 / $25 the day you upgrade.
+- Tax depends on the billing country; check the first invoice rather than assuming.
+- The **free plan is the safety net**: over 100k DO requests/day, requests fail until 00:00 UTC. Nothing is charged,
+  the game degrades politely (results wait). If the card is not there, the bill cannot happen.
+- Cheapest way to stay inside the free tier: **lower the relay rate**. 15 Hz x 6 players = 4.5 billed req/s; at 10 Hz
+  it is 3 req/s (~92 room-hours in the paid plan's 1M), at 8 Hz ~2.4 req/s. Position interpolation buys the difference,
+  and one message per tick per client (never per car) is what keeps the count linear in players, not players x cars.
+
+## 60 Hz server-side simulation: what it means and where it can run
+
+It means the server runs the car physics itself at a fixed 60 Hz tick from **inputs** (throttle, brake, steer, gear),
+not from positions. Clients send inputs, predict locally, and reconcile to the server's state. A client cannot teleport
+or fake a lap time because it never sends a position the server believes.
+
+It is **not feasible on Workers/Durable Objects**: every WebSocket message is an invocation (10 ms CPU on free), the
+object is single-threaded and request-scoped, and a 16 ms loop would mean ~60 invocations/s per room - CPU limits and
+billing both make it wrong. Doable on a persistent process (Oracle Always Free ARM VM, or Colyseus on it):
+
+- The core is already C++ compiled to WASM (`core/`); Emscripten can also emit a Node-loadable module, or the same
+  sources build natively. Determinism needs a fixed dt, ordered inputs and the same binary on server and client.
+- Cost measured on this laptop: the physics step is ~0.3 ms for 6 cars, so 60 ticks/s is ~18 ms of CPU per second -
+  about 2% of one core per room. A 4-core free VM is therefore network-bound, not CPU-bound: dozens of rooms,
+  realistically 20-50 with netcode overhead.
+- This is also what finally makes **replay re-simulation** trivial: the server is already simulating every car;
+  verification is rerunning the same inputs and comparing state, no client recording required.
