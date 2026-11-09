@@ -1,6 +1,6 @@
 // Car looks as data (the garage's choices): types, option lists, defaults and the validator. No three.js, so the online
 // service (cloud/) can check the looks it stores with each car; scene/custom.ts draws them.
-import { AERO_NAMES, RIM_NAMES, WING_NAMES, type AeroPartKind } from './parts-names';
+import { AERO_NAMES, BODY_NAMES, RIM_NAMES, WING_NAMES, type AeroPartKind, type BodyPartKind } from './parts-names';
 
 /** the model's own wing is 'stock'; 'none' removes it; everything else is a generated design */
 export type WingKind = string;
@@ -14,6 +14,10 @@ export interface Custom {
   splitter: string;
   diffuser: string;
   skirt: string;
+  frontB: string;
+  rearB: string;
+  hood: string;
+  fenders: string;
   rims: string;
   aero: AeroFinish;          // splitter, diffuser, skirts, wing, mirrors' carbon
   rimColor: string;
@@ -34,6 +38,11 @@ const kits = (k: AeroPartKind) => Object.fromEntries(AERO_NAMES.filter((s) => s.
 export const SPLITTERS: Record<string, string> = { stock: 'Stock', ...kits('splitter') };
 export const DIFFUSERS: Record<string, string> = { stock: 'Stock', ...kits('diffuser') };
 export const SKIRTS: Record<string, string> = { stock: 'Stock', ...kits('skirt') };
+const bodyKits = (k: BodyPartKind) => Object.fromEntries(BODY_NAMES.filter((s) => s.kind === k).map((s) => [s.id, s.name]));
+export const FRONT_BUMPERS: Record<string, string> = { stock: 'Stock', ...bodyKits('front') };
+export const REAR_BUMPERS: Record<string, string> = { stock: 'Stock', ...bodyKits('rear') };
+export const HOODS: Record<string, string> = { stock: 'Stock', ...bodyKits('hood') };
+export const FENDERS: Record<string, string> = { stock: 'Stock', ...bodyKits('fender') };
 export const RIMS: Record<string, string> = { stock: 'Factory', ...Object.fromEntries(RIM_NAMES.map((s) => [s.id, s.name])) };
 /** every wing, in menu order (stock/none are the model's own parts) */
 export const WING_KINDS = Object.keys(WINGS);
@@ -45,7 +54,7 @@ export const GLOW_COLOURS = ['', '#ff2d55', '#2a9dff', '#3ddc84', '#b14dff', '#f
 
 export function defaultCustom(): Custom {
   return { livery: 0, liveryColor: '#f4f4f6', wing: 'stock', aero: 'carbon', rimColor: '#9aa0aa', rimFinish: 'chrome', caliper: '#c0160f',
-    splitter: 'stock', diffuser: 'stock', skirt: 'stock', rims: 'stock',
+    splitter: 'stock', diffuser: 'stock', skirt: 'stock', frontB: 'stock', rearB: 'stock', hood: 'stock', fenders: 'stock', rims: 'stock',
     headlights: 'white', smokedTails: false, underglow: '', tint: 1, exhaust: 'chrome' };
 }
 const hexOk = (v: unknown): v is string => typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v);
@@ -59,6 +68,10 @@ export function cleanCustom(v: unknown): Custom {
     splitter: s.splitter && s.splitter in SPLITTERS ? s.splitter : d.splitter,
     diffuser: s.diffuser && s.diffuser in DIFFUSERS ? s.diffuser : d.diffuser,
     skirt: s.skirt && s.skirt in SKIRTS ? s.skirt : d.skirt,
+    frontB: s.frontB && s.frontB in FRONT_BUMPERS ? s.frontB : d.frontB,
+    rearB: s.rearB && s.rearB in REAR_BUMPERS ? s.rearB : d.rearB,
+    hood: s.hood && s.hood in HOODS ? s.hood : d.hood,
+    fenders: s.fenders && s.fenders in FENDERS ? s.fenders : d.fenders,
     rims: s.rims && s.rims in RIMS ? s.rims : d.rims,
     aero: s.aero && s.aero in AERO_FINISHES ? s.aero : d.aero,
     rimColor: hexOk(s.rimColor) ? s.rimColor : d.rimColor,

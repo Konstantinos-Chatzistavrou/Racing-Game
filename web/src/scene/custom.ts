@@ -11,10 +11,11 @@ import { Fn, abs, float, materialColor, mix, positionWorld, smoothstep, texture,
 const rgb = (u: THREE.UniformNode<'color', THREE.Color>) => u as unknown as THREE.Node<'vec3'>;
 
 import { AERO_SPECS } from './parts/aero';
+import { BODY_SPECS } from './parts/body';
 import { RIM_SPECS } from './parts/rims';
 import { WING_SPECS } from './parts/wings';
 import { AERO_FINISHES, HEAD_TINTS, RIM_FINISHES, WINGS, cleanCustom, defaultCustom, type AeroFinish, type Custom, type HeadTint, type RimFinish, type WingKind } from '../custom-data';
-export { AERO_FINISHES, DIFFUSERS, GLOW_COLOURS, HEAD_TINTS, LIVERIES, PART_COLOURS, RIM_FINISHES, RIMS, SKIRTS, SPLITTERS, WINGS, cleanCustom, defaultCustom } from '../custom-data';
+export { AERO_FINISHES, DIFFUSERS, FENDERS, FRONT_BUMPERS, GLOW_COLOURS, HEAD_TINTS, HOODS, LIVERIES, PART_COLOURS, REAR_BUMPERS, RIM_FINISHES, RIMS, SKIRTS, SPLITTERS, WINGS, cleanCustom, defaultCustom } from '../custom-data';
 export type { AeroFinish, Custom, HeadTint, RimFinish, WingKind } from '../custom-data';
 
 // ---- shader nodes installed once on a car's paint / carbon material (setupCarMaterials) -------------------------------
@@ -86,6 +87,10 @@ export class CarCustomizer {
   private rimMeshes: THREE.Mesh[] = [];
   /** the model's own aero panels: replaced (hidden) when a generated splitter/skirt is fitted */
   private stockPanels: Record<string, THREE.Object3D[]> = { splitter: [], skirt: [] };
+  /** generated bumpers / hoods / fender flares, by id */
+  private bodyParts: Record<string, THREE.Object3D> = {};
+  /** the model's own bumpers and hood, hidden when a generated one is fitted */
+  private bodyStock: { front?: THREE.Object3D; rear?: THREE.Object3D; hood?: THREE.Object3D } = {};
   private wheelNodes: THREE.Object3D[] = [];
   private glow: THREE.Mesh;
   /** the pool's real size: the warm-up trick scales optional parts to ~0 and restores 1, which is not the pool's size */
@@ -162,6 +167,48 @@ export class CarCustomizer {
       this.kits[spec.id] = g;
       model.add(g);
     }
+    // body panels: bumpers, hoods and fender flares, sized from the stock panel they replace
+    const boxOf = (name: string) => {
+      const b = new THREE.Box3();
+      const o = model.getObjectByName(name);
+      if (!o) return b;
+      o.updateMatrixWorld(true);
+      const iv = new THREE.Matrix4().copy(model.matrixWorld).invert(), tb = new THREE.Box3();
+      o.traverse((mm) => {
+        const mesh = mm as THREE.Mesh;
+        if (!mesh.isMesh || !mesh.geometry) return;
+        if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+        tb.copy(mesh.geometry.boundingBox!).applyMatrix4(new THREE.Matrix4().multiplyMatrices(iv, mesh.matrixWorld));
+        b.union(tb);
+      });
+      return b;
+    };
+    void boxOf;
+    // a bumper shell needs a bumper-sized box: the stock panel nodes span the whole front/rear clip, so build
+    // synthetic boxes at the nose, the tail and the bonnet instead
+    const W = this.box.max.x - this.box.min.x, Y0 = this.box.min.y, Y1 = this.box.max.y;
+    const pFront = new THREE.Box3(new THREE.Vector3(this.box.min.x * 0.94, Y0 + 0.06, this.box.max.z - 0.6), new THREE.Vector3(this.box.max.x * 0.94, Y0 + 0.46, this.box.max.z - 0.02));
+    const pRear = new THREE.Box3(new THREE.Vector3(this.box.min.x * 0.94, Y0 + 0.08, this.box.min.z + 0.02), new THREE.Vector3(this.box.max.x * 0.94, Y0 + 0.48, this.box.min.z + 0.6));
+    const pHood = new THREE.Box3(new THREE.Vector3(this.box.min.x * 0.55, Y1 - 0.06, this.box.max.z - 1.5), new THREE.Vector3(this.box.max.x * 0.55, Y1 + 0.02, this.box.max.z - 0.5));
+    void W;
+    // a panel is built from the stock panel's box; shrink it a little so a shell sits in the stock opening, and use
+    // the body paint for bumpers/hoods (carbon only for the flares) so they read as panels, not as black slabs
+    const shrink = (b: THREE.Box3, f2: number) => {
+      if (b.isEmpty()) return b.clone();
+      const ctr = b.getCenter(new THREE.Vector3()), size = b.getSize(new THREE.Vector3()).multiplyScalar(f2);
+      return new THREE.Box3(ctr.clone().sub(size.clone().multiplyScalar(0.5)), ctr.clone().add(size.clone().multiplyScalar(0.5)));
+    };
+    for (const spec of BODY_SPECS) {
+      const base = spec.kind === 'front' ? pFront : spec.kind === 'rear' ? pRear : spec.kind === 'hood' ? pHood : new THREE.Box3();
+      const panel = spec.kind === 'fender' ? base : shrink(base, spec.kind === 'hood' ? 0.95 : 0.9);
+      const mat = spec.kind === 'fender' ? this.aeroMat : (this.paint ?? this.aeroMat);
+      const g = spec.build({ box: this.box, panel, mat });
+      g.name = 'body_' + spec.id;
+      g.visible = false;
+      this.bodyParts[spec.id] = g;
+      model.add(g);
+    }
+    this.bodyStock = { front: model.getObjectByName('bumper_front') ?? undefined, rear: model.getObjectByName('bumper_rear') ?? undefined, hood: model.getObjectByName('hood') ?? undefined };
     // rims: a generated face per wheel, parented to the wheel node so it steers and spins with it
     this.rimMat = new THREE.MeshPhysicalMaterial({ name: 'rim_generated', color: 0x9aa0aa, metalness: 1, roughness: 0.2, clearcoat: 0.4 });
     this.wheelNodes = ['wheel_FL', 'wheel_FR', 'wheel_RL', 'wheel_RR']
@@ -256,6 +303,10 @@ export class CarCustomizer {
     for (const m of this.rimMeshes) m.visible = c.rims === 'stock';
     for (const o of this.stockPanels.splitter) o.visible = c.splitter === 'stock';
     for (const o of this.stockPanels.skirt) o.visible = c.skirt === 'stock';
+    for (const [k, g] of Object.entries(this.bodyParts)) g.visible = k === c.frontB || k === c.rearB || k === c.hood || k === c.fenders;
+    if (this.bodyStock.front) this.bodyStock.front.visible = c.frontB === 'stock';
+    if (this.bodyStock.rear) this.bodyStock.rear.visible = c.rearB === 'stock';
+    if (this.bodyStock.hood) this.bodyStock.hood.visible = c.hood === 'stock';
     this.glow.visible = !!c.underglow;
   }
 

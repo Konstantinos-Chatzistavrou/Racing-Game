@@ -157,6 +157,26 @@ export function rimHint(id: string): string {
   return (e.kg < 0 ? '' : '+') + e.kg.toFixed(1) + ' kg unsprung' + (e.kg < 0 ? ' (lighter)' : '');
 }
 
+/** Body panels: bumpers and fenders add a little drag/mass, a carbon hood takes a little away. */
+export function bodyEffect(kind: 'front' | 'rear' | 'hood' | 'fender', id: string) {
+  if (!id || id === 'stock') return { df: 0, drag: 0, kg: 0 };
+  const n = parseInt(String(id).split('-').pop() ?? '1', 10);
+  const i = Number.isFinite(n) ? Math.max(0, Math.min(6, n)) : 1;
+  if (kind === 'front') return { df: 0.004 + i * 0.002, drag: 0.002 + i * 0.001, kg: 0.8 + i * 0.2 };
+  if (kind === 'rear') return { df: 0.006 + i * 0.002, drag: 0.002 + i * 0.001, kg: 0.8 + i * 0.2 };
+  if (kind === 'hood') return { df: 0, drag: -0.001 * i, kg: -0.9 + i * 0.15 };
+  return { df: 0.002 + i * 0.001, drag: 0.003 + i * 0.002, kg: 0.6 + i * 0.25 };
+}
+export function bodyHint(kind: 'front' | 'rear' | 'hood' | 'fender', id: string, name: string): string {
+  if (id === 'stock') return 'Stock panel';
+  const e = bodyEffect(kind, id);
+  const bits: string[] = [];
+  if (Math.abs(e.df) > 0.0005) bits.push((e.df > 0 ? '+' : '') + e.df.toFixed(2) + ' m² downforce');
+  if (Math.abs(e.drag) > 0.0005) bits.push((e.drag > 0 ? '+' : '') + e.drag.toFixed(3) + ' drag');
+  if (Math.abs(e.kg) > 0.02) bits.push((e.kg > 0 ? '+' : '') + e.kg.toFixed(1) + ' kg');
+  return name + ': ' + (bits.join(' · ') || 'replacement panel');
+}
+
 const KEY = 'nr.garage.v1';
 export function loadSelection(cars: CatalogCar[], params: URLSearchParams): Selection {
   const starter = cars.find((c) => c.id === 'vela_gt')?.id ?? cars[0].id;

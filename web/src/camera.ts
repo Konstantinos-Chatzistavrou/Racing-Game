@@ -40,15 +40,20 @@ function vnoise(x: number, seed: number) {
   return h(i) + (h(i + 1) - h(i)) * u;
 }
 
-export type CamMode = 'chase' | 'far' | 'cinematic' | 'hood' | 'bumper';
-/** Every view the rig offers: NFS-style chase, a wider chase, a low cinematic, hood and bumper. */
-const MODES: CamMode[] = ['chase', 'far', 'cinematic', 'hood', 'bumper'];
-const MODE_CFG: Record<CamMode, { dist: number; height: number; kind: 'chase' | 'bumper' }> = {
+export type CamMode = 'chase' | 'far' | 'cinematic' | 'drift' | 'hood' | 'bumper' | 'orbit';
+/** Every view the rig offers, in the order C cycles them: NFS-style chase, a wider chase, a low
+ *  cinematic, a drift cam that hangs the tail out, hood, bumper, and the orbit showcase. */
+const MODES: CamMode[] = ['chase', 'far', 'cinematic', 'drift', 'hood', 'bumper', 'orbit'];
+const MODE_CFG: Record<CamMode, { dist: number; height: number; kind: 'chase' | 'bumper' | 'orbit'; drift?: boolean }> = {
   chase: { dist: DIST, height: HEIGHT, kind: 'chase' },
   far: { dist: DIST * 1.45, height: HEIGHT + 0.35, kind: 'chase' },
   cinematic: { dist: DIST * 1.85, height: HEIGHT * 0.45, kind: 'chase' },
+  // drift: the chase spring, but the heading follows the VELOCITY direction, so a sliding car
+  // stays broadside in frame instead of the camera snapping round to face where it points
+  drift: { dist: DIST * 1.12, height: HEIGHT * 0.78, kind: 'chase', drift: true },
   hood: { dist: 0, height: 0, kind: 'bumper' },
   bumper: { dist: 0, height: 0, kind: 'bumper' },
+  orbit: { dist: 7.6, height: 2.3, kind: 'orbit' },
 };
 export { MODES };
 
@@ -70,6 +75,9 @@ export class CameraRig {
   private punch = 0;                              // deg
   private shake = 0;                              // 0..1 redline shake envelope
   private t = 0;
+  /** orbit showcase: radians per second the camera walks around the car */
+  orbitSpeed = 0.18;
+  private orbitAngle = 0;
 
   constructor(readonly camera: THREE.PerspectiveCamera, private pw: PhysicsWorld, private car: RAPIER.RigidBody, private redline = 7000) {}
 
@@ -106,8 +114,37 @@ export class CameraRig {
       return;
     }
 
+    // orbit: walk around the car at a fixed radius/height and look at it. No spring (it is a
+    // showcase shot, not a driving view); the wall raycast still applies so it does not go inside
+    // a building in the garage.
+    if (cfg.kind === 'orbit') {
+      this.orbitAngle += this.orbitSpeed * dt;
+      const head = this.head.copy(carPos).addScaledVector(UP, 1.0);
+      const want = this.want.copy(carPos).addScaledVector(UP, cfg.height)
+        .add(this.tmp.set(Math.sin(this.orbitAngle) * cfg.dist, 0, Math.cos(this.orbitAngle) * cfg.dist));
+      const hit = this.pw.raycast(head, want, this.car, true, GROUP_VIEW);
+      if (hit) {
+        const dist = head.distanceTo(want);
+        const f = Math.max(0.15, Math.min(1, (hit.toi - 0.4) / dist));
+        want.lerpVectors(head, want, f);
+      }
+      cam.position.copy(want);
+      cam.lookAt(this.tmp.copy(carPos).addScaledVector(UP, LOOK_HEIGHT));
+      this.applyShake(0.4);
+      this.setFov(55, 0, 0, 0, dt);
+      this.first = true;
+      return;
+    }
+
     // heading (lagged): a car on its nose/tail has no ground heading; keep the last
     const flat = this.flat.set(fwd.x, 0, fwd.z);
+    // drift cam: follow where the car is GOING (velocity), not where it points, so a slide reads
+    // as the car rotating in frame. Below walking pace the velocity direction is noise, so fall
+    // back to the car's facing.
+    if (cfg.drift && Math.abs(speed) >= 3) {
+      const lv = this.car.linvel();
+      flat.set(lv.x, 0, lv.z);
+    }
     if (flat.lengthSq() > 0.04) {
       flat.normalize();
       if (this.first) this.heading.copy(flat);

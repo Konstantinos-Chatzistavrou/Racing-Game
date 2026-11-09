@@ -6,7 +6,7 @@
 //       title -> Garage (cars, paint, upgrades only) -> Main Menu, or Continue -> game modes
 import type { Identity } from './identity';
 import { PLATE_MAX, USERNAME_MAX, USERNAME_MIN, usernameError } from './username';
-import { FINISHES, LOOK_PRESETS, MODS, MOD_KEYS, RIM_EFFECT, SWATCHES, WING_EFFECT, applyLookPreset, applyMods, customOf, kitEffect, kitHint, modsOf, paintOf, rimHint, saveSelection, statsOf, wingHint,
+import { FINISHES, LOOK_PRESETS, MODS, MOD_KEYS, RIM_EFFECT, SWATCHES, WING_EFFECT, applyLookPreset, applyMods, bodyEffect, bodyHint, customOf, kitEffect, kitHint, modsOf, paintOf, rimHint, saveSelection, statsOf, wingHint,
   type CatalogCar, type Finish, type Mode, type ModKey, type Selection } from './garage';
 import { formatLap } from './hud';
 import { MAX_MEMBERS, cleanCode, type Party, type PartyMode } from './party';
@@ -17,13 +17,15 @@ import type { Cloud } from './cloud';
 import type { RankedResult } from './ranked';
 import { levelOf } from './progression';
 import type { Loader } from './loading';
-import { AERO_FINISHES, DIFFUSERS, GLOW_COLOURS, HEAD_TINTS, LIVERIES, PART_COLOURS, RIM_FINISHES, RIMS, SKIRTS, SPLITTERS, WINGS, type Custom } from './scene/custom';
+import { AERO_FINISHES, DIFFUSERS, FENDERS, FRONT_BUMPERS, GLOW_COLOURS, HEAD_TINTS, HOODS, LIVERIES, PART_COLOURS, REAR_BUMPERS, RIM_FINISHES, RIMS, SKIRTS, SPLITTERS, WINGS, type Custom } from './scene/custom';
 import { SKINS, helmetSvg, skinOf } from './scene/driver';
 
 /** Garage tabs: name, camera (azimuth, elevation, distance) that shows those parts. */
 const GTABS: { id: string; label: string; cam: string }[] = [
   { id: 'paint', label: 'Paint', cam: '0.8,0.17,6.5' },
+  { id: 'body', label: 'Body', cam: '0.5,0.2,6.8' },
   { id: 'aero', label: 'Aero', cam: '2.45,0.24,6.0' },
+  { id: 'fenders', label: 'Fenders', cam: '1.2,0.12,5.2' },
   { id: 'wheels', label: 'Wheels', cam: '1.25,0.04,4.4' },
   { id: 'lights', label: 'Lights', cam: '0.35,0.1,5.6' },
   { id: 'glass', label: 'Glass', cam: '2.85,0.14,5.2' },
@@ -277,7 +279,7 @@ export class Menu {
       ${row('COUNTERSTEER', chip('as-cs', 'off', 'Off', a.countersteer === 'off') + chip('as-cs', 'weak', 'Weak', a.countersteer === 'weak') + chip('as-cs', 'strong', 'Strong', a.countersteer === 'strong'), 'Steers into a slide for you when the rear steps out (keyboard and controller).')}
       ${row('GEARBOX', chip('as-gb', 'auto', 'Automatic', a.gearbox === 'auto') + chip('as-gb', 'manual', 'Manual', a.gearbox === 'manual'), 'Manual: Q / E, bumpers or paddles.')}
       ${row('DRIVING LINE', chip('as-line', 'off', 'Off', a.line === 'off') + chip('as-line', 'braking', 'Braking zones', a.line === 'braking') + chip('as-line', 'full', 'Full', a.line === 'full'), 'The racing line on the road: blue = keep going, yellow = ease off, red = brake.')}
-      ${row('CAMERA', (['chase', 'far', 'cinematic', 'hood', 'bumper'] as const).map((k) => chip('cam-mode', k, k[0].toUpperCase() + k.slice(1), this.camMode === k)).join(''), 'Chase is the default; cinematic is the low wide drift shot, hood and bumper are first-person. C cycles any time while driving.')}
+      ${row('CAMERA', (['chase', 'far', 'cinematic', 'drift', 'hood', 'bumper', 'orbit'] as const).map((k) => chip('cam-mode', k, k[0].toUpperCase() + k.slice(1), this.camMode === k)).join(''), 'Chase is the default; drift keeps the camera on your travel line so the tail hangs out; cinematic is the low wide shot; hood and bumper are first-person; orbit is the showcase pan. C cycles any time while driving.')}
       <div class="dim note">Assists never change the car: same physics and tyres for everyone; they only help with your inputs. Keys 1 / 2 / 3 / 5 switch ABS / traction / stability / gearbox while driving.</div>`;
     const g = (k: Gfx, label: string) => chip('gfx', k, label, this.gfx === k);
     const more = inSession ? '<div class="dim note">Race rules, graphics and tests can be changed from the main menu.</div>' : `
@@ -390,7 +392,7 @@ export class Menu {
     const now = statsOf(applyMods(this.physics[sel.car], mods));
     const stages = MOD_KEYS.reduce((a, k) => a + mods[k], 0);
     const tabs = GTABS.map((t) => `<button class="gtab ${this.garageTab === t.id ? 'on' : ''}" data-act="gtab" data-v="${t.id}">${t.label}</button>`).join('');
-    const body = ({ paint: () => this.gPaint(), aero: () => this.gAero(), wheels: () => this.gWheels(), lights: () => this.gLights(),
+    const body = ({ paint: () => this.gPaint(), body: () => this.gBody(), aero: () => this.gAero(), fenders: () => this.gFenders(), wheels: () => this.gWheels(), lights: () => this.gLights(),
       glass: () => this.gGlass(), driver: () => this.gDriver(), perf: () => this.gPerf() } as Record<string, () => string>)[this.garageTab]?.() ?? '';
     const rail = GTABS.map((t, i) => `<button class="rail ${this.garageTab === t.id ? 'on' : ''}" data-act="gtab" data-v="${t.id}"><i>0${i + 1}</i><b>${t.label}</b></button>`).join('');
     const cls = now.power > 420 ? 'S' : now.power > 330 ? 'A' : now.power > 250 ? 'B' : 'C';
@@ -438,7 +440,8 @@ export class Menu {
     const fx = (c: ReturnType<typeof customOf>) => {
       const w = WING_EFFECT.find((e) => e.re.test(String(c.wing)));
       const r = RIM_EFFECT.find((e) => e.re.test(String(c.rims)));
-      const parts = [kitEffect('splitter', c.splitter), kitEffect('diffuser', c.diffuser), kitEffect('skirt', c.skirt)];
+      const parts = [kitEffect('splitter', c.splitter), kitEffect('diffuser', c.diffuser), kitEffect('skirt', c.skirt),
+        bodyEffect('front', c.frontB), bodyEffect('rear', c.rearB), bodyEffect('hood', c.hood), bodyEffect('fender', c.fenders)];
       return {
         df: (w ? w.df : 0) + parts.reduce((a, x) => a + x.df, 0),
         drag: (w ? w.drag : 0) + parts.reduce((a, x) => a + x.drag, 0),
@@ -515,8 +518,7 @@ export class Menu {
   }
   private gAero() {
     const c = customOf(this.sel);
-    return `<h3>Rear wing <small class="dim">grip in corners, costs top speed</small></h3><div class="chips">${(Object.keys(WINGS) as (keyof typeof WINGS)[]).map((k) => this.cu('wing', k, WINGS[k], c.wing === k, wingHint(k as string))).join('')}</div>
-      <h3>Front splitter <small class="dim">front-end bite</small></h3><div class="chips">${(Object.keys(SPLITTERS) as string[]).map((k) => this.cu('splitter', k, SPLITTERS[k], c.splitter === k, kitHint('splitter', k))).join('')}</div>
+    return `<h3>Front splitter <small class="dim">front-end bite</small></h3><div class="chips">${(Object.keys(SPLITTERS) as string[]).map((k) => this.cu('splitter', k, SPLITTERS[k], c.splitter === k, kitHint('splitter', k))).join('')}</div>
       <h3>Rear diffuser <small class="dim">rear stability</small></h3><div class="chips">${(Object.keys(DIFFUSERS) as string[]).map((k) => this.cu('diffuser', k, DIFFUSERS[k], c.diffuser === k, kitHint('diffuser', k))).join('')}</div>
       <h3>Side skirts <small class="dim">side stability</small></h3><div class="chips">${(Object.keys(SKIRTS) as string[]).map((k) => this.cu('skirt', k, SKIRTS[k], c.skirt === k, kitHint('skirt', k))).join('')}</div>
       <h3>Splitter, diffuser &amp; wing finish</h3><div class="chips">${(Object.keys(AERO_FINISHES) as (keyof typeof AERO_FINISHES)[]).map((k) => this.cu('aero', k, AERO_FINISHES[k], c.aero === k)).join('')}</div>`;
@@ -545,6 +547,21 @@ export class Menu {
     return `<h3>Driver gear <small class="dim">(your avatar in multiplayer)</small></h3><div class="skins">${cards}</div>
       ${owned.length < SKINS.length ? '<button class="small more-cars" data-act="shop-gear">🛒 More helmets &amp; suits in the Shop</button>' : ''}`;
   }
+  /** Body: the big shapes - rear wing, bumpers, hood (generated panels replace the stock ones). */
+  private gBody() {
+    const c = customOf(this.sel);
+    const sec = (k: 'frontB' | 'rearB' | 'hood', map: Record<string, string>, kind: 'front' | 'rear' | 'hood') =>
+      `<h3>${kind === 'front' ? 'Front bumper' : kind === 'rear' ? 'Rear bumper' : 'Hood'} <small class="dim">replaces the stock panel</small></h3>` +
+      `<div class="chips">${Object.keys(map).map((id) => this.cu(k, id, map[id], (c as unknown as Record<string, string>)[k] === id, bodyHint(kind, id, map[id]))).join('')}</div>`;
+    return `<h3>Rear wing <small class="dim">grip in corners, costs top speed</small></h3><div class="chips">${(Object.keys(WINGS) as (keyof typeof WINGS)[]).map((k) => this.cu('wing', k, WINGS[k], c.wing === k, wingHint(k as string))).join('')}</div>
+      ${sec('frontB', FRONT_BUMPERS, 'front')}${sec('rearB', REAR_BUMPERS, 'rear')}${sec('hood', HOODS, 'hood')}`;
+  }
+
+  private gFenders() {
+    const c = customOf(this.sel);
+    return `<h3>Fender flares <small class="dim">wide body, more drag</small></h3><div class="chips">${Object.keys(FENDERS).map((id) => this.cu('fenders', id, FENDERS[id], c.fenders === id, bodyHint('fender', id, FENDERS[id]))).join('')}</div>`;
+  }
+
   private gPerf() {
     const sel = this.sel, w = this.career, mods = modsOf(sel);
     const rows = MOD_KEYS.map((k) => {
