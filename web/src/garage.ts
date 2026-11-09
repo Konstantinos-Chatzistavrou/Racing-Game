@@ -150,3 +150,40 @@ export const paintOf = (sel: Selection, cars: CatalogCar[]) => sel.paint[sel.car
 export const modsOf = (sel: Selection): Mods => sel.mods[sel.car] ?? noMods();
 /** The selected car's visual parts (created on first use). */
 export const customOf = (sel: Selection): Custom => (sel.custom[sel.car] ??= defaultCustom());
+/** One-click Heat looks: paint, finish and parts together, applied through the same uniforms the tabs use. */
+export interface LookPreset { id: string; label: string; blurb: string; paint: string; finish: Finish; parts: Partial<Custom> }
+export const LOOK_PRESETS: LookPreset[] = [
+  {
+    id: 'neon', label: 'Neon street', blurb: 'Cyan candy with a magenta side stripe and underglow',
+    paint: '#00d5ff', finish: 'candy',
+    parts: { livery: 3, liveryColor: '#ff2d55', wing: 'gt', aero: 'gloss', rimColor: '#15171c', rimFinish: 'gloss',
+      caliper: '#ff2d55', headlights: 'ice', smokedTails: true, underglow: '#ff2d55', tint: 1, exhaust: 'black' },
+  },
+  {
+    id: 'blackout', label: 'Blackout', blurb: 'Matte black, no wing, dark rims, smoked glass',
+    paint: '#0a0b0e', finish: 'matte',
+    parts: { livery: 0, wing: 'none', aero: 'matte', rimColor: '#15171c', rimFinish: 'matte',
+      caliper: '#9aa0aa', headlights: 'white', smokedTails: true, underglow: '', tint: 2, exhaust: 'black' },
+  },
+  {
+    id: 'chrome', label: 'Candy chrome', blurb: 'Deep candy with chrome rims and a violet underglow',
+    paint: '#8e0038', finish: 'candy',
+    parts: { livery: 0, wing: 'ducktail', aero: 'carbon', rimColor: '#f4f4f6', rimFinish: 'chrome',
+      caliper: '#c8a24a', headlights: 'white', smokedTails: false, underglow: '#b14dff', tint: 1, exhaust: 'titanium' },
+  },
+  {
+    id: 'sunset', label: 'Heat sunset', blurb: 'Amber metallic with a gold underglow, two-tone roof',
+    paint: '#ff7a00', finish: 'metallic',
+    parts: { livery: 4, liveryColor: '#15171c', wing: 'gt', aero: 'gloss', rimColor: '#c8a24a', rimFinish: 'satin',
+      caliper: '#c0160f', headlights: 'yellow', smokedTails: true, underglow: '#ffb547', tint: 1, exhaust: 'titanium' },
+  },
+];
+/** Apply a preset to the selected car. Returns false for an unknown id (the menu then just re-renders). */
+export function applyLookPreset(sel: Selection, id: string): boolean {
+  const p = LOOK_PRESETS.find((x) => x.id === id);
+  if (!p) return false;
+  sel.paint[sel.car] = p.paint;
+  sel.finish = p.finish;
+  Object.assign(customOf(sel), p.parts);
+  return true;
+}

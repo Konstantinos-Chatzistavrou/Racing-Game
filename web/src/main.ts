@@ -43,6 +43,7 @@ import { applyMods, customOf, loadSelection, modsOf, paintOf, saveSelection, typ
 import { cleanCustom } from './custom-data';
 import { frameStats, sceneTextureStats } from './stats';
 import { GRADE } from './fx/grade';
+import { HEAT_MAX, Heat } from './heat';
 import { skinOf } from './scene/driver';
 import { AiTraffic } from './ai';
 import { Identity } from './identity';
@@ -313,6 +314,21 @@ async function main() {
   const rig = new CameraRig(camera, pw, car.body, core.info.redline);
   const hud = new Hud();
   hud.cap = capFps > 0 ? Math.round(capFps) : 0;
+  /**
+   * Wanted heat (docs/design/heat-and-cops.md): a visible 0-5 dial with a real decision behind it. Slice 1 raises it
+   * from what the player does (finishing a race, wrecking the car) and cools it over quiet minutes; no cops yet.
+   */
+  const heat = new Heat();
+  const heatEl = document.getElementById('heat')!;
+  const renderHeat = () => {
+    heatEl.innerHTML = Array.from({ length: HEAT_MAX }, (_, i) => `<i class="${i < heat.level ? 'on' : ''}"></i>`).join('') + `<b>${heat.level}/${HEAT_MAX}</b>`;
+    heatEl.classList.toggle('lvl4', heat.level === 4);
+    heatEl.classList.toggle('maxed', heat.maxed);
+  };
+  renderHeat();
+  const bumpHeat = (n: number) => { heat.add(n); renderHeat(); menu.heat = heat.level; };
+  /** test/dev hook: the headless probes set the dial directly */
+  const setHeat = (n: number) => { heat.level = Math.max(0, Math.min(HEAT_MAX, n)); heat.lastGain = Date.now(); renderHeat(); menu.heat = heat.level; return heat.level; };
   const audio = new GameAudio();
   audio.prepare();   // the audio device opens now (behind the loading screen), not on the first key press
   let damage = new DamageVisuals(visual, visualCfg, pw, scene);
@@ -603,7 +619,7 @@ async function main() {
     if (!document.hidden) { frameTimes.length = 0; if (tuning) winStart = performance.now() + 1000; prev = performance.now(); }
   });
   let frameNo = 0;
-  g.__game = { city, nyc, ai, visual, audio, rig, damage, trace, input, renderer, camera, scene, post, THREE, grade: GRADE, stats: () => frameStats(scene, renderer), texStats: () => sceneTextureStats(scene, 0),
+  g.__game = { city, nyc, ai, visual, audio, rig, damage, trace, input, renderer, camera, scene, post, THREE, grade: GRADE, heat, setHeat, stats: () => frameStats(scene, renderer), texStats: () => sceneTextureStats(scene, 0),
     get car() { return car; }, get core() { return core; }, get state() { return state; }, ticksNow: () => ticks, routeSamples: route.samples, menu: () => menu, sel,
     get party() { return party; }, get remote() { return remote; }, streetProps, obstacles, standings: () => standings(), get lap() { return lap; },
     bench: (soak = false) => runBench(soak),
@@ -1176,6 +1192,7 @@ async function main() {
   }
 
   function finishRace() {
+    bumpHeat(1);   // a finished race is a player action: +1 heat (docs/design/heat-and-cops.md)
     setState('results');
     audio.muted = true;
     const total = lapTimes.reduce((a, b) => a + b, 0);
@@ -1433,6 +1450,8 @@ async function main() {
         car.body.setLinvel({ x: lv.x * (1 - drag), y: lv.y, z: lv.z * (1 - drag) }, true);
       }
       audio.impact(Math.max(12, impulse * 0.18), kind === 'shop' || kind === 'wall', kind);
+      // Wrecking the car is a player action too: +1 heat, but only for real hits and at most one per 20 s.
+      if (impulse > 5000 && Date.now() - heat.lastGain > 20_000) bumpHeat(1);
     });
     const tCity = performance.now();
     city.update(camera);
@@ -1551,6 +1570,7 @@ async function main() {
       if (okStreak >= 2 || (now - tuneStart > TUNE_TIMEOUT && !warm)) finishTuning();
       else { winStart = now + 1000; setExtra(); }   // let the resize hitch pass before measuring again
     }
+    if (heat.tick(Date.now())) renderHeat();   // quiet minutes cool one level; the dial is the state
     prof.total += performance.now() - p0;
     prof.n++;
     if (bench.active) bench.cb.push(performance.now() - cb0);

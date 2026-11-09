@@ -518,3 +518,18 @@ body.touch #minimap .gps-turn { bottom: auto; top: calc(100% + 6px); left: 0; tr
 /* usernames keep their capitals (the party-code inputs are upper-case monospace) */
 #menu #uname, #menu #fadd { text-transform: none; font-family: inherit; letter-spacing: .01em; }
 #menu #fadd { font-size: 14px; }
+/* Wanted heat dial (docs/design/heat-and-cops.md): always visible, five pips and the number, so the player can
+   decide to bank or push before the cops exist. Colour carries the risk: calm -> hot -> maxed pulse. */
+#heat { display: flex; align-items: center; gap: 4px; font: 700 11px/1 "Inter", system-ui, sans-serif;
+  letter-spacing: .12em; color: var(--dim); text-shadow: 0 1px 6px #000; }
+#heat i { width: 10px; height: 10px; border-radius: 3px; background: #ffffff14; border: 1px solid #ffffff26; }
+#heat i.on { background: linear-gradient(135deg, var(--warn), var(--accent)); border-color: transparent; box-shadow: 0 0 8px #ff2d5580; }
+#heat.lvl4 i.on { background: linear-gradient(135deg, #ff7a1a, #ff2d55); }
+#heat.maxed i.on { background: linear-gradient(135deg, #ff2d55, #b3001b); animation: heatpulse 1s ease-in-out infinite; }
+#heat b { font-weight: 800; color: var(--fg); letter-spacing: .02em; margin-left: 2px; }
+body.touch #heat { position: absolute; top: calc(20px + env(safe-area-inset-top)); right: calc(12px + env(safe-area-inset-right)); }
+@keyframes heatpulse { 50% { box-shadow: 0 0 14px #ff2d55cc; } }
+#menu .heat-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
+  background: #ffffff0e; border: 1px solid var(--line2); font-size: 10px; font-weight: 800; letter-spacing: .18em; color: var(--dim); }
+#menu .heat-chip.hot { color: var(--warn); border-color: #ffb54760; }
+#menu .heat-chip.maxed { color: #fff; background: linear-gradient(135deg, #ff2d55, #b3001b); border-color: transparent; }

@@ -6,7 +6,7 @@
 //       title -> Garage (cars, paint, upgrades only) -> Main Menu, or Continue -> game modes
 import type { Identity } from './identity';
 import { PLATE_MAX, USERNAME_MAX, USERNAME_MIN, usernameError } from './username';
-import { FINISHES, MODS, MOD_KEYS, SWATCHES, applyMods, customOf, modsOf, paintOf, saveSelection, statsOf,
+import { FINISHES, LOOK_PRESETS, MODS, MOD_KEYS, SWATCHES, applyLookPreset, applyMods, customOf, modsOf, paintOf, saveSelection, statsOf,
   type CatalogCar, type Finish, type Mode, type ModKey, type Selection } from './garage';
 import { formatLap } from './hud';
 import { MAX_MEMBERS, cleanCode, type Party, type PartyMode } from './party';
@@ -118,6 +118,8 @@ export class Menu {
   private unameNote = '';
   private unameBusy = false;
   private unameSeq = 0;
+  /** wanted heat 0-5, shown on the title so the dial is visible outside a session (docs/design/heat-and-cops.md) */
+  heat = 0;
   private friendDraft = '';
   private friendNote = '';
   private profileFrom: Screen = 'title';
@@ -230,6 +232,7 @@ export class Menu {
     return `${this.tuning ? '<div class="cover"><div class="card center"><div class="spin"></div><p>Calibrating WebGPU pipeline…</p><span class="dim">Optimizing resolution &amp; reflections for this display.</span></div></div>' : ''}
       <div class="title">
         <div class="kicker">OPEN-WORLD STREET RACING // PACEJKA MF 6.1</div>
+        <div class="heat-chip ${this.heat >= 5 ? 'maxed' : this.heat === 4 ? 'hot' : ''}">HEAT ${this.heat}/5</div>
         <div class="logo">OPEN<span>GRID</span></div>
         ${me}
         <div class="sub">Active vehicle: <b>${esc(curCar.name)}</b></div>
@@ -386,7 +389,7 @@ export class Menu {
       </div>
       <div class="g-left panel"><h3>Your cars (${this.cars.filter((c) => w.owns(c.id)).length}/${this.cars.length})</h3>${cards}
         ${this.cars.some((c) => !w.owns(c.id)) ? '<button class="small more-cars" data-act="shop-open">🛒 More cars in the Shop</button>' : ''}</div>
-      <div class="g-right panel">${this.careerBar()}<div class="gtabs">${tabs}</div>${body}</div>
+      <div class="g-right panel">${this.careerBar()}<div class="gtabs">${tabs}</div>${this.lookNow()}${body}</div>
       <div class="g-bottom">
         <button data-act="home" class="back-btn">← Main Menu</button>
         <div class="g-summary"><b>${esc(this.car().name)}</b><span class="dim">${stages ? `${stages} upgrade stage${stages > 1 ? 's' : ''} fitted` : 'Stock'} · ${FINISHES[sel.finish].label} paint · ${Math.round(now.power)} kW · ${Math.round(now.mass)} kg</span></div>
@@ -403,11 +406,21 @@ export class Menu {
     return `<div class="sws">${list.map((c) => c ? `<button class="sw ${c === cur ? 'on' : ''}" style="background:${c}" data-act="cu" data-k="${k}" data-v="${c}" aria-label="${c}"></button>`
       : `<button class="sw off ${cur === '' ? 'on' : ''}" data-act="cu" data-k="${k}" data-v="" aria-label="Off">✕</button>`).join('')}</div>`;
   }
+  /** What is on the car right now: the paint swatch and the finish name, right under the tabs (all garage tabs). */
+  private lookNow() {
+    const paint = paintOf(this.sel, this.cars);
+    return `<div class="chips" style="align-items:center;gap:7px;margin:6px 0 0">
+      <i aria-hidden="true" style="width:13px;height:13px;border-radius:50%;background:${paint};border:1px solid #ffffff55;box-shadow:0 0 6px ${paint}88"></i>
+      <b style="font-size:11px;letter-spacing:.10em;text-transform:uppercase">${FINISHES[this.sel.finish].label}</b>
+      <span class="dim" style="font-size:11px">${paint.toUpperCase()}</span></div>`;
+  }
   private gPaint() {
     const sel = this.sel, c = customOf(sel), paint = paintOf(sel, this.cars).toLowerCase();
     const sw = SWATCHES.map((x) => `<button class="sw ${x === paint ? 'on' : ''}" style="background:${x}" data-act="paint" data-v="${x}" aria-label="${x}"></button>`).join('');
     const fin = (Object.keys(FINISHES) as Finish[]).map((f) => `<button class="chip ${sel.finish === f ? 'on' : ''}" data-act="finish" data-v="${f}">${FINISHES[f].label}</button>`).join('');
-    return `<h3>Body colour</h3>
+    const looks = LOOK_PRESETS.map((p) => `<button class="chip" data-act="look" data-v="${p.id}" title="${esc(p.blurb)}">${esc(p.label)}</button>`).join('');
+    return `<h3>Heat presets <small>one click, everything below changes</small></h3><div class="chips">${looks}</div>
+      <h3>Body colour</h3>
       <div class="sws">${sw}<label class="sw custom" title="Custom colour"><input id="custom" type="color" value="${paint}" /></label></div>
       <h3>Finish</h3><div class="chips">${fin}</div>
       <h3>Livery</h3><div class="chips">${LIVERIES.map((l, i) => this.cu('livery', i, l, c.livery === i)).join('')}</div>
@@ -703,6 +716,11 @@ export class Menu {
       case 'car': sel.car = v; this.save(); this.render(); this.hooks.preview(); break;
       case 'paint': sel.paint[sel.car] = v; this.save(); this.render(); this.hooks.preview(); break;
       case 'finish': sel.finish = v as Finish; this.save(); this.render(); this.hooks.preview(); break;
+      case 'look': {
+        // one chip sets paint + finish + every part; preview() re-applies the paint and the look uniforms together
+        if (applyLookPreset(sel, v)) { this.save(); this.render(); this.hooks.preview(); this.hooks.look(); }
+        break;
+      }
       case 'mod': { const m = { ...modsOf(sel) }; m[b.dataset.k as ModKey] = Number(v); sel.mods[sel.car] = m; this.save(); this.render(); break; }
       case 'laps': sel.laps = Number(v); this.save(); this.render(); break;
       case 'start-race': sel.mode = 'race'; this.setCareer('sp'); this.save(); this.hooks.play('race'); break;
