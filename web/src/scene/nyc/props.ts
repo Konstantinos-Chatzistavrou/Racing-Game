@@ -66,7 +66,7 @@ class Kit {
     g.applyMatrix4(m);
     return this.add(g, col, glow);
   }
-  ico(r: number, x: number, y: number, z: number, sx: number, sy: number, sz: number, col: RGB, glow = 0, detail = 1) {
+  ico(r: number, x: number, y: number, z: number, sx: number, sy: number, sz: number, col: RGB, glow = 0, detail = 0) {
     const g = new THREE.IcosahedronGeometry(r, detail);
     const pos = g.attributes.position as THREE.BufferAttribute;
     for (let i = 0; i < pos.count; i++) {
@@ -168,12 +168,12 @@ function treeGeo(sp: TreeSpecies) {
     for (const [i, [cx, cz]] of ring(5, 1.0, 0.3).entries()) {
       k.limb(0.12, 0.08, 0.04, 2.5, 0.02, cx * 1.9, 4.6, cz * 1.9, i % 2 ? p1 : p2, 0, 5);
       k.limb(0.08, 0.045, cx * 1.9, 4.6, cz * 1.9, cx * 3.0, 6.0, cz * 3.0, p1, 0, 4);
-      k.ico(1.35, cx * 2.9, 6.1, cz * 2.9, 1.1, 0.85, 1.1, leaf, 0.12, 1);
+      k.ico(1.35, cx * 2.9, 6.1, cz * 2.9, 1.1, 0.85, 1.1, leaf, 0.12, 0);
     }
-    for (const [cx, cz] of ring(5, 1.8, 0.93)) k.ico(1.28, cx, 7.3, cz, 1.05, 0.9, 1.05, [0.022, 0.050, 0.020], 0.03, 1);
-    k.ico(1.5, 0, 6.3, 0, 1.0, 0.8, 1.0, [0.016, 0.038, 0.015], 0, 1);
-    k.ico(1.2, 0.3, 8.2, -0.2, 1.0, 0.85, 1.0, [0.024, 0.054, 0.022], 0, 1);
-    k.ico(1.05, -0.6, 7.9, 0.6, 1.0, 0.85, 1.0, [0.022, 0.050, 0.020], 0, 1);
+    for (const [cx, cz] of ring(5, 1.8, 0.93)) k.ico(1.28, cx, 7.3, cz, 1.05, 0.9, 1.05, [0.022, 0.050, 0.020], 0.03, 0);
+    k.ico(1.5, 0, 6.3, 0, 1.0, 0.8, 1.0, [0.016, 0.038, 0.015], 0, 0);
+    k.ico(1.2, 0.3, 8.2, -0.2, 1.0, 0.85, 1.0, [0.024, 0.054, 0.022], 0, 0);
+    k.ico(1.05, -0.6, 7.9, 0.6, 1.0, 0.85, 1.0, [0.022, 0.050, 0.020], 0, 0);
   } else if (sp === 'locust') {
     k.cyl(0.2, 0.15, 1.0, 0, 0, 0, bark, 0, 6);
     k.limb(0.15, 0.12, 0, 0.95, 0, 0, 2.3, 0, bark, 0, 6);
@@ -185,40 +185,40 @@ function treeGeo(sp: TreeSpecies) {
       void i;
     }
     // airy: small sprays with gaps, the branches stay visible
-    for (const [i, [cx, cz]] of ring(7, 2.7, 0.2).entries()) k.ico(0.72, cx, 6.3 + (i % 2) * 0.6, cz, 1.25, 0.6, 1.25, leaf, 0.1, 1);
-    for (const [cx, cz] of ring(5, 1.5, 0.7)) k.ico(0.7, cx, 7.3, cz, 1.2, 0.6, 1.2, [0.038, 0.058, 0.017], 0.02, 1);
-    k.ico(0.68, 0, 7.9, 0, 1.2, 0.6, 1.2, [0.038, 0.058, 0.017], 0, 1);
+    for (const [i, [cx, cz]] of ring(7, 2.7, 0.2).entries()) k.ico(0.72, cx, 6.3 + (i % 2) * 0.6, cz, 1.25, 0.6, 1.25, leaf, 0.1, 0);
+    for (const [cx, cz] of ring(5, 1.5, 0.7)) k.ico(0.7, cx, 7.3, cz, 1.2, 0.6, 1.2, [0.038, 0.058, 0.017], 0.02, 0);
+    k.ico(0.68, 0, 7.9, 0, 1.2, 0.6, 1.2, [0.038, 0.058, 0.017], 0, 0);
   } else if (sp === 'pear') {
     k.cyl(0.18, 0.15, 1.6, 0, 0, 0, bark, 0, 6);
     for (const [cx, cz] of ring(4, 0.9, 0.5)) k.limb(0.09, 0.05, 0, 1.5, 0, cx, 4.6, cz, barkMid, 0, 4);
     const leaf: RGB = [0.024, 0.052, 0.024];
-    k.ico(1.45, 0, 3.6, 0, 1.25, 1.0, 1.25, [0.020, 0.045, 0.021], 0.12, 1);
-    for (const [cx, cz] of ring(4, 1.1, 0.0)) k.ico(1.25, cx, 4.8, cz, 1.0, 1.05, 1.0, leaf, 0.05, 1);
-    for (const [cx, cz] of ring(3, 0.8, 0.6)) k.ico(1.15, cx, 6.2, cz, 1.0, 1.05, 1.0, leaf, 0, 1);
-    k.ico(1.0, 0, 7.3, 0, 1.0, 1.1, 1.0, [0.026, 0.056, 0.026], 0, 1);
-    k.ico(0.7, 0.1, 8.2, 0, 1.0, 1.1, 1.0, [0.028, 0.060, 0.028], 0, 1);
+    k.ico(1.45, 0, 3.6, 0, 1.25, 1.0, 1.25, [0.020, 0.045, 0.021], 0.12, 0);
+    for (const [cx, cz] of ring(4, 1.1, 0.0)) k.ico(1.25, cx, 4.8, cz, 1.0, 1.05, 1.0, leaf, 0.05, 0);
+    for (const [cx, cz] of ring(3, 0.8, 0.6)) k.ico(1.15, cx, 6.2, cz, 1.0, 1.05, 1.0, leaf, 0, 0);
+    k.ico(1.0, 0, 7.3, 0, 1.0, 1.1, 1.0, [0.026, 0.056, 0.026], 0, 0);
+    k.ico(0.7, 0.1, 8.2, 0, 1.0, 1.1, 1.0, [0.028, 0.060, 0.028], 0, 0);
   } else if (sp === 'oak') {
     k.cyl(0.21, 0.17, 1.0, 0, 0, 0, bark, 0, 6);
     k.limb(0.17, 0.05, 0, 0.95, 0, 0.05, 9.4, 0, barkMid, 0, 6);   // central leader
     const leaf: RGB = [0.017, 0.038, 0.016];
     for (const [cx, cz] of ring(4, 1.0, 0.2)) k.limb(0.075, 0.035, 0, 3.0, 0, cx * 2.6, 2.6, cz * 2.6, barkMid, 0, 4);   // drooping
     for (const [cx, cz] of ring(4, 1.0, 0.98)) k.limb(0.06, 0.03, 0, 5.0, 0, cx * 2.1, 5.6, cz * 2.1, barkMid, 0, 4);
-    for (const [cx, cz] of ring(4, 2.3, 0.2)) k.ico(1.1, cx, 3.2, cz, 1.2, 0.72, 1.2, leaf, 0.12, 1);
-    for (const [cx, cz] of ring(4, 1.75, 0.98)) k.ico(1.05, cx, 5.2, cz, 1.15, 0.78, 1.15, leaf, 0.03, 1);
-    for (const [cx, cz] of ring(3, 1.05, 0.4)) k.ico(0.95, cx, 7.0, cz, 1.1, 0.85, 1.1, [0.019, 0.042, 0.018], 0, 1);
-    k.ico(0.8, 0, 8.6, 0, 1.0, 0.95, 1.0, [0.020, 0.044, 0.019], 0, 1);
-    k.ico(0.5, 0, 9.5, 0, 1.0, 1.0, 1.0, [0.021, 0.046, 0.020], 0, 1);
+    for (const [cx, cz] of ring(4, 2.3, 0.2)) k.ico(1.1, cx, 3.2, cz, 1.2, 0.72, 1.2, leaf, 0.12, 0);
+    for (const [cx, cz] of ring(4, 1.75, 0.98)) k.ico(1.05, cx, 5.2, cz, 1.15, 0.78, 1.15, leaf, 0.03, 0);
+    for (const [cx, cz] of ring(3, 1.05, 0.4)) k.ico(0.95, cx, 7.0, cz, 1.1, 0.85, 1.1, [0.019, 0.042, 0.018], 0, 0);
+    k.ico(0.8, 0, 8.6, 0, 1.0, 0.95, 1.0, [0.020, 0.044, 0.019], 0, 0);
+    k.ico(0.5, 0, 9.5, 0, 1.0, 1.0, 1.0, [0.021, 0.046, 0.020], 0, 0);
   } else {
     // littleleaf linden
     k.cyl(0.2, 0.16, 1.0, 0, 0, 0, bark, 0, 6);
     k.limb(0.16, 0.12, 0, 0.95, 0, 0, 2.2, 0, bark, 0, 6);
     for (const [cx, cz] of ring(4, 1.0, 0.3)) k.limb(0.08, 0.04, 0, 2.1, 0, cx * 1.3, 5.2, cz * 1.3, barkMid, 0, 4);
     const leaf: RGB = [0.026, 0.054, 0.022];
-    k.ico(1.4, 0, 5.0, 0, 1.0, 1.0, 1.0, [0.020, 0.044, 0.018], 0, 1);
-    for (const [cx, cz] of ring(5, 2.0, 0.1)) k.ico(1.15, cx, 3.9, cz, 1.05, 0.85, 1.05, leaf, 0.12, 1);
-    for (const [cx, cz] of ring(4, 1.5, 0.75)) k.ico(1.05, cx, 5.7, cz, 1.0, 0.9, 1.0, leaf, 0.03, 1);
-    for (const [cx, cz] of ring(3, 0.9, 0.2)) k.ico(0.9, cx, 7.3, cz, 1.0, 0.95, 1.0, [0.028, 0.058, 0.024], 0, 1);
-    k.ico(0.75, 0, 8.5, 0, 1.0, 1.0, 1.0, [0.030, 0.060, 0.025], 0, 1);
+    k.ico(1.4, 0, 5.0, 0, 1.0, 1.0, 1.0, [0.020, 0.044, 0.018], 0, 0);
+    for (const [cx, cz] of ring(5, 2.0, 0.1)) k.ico(1.15, cx, 3.9, cz, 1.05, 0.85, 1.05, leaf, 0.12, 0);
+    for (const [cx, cz] of ring(4, 1.5, 0.75)) k.ico(1.05, cx, 5.7, cz, 1.0, 0.9, 1.0, leaf, 0.03, 0);
+    for (const [cx, cz] of ring(3, 0.9, 0.2)) k.ico(0.9, cx, 7.3, cz, 1.0, 0.95, 1.0, [0.028, 0.058, 0.024], 0, 0);
+    k.ico(0.75, 0, 8.5, 0, 1.0, 1.0, 1.0, [0.030, 0.060, 0.025], 0, 0);
   }
   return k.build();
 }

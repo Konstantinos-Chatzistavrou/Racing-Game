@@ -100,3 +100,17 @@ Texture bandwidth is not this frame's problem: every sampled texture has mips an
 that size the limit is fill rate on the iGPU (~19 fps) plus the triangle count. The remaining KTX2 gap is
 the v4 car models (`kestrel_gt`, `harrier_gt`), which still embed 3 PNGs each; v3 `vela_gt` and the city
 props are KTX2. Converting them needs KTX-Software in `tools/ktx/` (see `build_car3.sh`) and a visual check.
+## Street trees: the far crowns were half the frame's triangles (2026-11-09)
+
+Measured with a probe that hides objects and re-measures uncapped (`?menu=0&cap=0&quality=ultra`, 1280x657):
+
+| | triangles | fps |
+|---|---|---|
+| before (ico crowns at detail 1) | 1.885 M | 19.5 |
+| all tree meshes hidden | 0.365 M | 26.2 |
+
+The five instanced species crowns (1,239 trees x ~1.2 k triangles) were 1.5 M triangles. Beyond the photoreal
+range (80 m on max/ultra, `NEAR_TREES`) a crown is a screen-space blob, so its 80-face ico blobs are now
+20-face: **1.885 M -> 0.956 M triangles, 19.5 -> 25.0 fps** at the same camera, draw calls unchanged (~260).
+Inside 80 m `trees.ts` still draws the scanned-leaf photoreal trees, untouched. Props are the next ~2 fps
+(hiding all of `nyc_props` reaches 28.5).
