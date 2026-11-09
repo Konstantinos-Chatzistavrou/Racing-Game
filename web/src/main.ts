@@ -83,7 +83,8 @@ async function main() {
   // then stretched bilinearly (soft) and whose change reconfigured the whole canvas.
   // Graphics: 'auto' tunes resolution + preset behind a cover in the title menu and steps down preset/scale
   // if high-speed driving drops FPS; high/medium/low are fixed. ?scale / ?quality (test tools) pin on top of that.
-  const isTouch = wantsTouch();
+  // ?touch=1 / ?touch=0 forces the phone path (the headless harness reports a fine pointer, the real phone a coarse one)
+  const isTouch = params.has('touch') ? params.get('touch') !== '0' : wantsTouch();
   // Phones: the canvas follows the panel (up to 2x CSS px) and `scale` picks the pixels actually rendered, sharpened up to
   // the panel in post.ts. A 1x canvas (915 x 412 on a 2.6x phone) was stretched by the browser: every texture looked unloaded.
   const baseRatio = Math.min(devicePixelRatio, isTouch ? 2 : 1);
@@ -242,9 +243,9 @@ async function main() {
   say('Loading car…', 80);
   // Frame cap: uncapped (native display refresh) by default; ?cap=N pins a specific frame rate.
   const hz = await refreshP;
-  // Uncapped by default: the cap only ever *delays* a ready frame to the next slot, so removing it gives the frame the
-  // GPU actually produced (lower latency, higher fps when there is headroom) and never a slower one. ?cap=30 pins 30.
-  const capFps = num('cap', 0);
+  // Desktop uncapped (the cap only delays a ready frame); phones capped at 30 - uncapped there just burns the power
+  // budget, heats the SoC and throttles down to the 20s, which reads as "laggy". ?cap=0 uncaps, ?cap=45 changes it.
+  const capFps = num('cap', isTouch ? 30 : 0);
   const capInterval = capFps > 0 ? 1000 / capFps : 0;
   const loadedCar = await carLoadP;
   let visualCfg = loadedCar.cfg;
@@ -255,9 +256,11 @@ async function main() {
   visual.setPaint(paintOf(sel, catalog), sel.finish);
   // Live car reflection probe (src/fx/carProbe.ts): renders one 128 px cube face every Nth drawn frame so streetlamps,
   // neon signs, and skyscrapers glide across clearcoat paint & glass in real time (?probe=0 disables).
+  // Off on phones: one cube face is a whole extra scene render (the full draw list), so even one every 30 frames landed
+  // as a visible hitch about once a second while driving. ?probe=N turns it on for an experiment.
   const probeEvery = num('probe', isTouch ? 0 : 4);
   const probeIntensity = num('probei', 1.25);
-  const probe = webgpu && probeEvery > 0 ? new CarProbe(renderer, scene, pmrem, num('probesize', 128), probeEvery) : null;
+  const probe = webgpu && probeEvery > 0 ? new CarProbe(renderer, scene, pmrem, num('probesize', isTouch ? 48 : 128), probeEvery) : null;
   probe?.attach(visual.model, probeIntensity);
   let remote: RemoteCars | null = null;   // other players' cars, while a party session runs
   let party: Party | null = null;         // the multiplayer party we are in (lobby or driving)
