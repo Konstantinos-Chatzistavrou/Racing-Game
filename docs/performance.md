@@ -278,3 +278,22 @@ The target is now its own number, `?target=`, default 30. Measured on this lapto
 
 So uncapped buys ~2-3 fps and lower latency at one step less resolution, because the tuner still guarantees 30 as a
 floor. `?cap=30` pins the old behaviour; `?target=45` makes the tuner hold 45 and will drop quality for it.
+
+## What a remote player costs (2026-11-10)
+
+Remote cars already use the traffic LOD model (31 draws / 29k tris) instead of the hero car (109 draws / 127k tris),
+so a party does not fall off a cliff. Measured on this laptop at 1280x657, high, scale 1, cap off, five LOD cars in
+front of the camera:
+
+| remote cars | draws | tris | fps | CPU |
+|---|---|---|---|---|
+| 0 | 206 | 1.01 M | 29.3 | 16.7 ms |
+| 5 (a full 6-player party) | 356 | 1.15 M | 27.2 | 21.1 ms |
+
+So one visible remote player is **~30 draw calls, ~29 k tris, ~0.9 ms of CPU** - and a full party is +73 % draw calls
+and -2 fps on this machine (more on a phone). Cloning the hero model instead would have been 109 draws each: the
+measured worst case was 837 draws and 15.4 fps, which is why net.ts swaps in the traffic model.
+
+The 6-player cap is therefore right for the frame budget (and for the P2P host topology), not arbitrary. If it is
+ever raised: cull remotes beyond ~120 m first (free, most of the cost in a spread-out race), merge the traffic
+model's 31 draws down to a handful, then consider 8.
