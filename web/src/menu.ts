@@ -49,6 +49,8 @@ export interface MenuHooks {
   quit(to: 'title' | 'modes'): void;
   /** title buttons: benchmark (about a minute) / soak test (several minutes) */
   bench(soak: boolean): void;
+  /** spend reputation to clear the wanted level (the bank/pay choice, docs/design/heat-and-cops.md) */
+  layLow?(): void;
   /** the shown screen changed (title <-> garage move the camera) */
   screen(s: Screen): void;
   /** garage camera preset */
@@ -120,6 +122,8 @@ export class Menu {
   private unameSeq = 0;
   /** wanted heat 0-5, shown on the title so the dial is visible outside a session (docs/design/heat-and-cops.md) */
   heat = 0;
+  /** XP the Lay low button costs, shown on it (-1 hides the button: the online career has no spend path yet) */
+  layLowCost = -1;
   private friendDraft = '';
   private friendNote = '';
   private profileFrom: Screen = 'title';
@@ -244,6 +248,7 @@ export class Menu {
           <button class="huge" data-act="garage-open" ${dis}>⚙ Garage</button>
           <button class="huge" data-act="shop-open" ${dis}>🛒 Shop</button>
           <button class="huge" data-act="settings-open" ${dis}>☰ Settings</button>
+          ${this.heat > 0 && this.layLowCost >= 0 ? `<button class="huge lay" data-act="laylow" ${dis} ${this.sp.xp < this.layLowCost ? 'disabled title="Not enough reputation"' : ''}>🕶 Lay low · ${this.layLowCost} XP</button>` : ''}
         </div>
         <div class="dim note">${esc(this.gfxNote || 'WebGPU Clustered Forward+ · 240 Hz Physics')} · Assists: ${this.assists.preset[0].toUpperCase() + this.assists.preset.slice(1)}</div>
         <a class="source-link dim" href="https://github.com/Konstantinos-Chatzistavrou/Racing-Game" target="_blank" rel="noopener">Source code · code AGPL-3.0 · assets CC BY-NC 4.0</a>
@@ -665,6 +670,7 @@ export class Menu {
     if (act.startsWith('c-') && this.ctl?.click(act, v)) return;
     switch (act) {
       case 'play': this.sp.last = this.mp.last = null; this.show('modes'); break;
+      case 'laylow': this.hooks.layLow?.(); break;
       case 'garage-open': this.show('garage'); this.hooks.preview(); break;
       case 'home': this.show('title'); break;
       case 'profile-open': this.profileFrom = this.screen === 'profile' ? this.profileFrom : this.screen; this.unameDraft = null; this.unameNote = ''; this.friendNote = ''; this.show('profile'); break;

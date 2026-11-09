@@ -41,3 +41,11 @@ Verbatim requirements from the user, kept here so every slice is judged against 
   bust in 2.8 s with the player stopped (heat 4 -> 0); line-of-sight escape after 3.5 s unseen; a seen cop never
   escapes; it also gives up after 35 s or when the gap holds 140 m for 4 s. HUD shows 🚨 POLICE - gap m, or the
   outcome. Not yet: a light bar / siren, the impound fine, and the bank/pay/push choice (slice 3).
+
+- **Slice 2 gaps closed (2026-11-09).** The cop has a **light bar** (two flashing roof blocks) and a **siren**
+  (procedural wail in audio.ts, gain follows proximity, silent when there is no chase). **Busting costs reputation**:
+  -150 XP impound fee + heat reset, car kept. **Lay low** is on the title when there is heat: 300 XP reputation buys
+  the level back (disabled without the reputation); the online career has no spend path yet, so the button hides there.
+  **High heat pays**: finishing at 4 stars x1.5, 5 stars x1.8 on the single-player purse, shown on the results line.
+  Still open: exclusive 4-5 heat events (a push button needs an event table), and the online fine/lay-low endpoints
+  (credits are server-authoritative; the worker needs /v1/fine and /v1/laylow before the client can charge them).

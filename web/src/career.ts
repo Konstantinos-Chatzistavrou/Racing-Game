@@ -86,6 +86,14 @@ export class SpCareer implements Career {
   fit(sel: Selection) { fitSel(this, sel); }
 
   /** Add XP; returns what it did (level-ups, newly unlocked items) and remembers it for the menus. */
+  /** Spend reputation: an impound fine, or paying to lay low (docs/design/heat-and-cops.md). */
+  penalty(xp: number): number {
+    this.data.xp = Math.max(0, this.data.xp - Math.max(0, Math.round(xp)));
+    try { localStorage.setItem(SP_KEY, JSON.stringify(this.data)); } catch { /* blocked */ }
+    (this as { onChange?: () => void }).onChange?.();
+    return this.data.xp;
+  }
+
   earn(xp: number, reason: string, parts?: Earned['parts']): Earned {
     const before = this.level;
     this.data.xp += Math.max(0, Math.round(xp));

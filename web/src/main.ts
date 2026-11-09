@@ -339,7 +339,13 @@ async function main() {
   let copMsgUntil = 0;
   const copNote = (t: string, ms = 3500) => { copMsg = t; copMsgUntil = performance.now() + ms; };
   const cops = new Cops(new Lane(route.samples), {
-    bust: () => { heat.clear(); renderHeat(); menu.heat = 0; copNote('BUSTED · heat reset', 5000); },
+    bust: () => {
+      // Busting is a setback, not a wipe: impound fee in reputation, heat reset, car kept (docs/design/heat-and-cops.md).
+      const fine = 150;
+      if (sp.kind === 'sp') sp.penalty(fine);
+      heat.clear(); renderHeat(); menu.heat = 0;
+      copNote(`BUSTED · -${fine} XP · heat reset`, 5000);
+    },
     escaped: () => { copNote('LOST THEM', 4000); },
   });
   // unmarked car: the traffic model, loaded in the background; the pursuit logic runs with or without it
@@ -347,10 +353,20 @@ async function main() {
     const root = g.scene;
     root.visible = false;
     root.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) m.frustumCulled = false; });
+    // light bar: two blocks on the roof, flashed from the loop while the pursuit is live
+    const bar = new THREE.Group();
+    const blk = (c: number) => new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.09, 0.2), new THREE.MeshBasicMaterial({ color: c }));
+    const rl = blk(0x2a0008), bl = blk(0x001030);
+    rl.position.x = 0.18; bl.position.x = -0.18;
+    bar.add(rl, bl); bar.position.set(0, 1.38, -0.2);
+    root.add(bar);
+    copsLights = { r: rl.material as THREE.MeshBasicMaterial, b: bl.material as THREE.MeshBasicMaterial };
     scene.add(root);
     cops.root = root;
   }).catch(() => { /* no visual: the chase still works */ });
   let playerS = 0, copSpawned = false;
+  /** the cop's roof light bar, once its model loads */
+  let copsLights: { r: THREE.MeshBasicMaterial; b: THREE.MeshBasicMaterial } | null = null;
   /** test/dev hook: the headless probes set the dial directly */
   const setHeat = (n: number) => { heat.level = Math.max(0, Math.min(HEAT_MAX, n)); heat.lastGain = Date.now(); renderHeat(); menu.heat = heat.level; return heat.level; };
   const audio = new GameAudio();
@@ -794,12 +810,15 @@ async function main() {
     spectate: () => enterSpectate(),
     assists: () => { toToggles(assistSet, input.assists); saveAssists(assistSet); },
     look: () => { applyLook(); party?.updateMe(meForParty()); pushLook(); },
+    // the bank/pay choice: spend reputation to clear the wanted level before the next race
+    layLow: () => { if (sp.kind !== 'sp' || sp.xp < 300) return; sp.penalty(300); heat.clear(); renderHeat(); menu.heat = 0; menu.render(); },
   });
   menu.gfx = gfx;
   const loader = new Loader();
   menu.loader = loader;
   menu.sp = sp;
   menu.mp = mp;
+  menu.layLowCost = sp.kind === 'sp' ? 300 : -1;   // reputation is the SP wallet; the online career has no spend path yet
   const rerender = () => { if (['title', 'shop', 'garage', 'lobby', 'results', 'settings', 'profile'].includes(menu.screen)) menu.render(); };
   let syncedProfile: unknown = null;
   let looksPulled = false;
@@ -1232,7 +1251,11 @@ async function main() {
       const reward = raceReward({ pos, laps: raceLaps(), dnf: !!myDnf, gained: ai.cars.length ? Math.max(0, 4 - pos) : 0, clean: raceImpacts === 0,
         assistsOff: +(a.abs === 'off') + +(a.tc === 0) + +!a.stability + +(a.countersteer === 'off') + +(a.line === 'off'),
         manual: a.gearbox === 'manual', realism: sel.realism }, 'sp');
-      earned = sp.earn(reward.xp, myDnf ? 'race · DNF' : `race · P${pos} of ${order.length}`, reward.parts).xp;
+      // High heat pays (design: "let high heat pay"): 4 stars x1.5, 5 stars x1.8 on the single-player purse. This is
+      // what makes the dial a gamble rather than a punishment.
+      const heatMul = heat.level >= 5 ? 1.8 : heat.level >= 4 ? 1.5 : 1;
+      const purse = Math.round(reward.xp * heatMul);
+      earned = sp.earn(purse, myDnf ? 'race · DNF' : `race · P${pos} of ${order.length}${heatMul > 1 ? ` · HEAT x${heatMul}` : ''}`, reward.parts).xp;
     }
     menu.showResults({ total, best: lapTimes.length ? Math.min(...lapTimes) : 0, laps: lapTimes, laps_target: raceLaps(), standings: st,
       routeLength: lap?.routeLength ?? route.length_m, online: sel.mode === 'online', earned });
@@ -1425,10 +1448,15 @@ async function main() {
       const ray = new RAPIERLib.Ray({ x: from.x, y: from.y + 1.2, z: from.z }, { x: dx / len, y: dy / len, z: dz / len });
       const hit = pw.world.castRay(ray, len - 2, true);
       cops.see(!!hit, frame);
+      const on = Math.floor(performance.now() / 260) % 2 === 0;
+      if (copsLights) { copsLights.r.color.setHex(on ? 0xff2d55 : 0x2a0008); copsLights.b.color.setHex(on ? 0x001030 : 0x2a9dff); }
+      audio.siren(cops.proximity);
       copsEl.textContent = `🚨 POLICE · ${Math.round(cops.distance)} m`;
+    } else {
+      audio.siren(0);
+      if (copsLights) { copsLights.r.color.setHex(0x2a0008); copsLights.b.color.setHex(0x001030); }
+      copsEl.textContent = performance.now() < copMsgUntil ? copMsg : '';
     }
-    else if (performance.now() < copMsgUntil) copsEl.textContent = copMsg;
-    else copsEl.textContent = '';
     const tVis = performance.now();
     {
       const lv = car.body.linvel();

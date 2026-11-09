@@ -36,10 +36,42 @@ export class GameAudio {
   } | null = null;
   private tyre: { f: BiquadFilterNode; f2: BiquadFilterNode; g: GainNode } | null = null;
   private wind: { f: BiquadFilterNode; g: GainNode } | null = null;
+  /** two-tone police siren, created on first use; gain follows the pursuit's proximity */
+  private srn: { o: OscillatorNode; lfo: OscillatorNode; lg: GainNode; g: GainNode } | null = null;
   private lastGear = 1;
   private lastRpm = 800;
   private nextCrackleAt = 0;
   muted = false;
+
+  /**
+   * Police siren while a pursuit is live: a wailing tone (LFO on pitch) at a level set by proximity. Silent and free
+   * when there is no chase (the nodes are created once, on the first call after the audio context unlocks).
+   */
+  siren(level: number) {
+    if (!this.ctx || !this.out) return;
+    const t = this.ctx.currentTime;
+    if (level <= 0.01 || this.muted) {
+      if (this.srn) this.srn.g.gain.setTargetAtTime(0, t, 0.12);
+      return;
+    }
+    if (!this.srn) {
+      const o = this.ctx.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.value = 760;
+      const lfo = this.ctx.createOscillator();
+      lfo.type = 'sine';
+      lfo.frequency.value = 0.55;          // one wail every ~1.8 s
+      const lg = this.ctx.createGain();
+      lg.gain.value = 230;
+      const g = this.ctx.createGain();
+      g.gain.value = 0;
+      lfo.connect(lg).connect(o.frequency);
+      o.connect(g).connect(this.out);
+      o.start(); lfo.start();
+      this.srn = { o, lfo, lg, g };
+    }
+    this.srn.g.gain.setTargetAtTime(0.025 + level * 0.11, t, 0.15);
+  }
 
   unlock() {
     if (!this.ctx) this.prepare();
