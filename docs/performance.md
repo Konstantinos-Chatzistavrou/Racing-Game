@@ -168,3 +168,20 @@ with a debounce, nothing happens.
 The fix is an in-session tuner - a short scripted drive behind the loading cover, judged on GPU-bound windows -
 not more heuristics on the title screen. It needs its own pass over main.ts. Until then `?quality=`/`?scale=`
 and the Settings preset are the honest controls.
+## The auto-tuner: settled-city windows and the median frame (2026-11-09)
+
+The tuner used to measure the title screen while the city was still streaming. Those windows are CPU-bound and do
+not move with render scale (measured: 25.3 fps at scale 1.0, 0.9, 0.8 and 0.7), so it walked the preset tiers
+down to `low` on a machine that renders ultra. Three changes, all in `main.ts`:
+
+1. **Wait for the streamer.** A window counts only after `nyc.stats()` reports no loading and no queued tiles
+   (one dry window to settle, then measurements). Once dry, the same screen reads 24.6 / 27.3 / 31.1 fps at
+   scale 1.0 / 0.8 / 0.6 - it moves again.
+2. **Judge the median frame, not the mean fps.** A shader compile drags an average below target while the game
+   holds the cap; `p50` against the cap's budget (33.3 ms + 3 %) is the number the HUD shows too.
+3. **Resolution before effects, on every device.** The preset only falls once the render scale is at its floor.
+
+Instrumented run on this laptop (1280x657, fresh profile): five warm windows at ~23 fps while streaming, then
+p50 36 -> 34 -> 35 -> 35 -> 31 ms as the scale went 1.0 -> 0.9 -> 0.8 -> 0.7 -> 0.6. It settles at
+**ultra, 60 % resolution** (~33 fps uncapped, 30 capped) instead of `low, 90 %`. The cost is a longer first
+run: streaming plus up to five steps takes ~20 s behind the cover, once per window size.

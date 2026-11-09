@@ -501,8 +501,21 @@ async function main() {
   // the 40 fps bar rather than 30): below it -> cheaper preset first (no hitch), then -0.1 scale
   // (min 0.5); above 55 fps with 90 % of frames < 22 ms -> +0.1 (only if nothing was lowered).
   // The settled scale and preset are stored per window size, so the next visit is one window.
-  const WINDOW = 650, FPS_LOW = isTouch ? 48 : 36, FPS_HIGH = Math.max(58, capFps * 1.8), STEP = 0.1, MIN_SCALE = MIN_RENDER, TUNE_TIMEOUT = 6000;
-  let winStart = 0, tuning = false, calSteps = 0, upSteps = 0, wentDown = false, tuneStart = 0;
+  // The tuner measures with the cap off, so its target is the uncapped rate that still holds the cap: 30 fps needs
+  // ~30.6 uncapped, not 36 - that number threw a preset tier away for headroom nobody sees. Phones keep their 48.
+  const WINDOW = 650, STEP = 0.1, MIN_SCALE = MIN_RENDER, TUNE_TIMEOUT = 15000;
+  /** the target the tuner protects (fps), and the median frame time that still holds it, with a 3 % margin */
+  const TUNE_TARGET = isTouch ? 45 : capFps > 0 ? capFps : 60;
+  const FRAME_BUDGET = (1000 / TUNE_TARGET) * 1.03;
+  /** resolution gives way before an effect tier does; phones stop at 0.5 (the old 1x picture) before dropping effects */
+  const RES_FLOOR = isTouch ? 0.5 : MIN_SCALE;
+  let winStart = 0, tuning = false, upSteps = 0, wentDown = false, tuneStart = 0, lowStreak = 0, okStreak = 0, quietWindows = 0;
+  /**
+   * The title camera streams the city in for a few seconds. fps while it does is CPU-bound and does not move with
+   * render scale (measured: 25.3 fps at 1.0, 0.9, 0.8 and 0.7 - docs/performance.md), so those windows must not
+   * decide anything; once the streamer is dry the same screen reads 24.6 / 27.3 / 31.1 fps at scale 1.0 / 0.8 / 0.6.
+   */
+  const citySettled = () => { const s = nyc?.stats(); return !s || (s.loading === 0 && s.queued === 0); };
   let driveWinTime = 0, driveFrames = 0;
   const startScale = () => guessScale();
   const setPreset = (i: number) => {
@@ -540,8 +553,7 @@ async function main() {
       finishTuning();
       return;
     }
-    tuning = true; wentDown = false; tuneStart = performance.now();
-    calSteps = full || Number.isNaN(stored) ? 2 : 1;
+    tuning = true; wentDown = false; lowStreak = 0; okStreak = 0; quietWindows = 0; tuneStart = performance.now();
     upSteps = full ? 1 : 0;
     if (full || Number.isNaN(stored)) { setPreset(PRESET_ORDER.indexOf(defaultPreset)); applyScale(startScale()); }
     frameTimes.length = 0;
@@ -1473,18 +1485,32 @@ async function main() {
     if (tuning && now - winStart >= WINDOW) {
       const fps = (frameTimes.length * 1000) / (now - winStart);
       const sorted = frameTimes.slice().sort((x, y) => x - y);
+      const p50 = sorted[Math.floor(sorted.length / 2)] ?? 0;
       const p90 = sorted[Math.floor(sorted.length * 0.9)] ?? 0;
       frameTimes.length = 0;
       winStart = now;
-      const low = fps < FPS_LOW, high = fps > FPS_HIGH && p90 < 22;
-      let changed = true;
+      quietWindows = citySettled() ? quietWindows + 1 : 0;
+      const warm = quietWindows < 2;   // one dry window to settle, one to measure from
+      // judge on the median frame, not the mean: one shader compile or texture upload drags an average below target
+      // while the game itself is holding the cap (the same reason the HUD shows p50/p95 now)
+      const low = !warm && p50 > FRAME_BUDGET, high = !warm && p50 < FRAME_BUDGET * 0.65;
+      const log = ((globalThis as { __tuneLog?: unknown[] }).__tuneLog ??= []);
+      log.push({ fps: +fps.toFixed(1), p50: Math.round(p50), p90: Math.round(p90), preset: post.preset, scale, warm });
+      if (log.length > 40) log.shift();
+      // a single bad window (a shader compile, a texture upload) must not cost a quality tier: two in a row do it
+      lowStreak = low ? lowStreak + 1 : 0;
       // phones: pixels above the old 1x picture (scale 0.5 of the 2x canvas) go before any effect does
-      if (low && isTouch && scale > 0.5 + 1e-6) { applyScale(scale - STEP); wentDown = true; }
-      else if (low && !presetPinned && presetIdx < PRESET_ORDER.length - 1) { setPreset(presetIdx + 1); wentDown = true; }
-      else if (low && calSteps > 0 && scale > MIN_SCALE + 1e-6) { applyScale(scale - STEP); calSteps--; wentDown = true; }
-      else if (high && !wentDown && upSteps > 0 && scale < maxScale - 1e-6) { applyScale(scale + STEP); upSteps--; }
-      else changed = false;
-      if (!changed || now - tuneStart > TUNE_TIMEOUT) finishTuning();
+      // Resolution before effects on every device: a slightly softer picture that keeps SSR, bloom and GTAO reads
+      // better than a sharp low preset, and it is where the frame is actually lost (the pinned profile in
+      // docs/performance.md is fill-bound: 25.6 -> 31.0 fps from scale 1.0 to 0.8).
+      if (warm) { tuneStart = now; }   // the timeout clock runs on measurable windows only
+      else if (low && lowStreak >= 2 && scale > RES_FLOOR + 1e-6) { applyScale(scale - STEP); wentDown = true; lowStreak = 0; }
+      else if (low && lowStreak >= 2 && !presetPinned && presetIdx < PRESET_ORDER.length - 1) { setPreset(presetIdx + 1); wentDown = true; lowStreak = 0; }
+      else if (low && lowStreak >= 2 && scale > MIN_SCALE + 1e-6) { applyScale(scale - STEP); wentDown = true; lowStreak = 0; }
+      else if (high && upSteps > 0 && scale < maxScale - 1e-6) { applyScale(scale + STEP); upSteps--; }
+      // done when two windows in a row sit in the band (the frame holds the cap) or when time is up
+      okStreak = !warm && !low && !high ? okStreak + 1 : 0;
+      if (okStreak >= 2 || (now - tuneStart > TUNE_TIMEOUT && !warm)) finishTuning();
       else { winStart = now + 1000; setExtra(); }   // let the resize hitch pass before measuring again
     }
     if (bench.active) bench.cb.push(performance.now() - cb0);
