@@ -242,9 +242,9 @@ async function main() {
   say('Loading car…', 80);
   // Frame cap: uncapped (native display refresh) by default; ?cap=N pins a specific frame rate.
   const hz = await refreshP;
-  // 30 fps locked is the product target (docs/performance.md); ?cap=0 uncaps for perf tests, ?cap=45 etc. override.
-  // The tuner protects this number, so an uncapped default made it aim for 60 and spend the whole quality budget.
-  const capFps = num('cap', 30);
+  // Uncapped by default: the cap only ever *delays* a ready frame to the next slot, so removing it gives the frame the
+  // GPU actually produced (lower latency, higher fps when there is headroom) and never a slower one. ?cap=30 pins 30.
+  const capFps = num('cap', 0);
   const capInterval = capFps > 0 ? 1000 / capFps : 0;
   const loadedCar = await carLoadP;
   let visualCfg = loadedCar.cfg;
@@ -513,8 +513,9 @@ async function main() {
   // ~30.6 uncapped, not 36 - that number threw a preset tier away for headroom nobody sees. Phones keep their 48.
   const WINDOW = 650, STEP = 0.1, MIN_SCALE = MIN_RENDER, TUNE_TIMEOUT = 15000;
   /** the target the tuner protects (fps), and the median frame time that still holds it, with a 3 % margin */
-  // protect the cap, not a remembered phone target: with the cap at 30 the phone used to chase 45 and over-reduce
-  const TUNE_TARGET = capFps > 0 ? capFps : isTouch ? 45 : 60;
+  // The quality target is its own number now (?target=), independent of the cap: uncapped rendering must not make the
+  // tuner chase 60 and spend the whole quality budget (that was the "tiers do nothing" bug). Default 30.
+  const TUNE_TARGET = num('target', 30);
   const FRAME_BUDGET = (1000 / TUNE_TARGET) * 1.03;
   /** resolution gives way before an effect tier does; phones stop at 0.5 (the old 1x picture) before dropping effects */
   const RES_FLOOR = isTouch ? 0.5 : MIN_SCALE;

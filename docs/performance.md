@@ -262,3 +262,19 @@ quality. It protects the cap now.
 
 `max` on a phone is still GPU-bound (GTAO + SSR at 1830x824): that is the tier that genuinely differs, and it is not
 a 30 fps tier on this class of GPU. Phone default is `medium`.
+## Uncapped by default, with the quality target kept separate (2026-11-09)
+
+A cap only *delays* a frame that is ready until the next slot; it never makes one cheaper. So uncapping cannot render
+slower - it removes the wait (lower latency) and lets the frame rate go above the cap when there is headroom. What
+it must not do is change what the tuner protects: with the cap at 0 the old code defaulted the quality target to 60
+and spent the whole budget reaching it (the "tiers do nothing" bug).
+
+The target is now its own number, `?target=`, default 30. Measured on this laptop, ultra, fresh profile:
+
+| | tuner lands at | fps | p50 |
+|---|---|---|---|
+| capped 30 (`?cap=30`) | 90 % scale | 30.0 | 30-31 ms |
+| uncapped (default) | 80 % scale | 32-33 | 30-32 ms |
+
+So uncapped buys ~2-3 fps and lower latency at one step less resolution, because the tuner still guarantees 30 as a
+floor. `?cap=30` pins the old behaviour; `?target=45` makes the tuner hold 45 and will drop quality for it.
