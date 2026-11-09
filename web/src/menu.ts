@@ -55,6 +55,8 @@ export interface MenuHooks {
   screen(s: Screen): void;
   /** garage camera preset */
   cam?(az: number, el: number, dist: number): void;
+  /** the driving camera mode chosen in Settings */
+  camMode?(mode: string): void;
   partyCreate(): void;
   partyJoin(code: string): void;
   partyLeave(): void;
@@ -134,6 +136,8 @@ export class Menu {
   private rankedRes: RankedResult | null = null;
   private recoveryShown = false;
   private settingsNote = '';
+  /** the driving camera chosen in Settings (main owns the rig) */
+  camMode = 'chase';
   assists!: AssistSettings;
   private settingsFrom: Screen = 'title';
   /** the loading screen ('busy' shows it; main may hold it while the game warms up) */
@@ -273,6 +277,7 @@ export class Menu {
       ${row('COUNTERSTEER', chip('as-cs', 'off', 'Off', a.countersteer === 'off') + chip('as-cs', 'weak', 'Weak', a.countersteer === 'weak') + chip('as-cs', 'strong', 'Strong', a.countersteer === 'strong'), 'Steers into a slide for you when the rear steps out (keyboard and controller).')}
       ${row('GEARBOX', chip('as-gb', 'auto', 'Automatic', a.gearbox === 'auto') + chip('as-gb', 'manual', 'Manual', a.gearbox === 'manual'), 'Manual: Q / E, bumpers or paddles.')}
       ${row('DRIVING LINE', chip('as-line', 'off', 'Off', a.line === 'off') + chip('as-line', 'braking', 'Braking zones', a.line === 'braking') + chip('as-line', 'full', 'Full', a.line === 'full'), 'The racing line on the road: blue = keep going, yellow = ease off, red = brake.')}
+      ${row('CAMERA', (['chase', 'far', 'cinematic', 'hood', 'bumper'] as const).map((k) => chip('cam-mode', k, k[0].toUpperCase() + k.slice(1), this.camMode === k)).join(''), 'Chase is the default; cinematic is the low wide drift shot, hood and bumper are first-person. C cycles any time while driving.')}
       <div class="dim note">Assists never change the car: same physics and tyres for everyone; they only help with your inputs. Keys 1 / 2 / 3 / 5 switch ABS / traction / stability / gearbox while driving.</div>`;
     const g = (k: Gfx, label: string) => chip('gfx', k, label, this.gfx === k);
     const more = inSession ? '<div class="dim note">Race rules, graphics and tests can be changed from the main menu.</div>' : `
@@ -402,9 +407,14 @@ export class Menu {
         </div>
         <div class="g-cams">
           <button class="chip" data-act="cam" data-v="0.8,0.17,6.5">3/4</button>
-          <button class="chip" data-act="cam" data-v="1.57,0.08,6.4">Side</button>
-          <button class="chip" data-act="cam" data-v="3.14,0.15,6.0">Rear</button>
+          <button class="chip" data-act="cam" data-v="-0.75,0.16,6.2">F 3/4</button>
           <button class="chip" data-act="cam" data-v="0,0.14,6.0">Front</button>
+          <button class="chip" data-act="cam" data-v="1.57,0.08,6.4">Side</button>
+          <button class="chip" data-act="cam" data-v="2.45,0.16,6.2">R 3/4</button>
+          <button class="chip" data-act="cam" data-v="3.14,0.15,6.0">Rear</button>
+          <button class="chip" data-act="cam" data-v="1.57,0.03,5.0">Low</button>
+          <button class="chip" data-act="cam" data-v="1.5,0.05,3.4">Wheel</button>
+          <button class="chip" data-act="cam" data-v="0.9,0.55,6.8">Top</button>
         </div>
       </header>
       <aside class="g-carlist panel"><h3>Your cars (${this.cars.filter((c) => w.owns(c.id)).length}/${this.cars.length})</h3>${cards}
@@ -745,6 +755,7 @@ export class Menu {
     if (act.startsWith('c-') && this.ctl?.click(act, v)) return;
     switch (act) {
       case 'play': this.sp.last = this.mp.last = null; this.show('modes'); break;
+      case 'cam-mode': this.camMode = v; this.hooks.camMode?.(v); this.render(); break;
       case 'laylow': this.hooks.layLow?.(); break;
       case 'garage-open': this.show('garage'); this.hooks.preview(); break;
       case 'home': this.show('title'); break;

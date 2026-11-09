@@ -84,6 +84,8 @@ export class CarCustomizer {
   private rimMat!: THREE.MeshPhysicalMaterial;
   /** the model's own rim meshes: hidden when a generated rim is fitted */
   private rimMeshes: THREE.Mesh[] = [];
+  /** the model's own aero panels: replaced (hidden) when a generated splitter/skirt is fitted */
+  private stockPanels: Record<string, THREE.Object3D[]> = { splitter: [], skirt: [] };
   private wheelNodes: THREE.Object3D[] = [];
   private glow: THREE.Mesh;
   /** the pool's real size: the warm-up trick scales optional parts to ~0 and restores 1, which is not the pool's size */
@@ -134,6 +136,8 @@ export class CarCustomizer {
     let w = model.getObjectByName('wing') ?? model.getObjectByName('wing_assembly');
     if (w?.name === 'wing_assembly' && w.parent && w.parent !== model && w.parent.name === 'wing') w = w.parent;
     if (w) this.stockWing.push(w);
+    for (const o of [model.getObjectByName('splitter')]) if (o) this.stockPanels.splitter.push(o);
+    for (const n of ['skirt_L', 'skirt_R']) { const o = model.getObjectByName(n); if (o) this.stockPanels.skirt.push(o); }
     // procedural wings, built against the stock wing's box (or the tail of the car)
     const wb = new THREE.Box3();
     if (w) { w.updateMatrixWorld(true); w.traverse((o) => { const mm = o as THREE.Mesh; if (mm.isMesh) { tmp.copy(mm.geometry.boundingBox ?? new THREE.Box3()).applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, mm.matrixWorld)); wb.union(tmp); } }); }
@@ -250,6 +254,8 @@ export class CarCustomizer {
     for (const [k, w] of Object.entries(this.kits)) w.visible = c.splitter === k || c.diffuser === k || c.skirt === k;
     for (const [k, list] of Object.entries(this.wheelRims)) for (const r of list) r.visible = c.rims === k;
     for (const m of this.rimMeshes) m.visible = c.rims === 'stock';
+    for (const o of this.stockPanels.splitter) o.visible = c.splitter === 'stock';
+    for (const o of this.stockPanels.skirt) o.visible = c.skirt === 'stock';
     this.glow.visible = !!c.underglow;
   }
 

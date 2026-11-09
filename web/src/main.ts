@@ -315,6 +315,7 @@ async function main() {
   const pos = new THREE.Vector3(), quat = new THREE.Quaternion();
   const input = new Input();
   const rig = new CameraRig(camera, pw, car.body, core.info.redline);
+  try { const cam = localStorage.getItem('nr.cam'); if (cam) rig.setMode(cam as never); } catch { /* blocked */ }
   const hud = new Hud();
   hud.cap = capFps > 0 ? Math.round(capFps) : 0;
   /**
@@ -812,6 +813,8 @@ async function main() {
     look: () => { applyLook(); party?.updateMe(meForParty()); pushLook(); },
     // the bank/pay choice: spend reputation to clear the wanted level before the next race
     layLow: () => { if (sp.kind !== 'sp' || sp.xp < 300) return; sp.penalty(300); heat.clear(); renderHeat(); menu.heat = 0; menu.render(); },
+    // driving camera chosen in Settings: chase / far / cinematic / hood / bumper (C cycles)
+    camMode: (mode) => { try { localStorage.setItem('nr.cam', mode); } catch { /* blocked */ } rig.setMode(mode as never); },
   });
   menu.gfx = gfx;
   const loader = new Loader();
@@ -819,6 +822,7 @@ async function main() {
   menu.sp = sp;
   menu.mp = mp;
   menu.layLowCost = sp.kind === 'sp' ? 300 : -1;   // reputation is the SP wallet; the online career has no spend path yet
+  try { const cam = localStorage.getItem('nr.cam'); if (cam) menu.camMode = cam; } catch { /* blocked */ }
   const rerender = () => { if (['title', 'shop', 'garage', 'lobby', 'results', 'settings', 'profile'].includes(menu.screen)) menu.render(); };
   let syncedProfile: unknown = null;
   let looksPulled = false;

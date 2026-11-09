@@ -40,8 +40,20 @@ function vnoise(x: number, seed: number) {
   return h(i) + (h(i + 1) - h(i)) * u;
 }
 
+export type CamMode = 'chase' | 'far' | 'cinematic' | 'hood' | 'bumper';
+/** Every view the rig offers: NFS-style chase, a wider chase, a low cinematic, hood and bumper. */
+const MODES: CamMode[] = ['chase', 'far', 'cinematic', 'hood', 'bumper'];
+const MODE_CFG: Record<CamMode, { dist: number; height: number; kind: 'chase' | 'bumper' }> = {
+  chase: { dist: DIST, height: HEIGHT, kind: 'chase' },
+  far: { dist: DIST * 1.45, height: HEIGHT + 0.35, kind: 'chase' },
+  cinematic: { dist: DIST * 1.85, height: HEIGHT * 0.45, kind: 'chase' },
+  hood: { dist: 0, height: 0, kind: 'bumper' },
+  bumper: { dist: 0, height: 0, kind: 'bumper' },
+};
+export { MODES };
+
 export class CameraRig {
-  mode: 'chase' | 'bumper' = 'chase';
+  mode: CamMode = 'chase';
   private first = true;
   private heading = new THREE.Vector3(0, 0, 1);   // lagged ground-plane heading
   private r = new THREE.Vector3();                // camera offset from the car (world axes)
@@ -65,7 +77,8 @@ export class CameraRig {
   setTarget(car: RAPIER.RigidBody, redline: number) { this.car = car; this.redline = redline; this.first = true; }
   snap() { this.first = true; }
 
-  toggle() { this.mode = this.mode === 'chase' ? 'bumper' : 'chase'; this.first = true; }
+  setMode(m: CamMode) { this.mode = m; this.first = true; }
+  toggle() { this.setMode(MODES[(MODES.indexOf(this.mode) + 1) % MODES.length]); }
 
   update(dt: number, carPos: THREE.Vector3, carQuat: THREE.Quaternion, carAcc: THREE.Vector3, out: Float64Array) {
     dt = Math.min(dt, 1 / 20);
@@ -82,11 +95,13 @@ export class CameraRig {
     const onRedline = out[OUT.rpm] >= this.redline * (1 - SHAKE_BAND) ? 1 : 0;
     this.shake += (onRedline - this.shake) * (1 - Math.exp(-dt * 7));
 
-    if (this.mode === 'bumper') {
-      cam.position.copy(carPos).add(this.tmp.set(0, 0.62, 0.25).applyQuaternion(carQuat));
+    const cfg = MODE_CFG[this.mode];
+    if (cfg.kind === 'bumper') {
+      const hood = this.mode === 'hood';
+      cam.position.copy(carPos).add(this.tmp.set(0, hood ? 1.05 : 0.62, hood ? 0.95 : 0.25).applyQuaternion(carQuat));
       cam.quaternion.copy(carQuat).multiply(this.bumperQ);
-      this.applyShake(0.45);                   // subtler: the bumper view already moves with the body
-      this.setFov(72, this.speedFov(speed) * 0.6, this.punch * 0.6, FOV_EXTRA_MAX * 0.6, dt);
+      this.applyShake(hood ? 0.35 : 0.45);     // subtler: the view already moves with the body
+      this.setFov(hood ? 68 : 72, this.speedFov(speed) * 0.6, this.punch * 0.6, FOV_EXTRA_MAX * 0.6, dt);
       this.first = true;
       return;
     }
@@ -98,7 +113,7 @@ export class CameraRig {
       if (this.first) this.heading.copy(flat);
       else this.heading.lerp(flat, 1 - Math.exp(-dt * 10)).normalize();
     }
-    const rTarget = this.rTarget.copy(this.heading).multiplyScalar(-DIST).addScaledVector(UP, HEIGHT);
+    const rTarget = this.rTarget.copy(this.heading).multiplyScalar(-cfg.dist).addScaledVector(UP, cfg.height);
 
     if (this.first) {
       this.r.copy(rTarget);
