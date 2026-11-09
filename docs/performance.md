@@ -146,3 +146,25 @@ measured inside the noise.
 With SSR at 0.35 the same vantage gives **31.0 fps at render scale 0.85** and **31.6 at 0.8**, against 27.4
 at 1.0 - the 30 fps target. Render scale belongs to the auto-tuner, which lowers resolution before it drops
 an effect: the cheaper SSR is headroom it spends on a sharper picture at the same 30 fps, not a preset change.
+## The auto-tuner measures the wrong scene (open issue, 2026-11-09)
+
+The tuner runs on the title screen behind the cover in 650 ms windows. Instrumented on this laptop
+(1280x657, fresh profile, `?menu=1`):
+
+| window | fps | p90 ms | preset | scale |
+|---|---|---|---|---|
+| 1 (cold) | 0.6 | 100 | ultra | 1.00 |
+| 2 | 25.3 | 56 | ultra | 0.90 |
+| 3 | 25.3 | 56 | ultra | 0.80 |
+| 4 | 24.6 | 67 | ultra | 0.70 |
+| 5 | 30.3 | 57 | ultra | 0.60 |
+
+Two problems. The first window is pure startup (0.6 fps) and already costs a step. And fps hardly moves
+between scale 1.0 and 0.7 while the cover is up: that phase is CPU/streaming-bound, not fill-bound, so the
+window reports "resolution does not help" when a pinned drive test says it does (25.6 -> 28.7 fps at 0.7).
+The result is the behaviour seen in play: either the preset tiers are walked down (measured: "low, 90 %") or,
+with a debounce, nothing happens.
+
+The fix is an in-session tuner - a short scripted drive behind the loading cover, judged on GPU-bound windows -
+not more heuristics on the title screen. It needs its own pass over main.ts. Until then `?quality=`/`?scale=`
+and the Settings preset are the honest controls.
