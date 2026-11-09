@@ -10,6 +10,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { ACTIVE_MIN_DISTANCE, CAR_VMAX_KMH, STARTER_CAR, DAILY_CAP, MAX_PER_NETWORK, NEW_ACCOUNT, RANKED_MIN_PLAYERS, levelOf, levelUpCredits, raceReward } from '../../web/src/progression';
 import { Progress, Route } from './tracker';
+import { paceOf, raceAvgKmh } from './pace';
 import { type AccountRow, type Env, accountOf, day, netOf, profileOf, randomId, strike } from './util';
 
 interface Player {
@@ -177,7 +178,13 @@ export class RaceRoom extends DurableObject<Env> {
       return (b.prog?.distance ?? -1e9) - (a.prog?.distance ?? -1e9);
     });
     const grid = rs.slice().sort((a, b) => (b.gridDist) - (a.gridDist));
-    const flagged = (p: Player) => p.violations.length >= 3 || p.violations.includes('teleport');
+    // lap-time floor: a finished race whose average exceeds the car's top speed by 25 % is impossible, not fast
+    for (const p of rs) {
+      if (!p.prog?.finished || p.dnf) continue;
+      const avg = raceAvgKmh(r.laps, r.route.length, p.prog.finishMs - r.startMs);
+      if (paceOf(avg, CAR_VMAX_KMH[p.car] ?? 300) === 'impossible') this.violate(p, 'lap time');
+    }
+    const flagged = (p: Player) => p.violations.length >= 3 || p.violations.includes('teleport') || p.violations.includes('lap time');
     const active = (p: Player) => !!p.prog && (p.prog.finished || p.prog.distance >= ACTIVE_MIN_DISTANCE * total);
     const eligible = (p: Player) => active(p) && !flagged(p) && !p.banned && !p.unowned;
     // ranked: genuinely racing, clean of violations, not banned; at most MAX_PER_NETWORK per network
@@ -198,6 +205,10 @@ export class RaceRoom extends DurableObject<Env> {
     for (const [i, p] of order.entries()) {
       const pos = i + 1, finished = !!p.prog?.finished && !p.dnf;
       const notes: string[] = [];
+      // a review flag is information, never a penalty: it only adds a note and asks for the replay
+      const avgKmh = finished && p.prog ? raceAvgKmh(r.laps, r.route.length, p.prog.finishMs - r.startMs) : 0;
+      const review = finished && pos <= 3 && !flagged(p) && paceOf(avgKmh, CAR_VMAX_KMH[p.car] ?? 300) === 'review';
+      if (review) notes.push(`Review: pace close to the car's limit (${Math.round(avgKmh)} km/h average) - recorded for inspection, no penalty.`);
       let reward = { xp: 0, cr: 0, parts: [] as { label: string; xp: number }[] };
       if (flagged(p)) {
         notes.push(`Flagged by the race checks (${[...new Set(p.violations)].join(', ')}): no reward, one strike.`);
@@ -239,7 +250,7 @@ export class RaceRoom extends DurableObject<Env> {
         stmts.push(db.prepare('INSERT INTO daily (account, day, xp, cr) VALUES (?, ?, ?, ?) ON CONFLICT (account, day) DO UPDATE SET xp = xp + excluded.xp, cr = cr + excluded.cr').bind(p.id, today, xp, cr));
         if (pos <= 3 && finished) stmts.push(db.prepare('INSERT OR IGNORE INTO replays (race, account, requested, claimed_ms) VALUES (?, ?, ?, ?)').bind(r.id, p.id, now, Math.round(p.prog!.finishMs - r.startMs)));
       }
-      results.set(p.id, { pos, finished, xp: reward.xp, cr: reward.cr, parts: reward.parts, notes, replay: ranked && pos <= 3 && finished && !flagged(p) && !p.unowned });
+      results.set(p.id, { pos, finished, xp: reward.xp, cr: reward.cr, parts: reward.parts, notes, review, replay: ranked && finished && !flagged(p) && !p.unowned && (pos <= 3 || review) });
     }
     stmts.push(db.prepare('INSERT INTO races (id, created, party, laps, ranked, result) VALUES (?, ?, ?, ?, ?, ?)').bind(r.id, now, this.ctx.id.toString().slice(0, 12), r.laps, ranked ? 1 : 0, JSON.stringify(table)));
     if (stmts.length) await db.batch(stmts);
