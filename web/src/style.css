@@ -182,6 +182,29 @@ body.touch #warn { right: auto; left: calc(8px + env(safe-area-inset-left)); tra
 #menu .util-row { margin-top: 2px; }
 #menu .cover { position: absolute; inset: 0; display: grid; place-items: center; background: #04060af6; pointer-events: auto; z-index: 2; }
 
+
+@media (pointer: coarse), (max-height: 560px) {
+  /* Phones (the harness' landscape viewport is 915x412 CSS): the title was a 560 px column centred at 50 % with a
+     clamp(56 px, 10vw, 128 px) logo, so on a short screen the logo's top and the Shop/Settings row ran off the
+     display - the "cut off" report. It is a normal column now: centred when it fits, top-aligned and scrollable when
+     it does not, inset by the safe areas so a notch or rounded corner cannot crop it. */
+  #menu[data-screen="title"] { display: flex; flex-direction: column; overflow-y: auto; overscroll-behavior: contain;
+    touch-action: pan-y; -webkit-overflow-scrolling: touch;
+    padding: calc(4px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left)); }
+  #menu[data-screen="title"]::before { display: none; }
+  #menu .title { position: static; transform: none; max-width: none; margin: auto 0; justify-content: center; gap: 7px; }
+  #menu .kicker { font-size: 8px; letter-spacing: .2em; margin: 0; }
+  #menu .logo { font-size: clamp(26px, 9.5vh, 52px); }
+  #menu .me-chip { margin: 0; font-size: 12px; padding: 4px 10px 4px 6px; }
+  #menu .sub, #menu .note, #menu .source-link { display: none; }
+  #menu .careers { width: 100%; gap: 6px; margin: 0; }
+  #menu .ccard { min-width: 0; flex: 1; padding: 6px 9px; font-size: 11px; }
+  #menu .title-btns { width: 100%; gap: 7px; }
+  #menu .title-btns .huge { font-size: 12px; padding: 9px 6px; }
+  #menu .earned { font-size: 11px; }
+  #menu .invite { font-size: 11px; }
+}
+
 /* garage */
 #menu .garage { position: absolute; inset: 0; }
 #menu .g-top { position: absolute; left: 20px; right: 20px; top: 16px; display: flex; align-items: center; gap: 18px; }
