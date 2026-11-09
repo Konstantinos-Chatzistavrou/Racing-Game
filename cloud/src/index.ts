@@ -1,6 +1,7 @@
 // OpenGrid online service (Cloudflare Worker). Routes:
 //   POST /v1/account               create an anonymous account -> { id, token }      (max 5 per network per day)
 //   GET  /v1/me                    the online career profile
+//   POST /v1/look   { car, look }  save one car's look (paint parts and colours; validated, shared by both careers)
 //   GET  /v1/username?u=NAME       is that username free (and valid)?  (no account needed)
 //   POST /v1/username { username } claim / change the account's username (unique; a change once per 30 days)
 //   GET  /v1/friends               friends (online, party), incoming and outgoing requests
@@ -11,7 +12,8 @@
 //   POST /v1/replay/:race { data } upload a requested input recording (replay check)
 //   GET  /v1/room/:party           WebSocket: the party's race room (Durable Object, room.ts)
 //   GET  /v1/replays/pending, POST /v1/replays/:race/:account   replay checker (GitHub Actions; VERIFIER_KEY)
-import { CAR_REQ, MOD_REQ, SKIN_REQ, levelOf } from '../../web/src/progression';
+import { CAR_REQ, CAR_VMAX_KMH, MOD_REQ, SKIN_REQ, levelOf } from '../../web/src/progression';
+import { cleanCustom } from '../../web/src/custom-data';
 import { usernameError } from '../../web/src/username';
 import { RaceRoom } from './room';
 import { type Env, accountOf, cors, day, json, netOf, profileOf, randomId, sha256, strike, type AccountRow } from './util';
@@ -84,6 +86,18 @@ async function route(req: Request, env: Env): Promise<Response> {
   if (!acct) return json({ error: 'sign in again (unknown account)' }, 401);
 
   if (path === '/v1/me' && req.method === 'GET') return json(profileOf(acct));
+
+  if (path === '/v1/look' && req.method === 'POST') {
+    const b = await req.json<{ car?: unknown; look?: unknown }>();
+    const car = String(b.car ?? '');
+    if (!(car in CAR_VMAX_KMH)) return json({ error: 'no such car' }, 400);
+    const looks = JSON.parse(acct.looks || '{}') as Record<string, unknown>;
+    looks[car] = cleanCustom(b.look);   // the game's own validator: anything unknown, missing or wrong is a default
+    const next = JSON.stringify(looks);
+    if (Object.keys(looks).length > 16 || next.length > 8192) return json({ error: 'too many saved looks' }, 400);
+    await env.DB.prepare('UPDATE accounts SET looks = ? WHERE id = ?').bind(next, acct.id).run();
+    return json(profileOf({ ...acct, looks: next }));
+  }
 
   if ((path === '/v1/username' || path === '/v1/name') && req.method === 'POST') {
     const b = await req.json<{ username?: string; name?: string }>();

@@ -25,6 +25,9 @@
 /.playwright-mcp/
 .DS_Store
 /.claude/worktrees/
+# Local agent memory (DeepSeek Harness working notes): personal, not project docs
+/.dsh/
+/AGENTS.md
 
 # Raw third-party downloads (car: docs/car_model_v3.md; city: assets_source/scripts/fetch_city_assets.py; never committed) and local build output
 /assets_source/downloads/

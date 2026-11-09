@@ -39,7 +39,8 @@ import type RAPIER from '@dimforge/rapier3d-compat';
 import { RemoteCars } from './net';
 import { Party, cleanCode, type Progress } from './party';
 import { Menu, rank, type Gfx, type Screen, type Standing } from './menu';
-import { applyMods, customOf, loadSelection, modsOf, paintOf, type CatalogCar, type Mode } from './garage';
+import { applyMods, customOf, loadSelection, modsOf, paintOf, saveSelection, type CatalogCar, type Mode } from './garage';
+import { cleanCustom } from './custom-data';
 import { skinOf } from './scene/driver';
 import { AiTraffic } from './ai';
 import { Identity } from './identity';
@@ -660,6 +661,13 @@ async function main() {
   const meForParty = () => ({ name: sel.name, car: sel.car, paint: paintInt(), skin: sel.skin, look: customOf(sel) });
   /** The garage look (parts, colours) and the driver's skin on the car on show. */
   const applyLook = () => { visual.custom.apply(customOf(sel), paintOf(sel, catalog)); visual.driver.setSkin(skinOf(sel.skin)); };
+  /** The online account keeps each car's look; a garage click pushes once (debounced) once the profile is known. */
+  let lookPush = 0;
+  const pushLook = () => {
+    if (!mp.profile) return;
+    clearTimeout(lookPush);
+    lookPush = window.setTimeout(() => { void cloud.saveLook(sel.car, customOf(sel)).catch(() => { /* offline: the look stays local */ }); }, 700);
+  };
   const isShowroom = (st: State) => st === 'title' || st === 'garage' || st === 'modes' || st === 'lobby' || st === 'busy';
   const menu: Menu = new Menu(sel, catalog, physics, {
     preview: () => { void (async () => {
@@ -715,7 +723,7 @@ async function main() {
     partyMe: () => party?.updateMe(meForParty()),
     spectate: () => enterSpectate(),
     assists: () => { toToggles(assistSet, input.assists); saveAssists(assistSet); },
-    look: () => { applyLook(); party?.updateMe(meForParty()); },
+    look: () => { applyLook(); party?.updateMe(meForParty()); pushLook(); },
   });
   menu.gfx = gfx;
   const loader = new Loader();
@@ -724,8 +732,32 @@ async function main() {
   menu.mp = mp;
   const rerender = () => { if (['title', 'shop', 'garage', 'lobby', 'results', 'settings', 'profile'].includes(menu.screen)) menu.render(); };
   let syncedProfile: unknown = null;
-  mp.onChange = () => { if (mp.profile && mp.profile !== syncedProfile) { syncedProfile = mp.profile; void identity.sync(mp.profile); } rerender(); };
-  identity.onChange = () => { party?.updateMe(meForParty()); visual.setPlate(sel.name); rerender(); };
+  let looksPulled = false;
+  mp.onChange = () => {
+    if (mp.profile && mp.profile !== syncedProfile) {
+      syncedProfile = mp.profile;
+      void identity.sync(mp.profile);
+      // the account's saved looks arrive once per session; after that local edits are pushed, not pulled over
+      if (!looksPulled) {
+        looksPulled = true;
+        let applied = false;
+        for (const [car, look] of Object.entries(mp.profile.looks ?? {})) {
+          if (!catalog.some((c) => c.id === car)) continue;
+          sel.custom[car] = cleanCustom(look);
+          applied = true;
+        }
+        if (applied) { saveSelection(sel); applyLook(); }
+        if (!mp.profile.looks?.[sel.car]) pushLook();   // nothing saved yet: keep the look this device already has
+      }
+    }
+    rerender();
+  };
+  let mpLoadTried = false;
+  identity.onChange = () => {
+    party?.updateMe(meForParty()); visual.setPlate(sel.name);
+    if (!mpLoadTried && cloud.id && !mp.profile) { mpLoadTried = true; void mp.refresh(); }
+    rerender();
+  };
   menu.cloud = cloud;
   menu.identity = identity;
   if (cloud.id) void mp.refresh();   // an online account exists on this device: show its level / credits on the title

@@ -4,10 +4,13 @@
 //
 // URL: VITE_CLOUD_URL at build time; the dev server defaults to a local `wrangler dev` on :8787.
 import type { Mods } from './garage';
+import type { Custom } from './custom-data';
 
 export interface Profile {
   id: string; name: string; username: string | null; usernameAt: number | null; xp: number; credits: number;
   cars: string[]; mods: Record<string, Mods>; skins: string[];
+  /** the account's saved car looks: car id -> the garage's parts and colours */
+  looks: Record<string, Custom>;
   clean: number; strikes: number; banned: boolean; created: number;
 }
 
@@ -69,6 +72,8 @@ export class Cloud {
   /** Heartbeat while the game is open: friends see you online, and your party (they can join it). */
   presence(party: string | null) { return this.call<{ ok: true }>('POST', '/v1/presence', { party: party ?? '' }); }
   buy(kind: 'car' | 'mod' | 'skin', id: string, stage?: number) { return this.call<Profile>('POST', '/v1/buy', { kind, id, stage }); }
+  /** Keep this car's look with the account, so another device (and the other career) draws the same car. */
+  saveLook(car: string, look: Custom) { return this.call<Profile>('POST', '/v1/look', { car, look }); }
   report(raceId: string, player: string, why: string) { return this.call<{ ok: true }>('POST', '/v1/report', { raceId, player, why }); }
   /** Upload the input recording of a race the server asked for (replay check). */
   replay(raceId: string, data: string) { return this.call<{ ok: true }>('POST', `/v1/replay/${encodeURIComponent(raceId)}`, { data }); }
