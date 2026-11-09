@@ -129,6 +129,16 @@ export const RIM_EFFECT: { re: RegExp; kg: number }[] = [
   { re: /^split5/, kg: -0.3 }, { re: /^turbine/, kg: 0 }, { re: /^mesh/, kg: 1.6 },
   { re: /^concave/, kg: -0.8 }, { re: /^dish/, kg: -0.4 }, { re: /^lip/, kg: 0.4 }, { re: /^rally/, kg: 1.2 },
 ];
+/** What a splitter / diffuser / skirt does: more downforce, a little drag, a little mass. */
+export function kitEffect(kind: 'splitter' | 'diffuser' | 'skirt', id: string) {
+  if (!id || id === 'stock') return { df: 0, drag: 0, kg: 0 };
+  const n = parseInt(String(id).split('-').pop() ?? '1', 10);
+  const i = Number.isFinite(n) ? Math.max(0, Math.min(9, n)) : 1;
+  if (kind === 'splitter') return { df: 0.010 + i * 0.004, drag: 0.004 + i * 0.002, kg: 0.6 + i * 0.10 };
+  if (kind === 'diffuser') return { df: 0.014 + i * 0.005, drag: 0.005 + i * 0.002, kg: 0.8 + i * 0.12 };
+  return { df: 0.004 + i * 0.0015, drag: 0.002 + i * 0.001, kg: 0.4 + i * 0.06 };
+}
+
 const KEY = 'nr.garage.v1';
 export function loadSelection(cars: CatalogCar[], params: URLSearchParams): Selection {
   const starter = cars.find((c) => c.id === 'vela_gt')?.id ?? cars[0].id;

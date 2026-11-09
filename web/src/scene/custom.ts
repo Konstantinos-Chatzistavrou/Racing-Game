@@ -10,9 +10,11 @@ import { Fn, abs, float, materialColor, mix, positionWorld, smoothstep, texture,
 /** a colour uniform as an rgb node (the typings keep 'color' and 'vec3' apart; the shader does not) */
 const rgb = (u: THREE.UniformNode<'color', THREE.Color>) => u as unknown as THREE.Node<'vec3'>;
 
+import { AERO_SPECS } from './parts/aero';
+import { RIM_SPECS } from './parts/rims';
 import { WING_SPECS } from './parts/wings';
 import { AERO_FINISHES, HEAD_TINTS, RIM_FINISHES, WINGS, cleanCustom, defaultCustom, type AeroFinish, type Custom, type HeadTint, type RimFinish, type WingKind } from '../custom-data';
-export { AERO_FINISHES, GLOW_COLOURS, HEAD_TINTS, LIVERIES, PART_COLOURS, RIM_FINISHES, WINGS, cleanCustom, defaultCustom } from '../custom-data';
+export { AERO_FINISHES, DIFFUSERS, GLOW_COLOURS, HEAD_TINTS, LIVERIES, PART_COLOURS, RIM_FINISHES, RIMS, SKIRTS, SPLITTERS, WINGS, cleanCustom, defaultCustom } from '../custom-data';
 export type { AeroFinish, Custom, HeadTint, RimFinish, WingKind } from '../custom-data';
 
 // ---- shader nodes installed once on a car's paint / carbon material (setupCarMaterials) -------------------------------
@@ -75,6 +77,12 @@ export class CarCustomizer {
   private m4 = new THREE.Matrix4();
   private stockWing: THREE.Object3D[] = [];
   private wings: Partial<Record<WingKind, THREE.Object3D>> = {};
+  /** splitter / diffuser / skirt designs, by id (one visible per kind) */
+  private kits: Record<string, THREE.Object3D> = {};
+  /** generated rim designs: four copies each, parented to the wheel nodes */
+  private wheelRims: Record<string, THREE.Object3D[]> = {};
+  private rimMat!: THREE.MeshPhysicalMaterial;
+  private wheelNodes: THREE.Object3D[] = [];
   private glow: THREE.Mesh;
   /** the pool's real size: the warm-up trick scales optional parts to ~0 and restores 1, which is not the pool's size */
   private glowScale = new THREE.Vector3(1, 1, 1);
@@ -137,6 +145,31 @@ export class CarCustomizer {
       this.wings[spec.id] = g;
       model.add(g);
     }
+    // aero kits: splitters / diffusers / skirts
+    for (const spec of AERO_SPECS) {
+      const g = spec.build({ box: this.box, mat: this.aeroMat });
+      g.name = 'kit_' + spec.id;
+      g.visible = false;
+      this.kits[spec.id] = g;
+      model.add(g);
+    }
+    // rims: a generated face per wheel, parented to the wheel node so it steers and spins with it
+    this.rimMat = new THREE.MeshPhysicalMaterial({ name: 'rim_generated', color: 0x9aa0aa, metalness: 1, roughness: 0.2, clearcoat: 0.4 });
+    this.wheelNodes = ['wheel_FL', 'wheel_FR', 'wheel_RL', 'wheel_RR']
+      .map((n) => model.getObjectByName(n)).filter((w): w is THREE.Object3D => !!w);
+    for (const spec of RIM_SPECS) {
+      const list: THREE.Object3D[] = [];
+      for (const w of this.wheelNodes) {
+        const side = w.name.endsWith('L') ? 1 : -1;
+        const rim = spec.build({ radius: 0.34, width: 0.22, mat: this.rimMat });
+        rim.rotation.y = (side * Math.PI) / 2;   // the builder's axle is +z; a wheel's is x
+        rim.position.x = side * 0.05;
+        rim.visible = false;
+        w.add(rim);
+        list.push(rim);
+      }
+      this.wheelRims[spec.id] = list;
+    }
     // underglow: a soft additive pool on the ground under the car (no light: adding lights recompiles everything).
     // Underground reads as a bright core about a car wide with a fast falloff, so the plane is generous (the geometry
     // is built once) and the VISIBLE pool is shaped by the falloff uniforms: ?glow=outer:0.95 widens it, inner tightens
@@ -182,6 +215,7 @@ export class CarCustomizer {
     this.showOptional();
     const [met, rough] = RIM[c.rimFinish];
     for (const m of this.rim) { m.color.set(c.rimColor); m.metalness = met; m.roughness = rough; }
+    if (this.rimMat) { this.rimMat.color.set(c.rimColor); this.rimMat.metalness = met; this.rimMat.roughness = rough; }
     for (const m of this.caliper) m.color.set(c.caliper);
     for (const m of this.exhaust) {
       if (c.exhaust === 'black') { m.color.set(0x111214); m.metalness = 0.5; m.roughness = 0.45; }
@@ -208,6 +242,8 @@ export class CarCustomizer {
     if (this.warm > 0) return;   // still warming: stay drawn, tiny
     const c = this.current;
     for (const [k, w] of Object.entries(this.wings)) if (w) w.visible = c.wing === k;
+    for (const [k, w] of Object.entries(this.kits)) w.visible = c.splitter === k || c.diffuser === k || c.skirt === k;
+    for (const [k, list] of Object.entries(this.wheelRims)) for (const r of list) r.visible = c.rims === k;
     this.glow.visible = !!c.underglow;
   }
 

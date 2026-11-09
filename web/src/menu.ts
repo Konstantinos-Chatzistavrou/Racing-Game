@@ -6,7 +6,7 @@
 //       title -> Garage (cars, paint, upgrades only) -> Main Menu, or Continue -> game modes
 import type { Identity } from './identity';
 import { PLATE_MAX, USERNAME_MAX, USERNAME_MIN, usernameError } from './username';
-import { FINISHES, LOOK_PRESETS, MODS, MOD_KEYS, RIM_EFFECT, SWATCHES, WING_EFFECT, applyLookPreset, applyMods, customOf, modsOf, paintOf, saveSelection, statsOf,
+import { FINISHES, LOOK_PRESETS, MODS, MOD_KEYS, RIM_EFFECT, SWATCHES, WING_EFFECT, applyLookPreset, applyMods, customOf, kitEffect, modsOf, paintOf, saveSelection, statsOf,
   type CatalogCar, type Finish, type Mode, type ModKey, type Selection } from './garage';
 import { formatLap } from './hud';
 import { MAX_MEMBERS, cleanCode, type Party, type PartyMode } from './party';
@@ -17,7 +17,7 @@ import type { Cloud } from './cloud';
 import type { RankedResult } from './ranked';
 import { levelOf } from './progression';
 import type { Loader } from './loading';
-import { AERO_FINISHES, GLOW_COLOURS, HEAD_TINTS, LIVERIES, PART_COLOURS, RIM_FINISHES, WINGS, type Custom } from './scene/custom';
+import { AERO_FINISHES, DIFFUSERS, GLOW_COLOURS, HEAD_TINTS, LIVERIES, PART_COLOURS, RIM_FINISHES, RIMS, SKIRTS, SPLITTERS, WINGS, type Custom } from './scene/custom';
 import { SKINS, helmetSvg, skinOf } from './scene/driver';
 
 /** Garage tabs: name, camera (azimuth, elevation, distance) that shows those parts. */
@@ -427,7 +427,13 @@ export class Menu {
     const st = statsOf(d);
     const fx = (c: ReturnType<typeof customOf>) => {
       const w = WING_EFFECT.find((e) => e.re.test(String(c.wing)));
-      return { df: w ? w.df : 0, drag: w ? w.drag : 0, kg: w ? w.kg : 0 };
+      const r = RIM_EFFECT.find((e) => e.re.test(String(c.rims)));
+      const parts = [kitEffect('splitter', c.splitter), kitEffect('diffuser', c.diffuser), kitEffect('skirt', c.skirt)];
+      return {
+        df: (w ? w.df : 0) + parts.reduce((a, x) => a + x.df, 0),
+        drag: (w ? w.drag : 0) + parts.reduce((a, x) => a + x.drag, 0),
+        kg: (w ? w.kg : 0) + (r ? r.kg : 0) + parts.reduce((a, x) => a + x.kg, 0),
+      };
     };
     const now = fx(parts);
     const pv = this.hover ? fx({ ...parts, [this.hover.k]: this.hover.v } as ReturnType<typeof customOf>) : null;
@@ -500,12 +506,15 @@ export class Menu {
   private gAero() {
     const c = customOf(this.sel);
     return `<h3>Rear wing</h3><div class="chips">${(Object.keys(WINGS) as (keyof typeof WINGS)[]).map((k) => this.cu('wing', k, WINGS[k], c.wing === k)).join('')}</div>
-      <h3>Splitter, diffuser &amp; wing finish</h3><div class="chips">${(Object.keys(AERO_FINISHES) as (keyof typeof AERO_FINISHES)[]).map((k) => this.cu('aero', k, AERO_FINISHES[k], c.aero === k)).join('')}</div>
-      <p class="dim small-note">Looks only: the car's downforce comes from its setup and the Aero upgrade (Performance tab).</p>`;
+      <h3>Front splitter</h3><div class="chips">${(Object.keys(SPLITTERS) as string[]).map((k) => this.cu('splitter', k, SPLITTERS[k], c.splitter === k)).join('')}</div>
+      <h3>Rear diffuser</h3><div class="chips">${(Object.keys(DIFFUSERS) as string[]).map((k) => this.cu('diffuser', k, DIFFUSERS[k], c.diffuser === k)).join('')}</div>
+      <h3>Side skirts</h3><div class="chips">${(Object.keys(SKIRTS) as string[]).map((k) => this.cu('skirt', k, SKIRTS[k], c.skirt === k)).join('')}</div>
+      <h3>Splitter, diffuser &amp; wing finish</h3><div class="chips">${(Object.keys(AERO_FINISHES) as (keyof typeof AERO_FINISHES)[]).map((k) => this.cu('aero', k, AERO_FINISHES[k], c.aero === k)).join('')}</div>`;
   }
   private gWheels() {
     const c = customOf(this.sel);
-    return `<h3>Rim colour</h3>${this.swatches('rimColor', c.rimColor)}
+    return `<h3>Rim design</h3><div class="chips">${(Object.keys(RIMS) as string[]).map((k) => this.cu('rims', k, RIMS[k], c.rims === k)).join('')}</div>
+      <h3>Rim colour</h3>${this.swatches('rimColor', c.rimColor)}
       <h3>Rim finish</h3><div class="chips">${(Object.keys(RIM_FINISHES) as (keyof typeof RIM_FINISHES)[]).map((k) => this.cu('rimFinish', k, RIM_FINISHES[k], c.rimFinish === k)).join('')}</div>
       <h3>Brake calipers</h3>${this.swatches('caliper', c.caliper)}`;
   }
