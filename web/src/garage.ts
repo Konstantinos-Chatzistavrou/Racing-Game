@@ -92,6 +92,9 @@ export function partEffect(id: string): { df: number; drag: number; kg: number }
   // fitted shells are derived from the stock bumper, so their effect is authored rather than bbox-measured
   if (id === 'front-shell-wide') return { df: 0.03, drag: 0.008, kg: 1.8 };
   if (id === 'front-shell-track') return { df: 0.045, drag: 0.014, kg: 2.4 };
+  if (id === 'rear-shell-wide') return { df: 0.028, drag: 0.009, kg: 1.7 };
+  if (id === 'rear-shell-deep') return { df: 0.04, drag: 0.013, kg: 2.2 };
+  if (id.startsWith('hood-fit-')) return { df: 0, drag: id === 'hood-fit-carbon' ? -0.002 : 0.001, kg: id === 'hood-fit-carbon' ? -1.2 : 0.4 };
   return (id && PART_METRICS[id]) || { df: 0, drag: 0, kg: 0 };
 }
 

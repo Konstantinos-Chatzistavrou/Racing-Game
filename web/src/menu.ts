@@ -554,7 +554,7 @@ export class Menu {
       `<h3>${kind === 'front' ? 'Front bumper' : kind === 'rear' ? 'Rear bumper' : 'Hood'} <small class="dim">replaces the stock panel</small></h3>` +
       `<div class="chips">${Object.keys(map).map((id) => this.cu(k, id, map[id], (c as unknown as Record<string, string>)[k] === id, bodyHint(kind, id, map[id]))).join('')}</div>`;
     return `<h3>Rear wing <small class="dim">grip in corners, costs top speed</small></h3><div class="chips">${(Object.keys(WINGS) as (keyof typeof WINGS)[]).map((k) => this.cu('wing', k, WINGS[k], c.wing === k, wingHint(k as string))).join('')}</div>
-      ${sec('frontB', FRONT_BUMPERS, 'front')}${sec('rearB', REAR_BUMPERS, 'rear')}`;
+      ${sec('frontB', FRONT_BUMPERS, 'front')}${sec('rearB', REAR_BUMPERS, 'rear')}${sec('hood', HOODS, 'hood')}`;
   }
 
   private gFenders() {

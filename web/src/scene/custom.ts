@@ -185,14 +185,13 @@ export class CarCustomizer {
       });
       return b;
     };
-    void boxOf;
-    // a bumper shell needs a bumper-sized box: the stock panel nodes span the whole front/rear clip, so build
-    // synthetic boxes at the nose, the tail and the bonnet instead
-    const W = this.box.max.x - this.box.min.x, Y0 = this.box.min.y, Y1 = this.box.max.y;
-    const pFront = new THREE.Box3(new THREE.Vector3(this.box.min.x * 0.94, Y0 + 0.06, this.box.max.z - 0.6), new THREE.Vector3(this.box.max.x * 0.94, Y0 + 0.46, this.box.max.z - 0.02));
-    const pRear = new THREE.Box3(new THREE.Vector3(this.box.min.x * 0.94, Y0 + 0.08, this.box.min.z + 0.02), new THREE.Vector3(this.box.max.x * 0.94, Y0 + 0.48, this.box.min.z + 0.6));
-    const pHood = new THREE.Box3(new THREE.Vector3(this.box.min.x * 0.55, Y1 - 0.06, this.box.max.z - 1.5), new THREE.Vector3(this.box.max.x * 0.55, Y1 + 0.02, this.box.max.z - 0.5));
-    void W;
+    // real panel boxes from the model (model space): front is +z, the bonnet top is hood.max.y.
+    // Fall back to synthetic boxes only if a node is missing, so a design still builds.
+    const Y0 = this.box.min.y, Y1 = this.box.max.y;
+    const fb = (real: THREE.Box3, fb: THREE.Box3) => (real.isEmpty() ? fb : real);
+    const pFront = fb(boxOf('bumper_front'), new THREE.Box3(new THREE.Vector3(this.box.min.x * 0.94, Y0 + 0.06, this.box.max.z - 0.6), new THREE.Vector3(this.box.max.x * 0.94, Y0 + 0.46, this.box.max.z - 0.02)));
+    const pRear = fb(boxOf('bumper_rear'), new THREE.Box3(new THREE.Vector3(this.box.min.x * 0.94, Y0 + 0.08, this.box.min.z + 0.02), new THREE.Vector3(this.box.max.x * 0.94, Y0 + 0.48, this.box.min.z + 0.6)));
+    const pHood = fb(boxOf('hood'), new THREE.Box3(new THREE.Vector3(this.box.min.x * 0.55, Y1 - 0.35, this.box.max.z - 1.5), new THREE.Vector3(this.box.max.x * 0.55, Y1 - 0.1, this.box.max.z - 0.55)));
     // a panel is built from the stock panel's box; shrink it a little so a shell sits in the stock opening, and use
     // the body paint for bumpers/hoods (carbon only for the flares) so they read as panels, not as black slabs
     const shrink = (b: THREE.Box3, f2: number) => {
@@ -202,9 +201,8 @@ export class CarCustomizer {
     };
     for (const spec of BODY_SPECS) {
       if (spec.kind === 'fender') continue;   // flares are built below as arch lips, not shells
-      if (spec.kind === 'hood') continue;     // hood skins do not seat on the bonnet yet; disabled until authored
       const base = spec.kind === 'front' ? pFront : spec.kind === 'rear' ? pRear : spec.kind === 'hood' ? pHood : new THREE.Box3();
-      const panel = shrink(base, 0.9);
+      const panel = shrink(base, spec.kind === 'hood' ? 0.97 : 0.9);
       const mat = this.paint ?? this.aeroMat;
       const g = spec.build({ box: this.box, panel, mat });
       // A generated shell cannot follow the real nose/tail, so keep each design's add-on pieces (lip, fins,
@@ -252,6 +250,42 @@ export class CarCustomizer {
     const trackShell = shellOf(this.bodyStock.front, 'track');
     if (wideShell) { wideShell.name = 'shell_front-wide'; this.bodyParts['front-shell-wide'] = wideShell; model.add(wideShell); }
     if (trackShell) { trackShell.name = 'shell_front-track'; this.bodyParts['front-shell-track'] = trackShell; model.add(trackShell); }
+    // fitted rear shells and hoods: same trick as the front - reshape the model's own panel so it seats exactly
+    const fitOf = (stock: THREE.Object3D | undefined, mode: string): THREE.Object3D | null => {
+      if (!stock) return null;
+      const c = stock.clone(true);
+      const mat = mode === 'hood-fit-carbon' ? this.aeroMat : (this.paint ?? this.aeroMat);
+      c.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (!m.isMesh || !m.geometry) return;
+        const geo = m.geometry.clone();
+        const p = geo.attributes.position as THREE.BufferAttribute;
+        for (let i = 0; i < p.count; i++) {
+          let x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+          if (mode === 'rear-shell-wide') { x *= 1.045; z -= 0.035; }
+          else if (mode === 'rear-shell-deep') { x *= 1.02; z -= 0.06; y = y * 0.95 - 0.005; }
+          else if (mode === 'hood-fit-smooth') { y += 0.002; }
+          else if (mode === 'hood-fit-bulge') { const t = Math.max(0, 1 - Math.abs(x) / 0.55); y += 0.03 * t * t; }
+          else if (mode === 'hood-fit-vent') { const vent = Math.abs(x) < 0.34 && Math.abs(z - 1.2) < 0.28; y += vent ? -0.012 : 0.004; }
+          else if (mode === 'hood-fit-carbon') { y += 0.004; }
+          p.setXYZ(i, x, y, z);
+        }
+        p.needsUpdate = true;
+        geo.computeVertexNormals();
+        m.geometry = geo;
+        m.material = mat;
+      });
+      c.visible = false;
+      return c;
+    };
+    for (const id of ['rear-shell-wide', 'rear-shell-deep', 'hood-fit-smooth', 'hood-fit-bulge', 'hood-fit-vent', 'hood-fit-carbon']) {
+      const stock = id.startsWith('rear') ? this.bodyStock.rear : this.bodyStock.hood;
+      const g = fitOf(stock, id);
+      if (!g) continue;
+      g.name = 'fit_' + id;
+      this.bodyParts[id] = g;
+      model.add(g);
+    }
     // fender flares: a half-torus arch over each wheel (a full shell read as a black disc), body-coloured
     const fenderIds = BODY_SPECS.filter((s) => s.kind === 'fender').map((s) => s.id);
     const halfW = Math.max(this.box.max.x, -this.box.min.x) * 0.92;
