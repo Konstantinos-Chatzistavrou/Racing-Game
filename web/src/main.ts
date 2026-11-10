@@ -298,6 +298,12 @@ async function main() {
     loadGLTF(assetUrl('cars/v3/vela_front_wide.glb')),
     loadGLTF(assetUrl('cars/v3/vela_front_track.glb')),
   ]).then(([w, t]) => visual.custom.setShells(w.scene, t.scene)).catch(() => { /* keep the derived shells */ });
+  void Promise.all([
+    loadGLTF(assetUrl('cars/v3/vela_hood_domed.glb')),
+    loadGLTF(assetUrl('cars/v3/vela_rear_wide.glb')),
+    loadGLTF(assetUrl('cars/v3/vela_hood_dome.glb')),
+    loadGLTF(assetUrl('cars/v3/vela_hood_track.glb')),
+  ]).then(([h, r, hd, ht]) => visual.custom.setExtraParts({ 'hood-blender': h.scene, 'rear-blender': r.scene, 'hood-dome': hd.scene, 'hood-track': ht.scene })).catch(() => { /* fitted clones stay */ });
   // Tyre smoke: billboards at the rear contact patches, emitted from the core's slip ratio (not a canned effect)
   const tireSmoke = webgpu ? new Particles(180, { additive: false, gravity: 0.25, grow: 1.4, drag: 1.1, style: 'smoke', opacity: 0.15 }) : null;
   if (tireSmoke) tireSmoke.color.setRGB(0.72, 0.72, 0.76);   // grey tyre smoke, not tail-light red

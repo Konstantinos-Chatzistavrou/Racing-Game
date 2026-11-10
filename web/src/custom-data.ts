@@ -40,8 +40,8 @@ export const DIFFUSERS: Record<string, string> = { stock: 'Stock', ...kits('diff
 export const SKIRTS: Record<string, string> = { stock: 'Stock', ...kits('skirt') };
 const bodyKits = (k: BodyPartKind) => Object.fromEntries(BODY_NAMES.filter((s) => s.kind === k).map((s) => [s.id, s.name]));
 export const FRONT_BUMPERS: Record<string, string> = { stock: 'Stock', 'front-shell-wide': 'Wide shell', 'front-shell-track': 'Track shell', ...bodyKits('front') };
-export const REAR_BUMPERS: Record<string, string> = { stock: 'Stock', 'rear-shell-wide': 'Wide rear shell', 'rear-shell-deep': 'Deep rear shell', ...bodyKits('rear') };
-export const HOODS: Record<string, string> = { stock: 'Stock', 'hood-fit-smooth': 'Smooth hood', 'hood-fit-bulge': 'Domed hood', 'hood-fit-vent': 'Vented hood', 'hood-fit-carbon': 'Carbon hood', ...bodyKits('hood') };
+export const REAR_BUMPERS: Record<string, string> = { stock: 'Stock', 'rear-blender': 'Wide (authored)', 'rear-shell-wide': 'Wide rear shell', 'rear-shell-deep': 'Deep rear shell', ...bodyKits('rear') };
+export const HOODS: Record<string, string> = { stock: 'Stock', 'hood-blender': 'Domed (authored)', 'hood-dome': 'Power dome', 'hood-track': 'Track louvres', 'hood-fit-smooth': 'Smooth hood', 'hood-fit-bulge': 'Domed hood', 'hood-fit-vent': 'Vented hood', 'hood-fit-carbon': 'Carbon hood', ...bodyKits('hood') };
 export const FENDERS: Record<string, string> = { stock: 'Stock', ...bodyKits('fender') };
 export const RIMS: Record<string, string> = { stock: 'Factory', ...Object.fromEntries(RIM_NAMES.map((s) => [s.id, s.name])) };
 /** every wing, in menu order (stock/none are the model's own parts) */
