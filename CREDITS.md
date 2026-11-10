@@ -82,3 +82,16 @@ represents or is endorsed by any real manufacturer.
 - MF 6.1 inflation-pressure and turn-slip coefficients: generic published values from H. B. Pacejka, *Tire and Vehicle
   Dynamics*, 3rd ed. (Table 4.2 example tyre, and the MF 6.1 defaults).
 
+
+## Garage surfaces and props
+- **Poly Haven** (https://polyhaven.com), CC0 1.0. Textures: `painted_concrete_02`, `factory_brick`, `corrugated_iron_02`,
+  `painted_metal_shutter`, `rubber_tiles`, `concrete_wall_008`. Models: `metal_tool_chest`, `steel_frame_shelves_01`,
+  `covered_car`, `metal_office_desk`, `sofa_02`, `old_tyre`, `Barrel_01`, `korean_fire_extinguisher_01`,
+  `metal_jerrycan_green`, `plastic_crate_02`, `metal_stool_01`, `hanging_industrial_lamp`, `boombox`, `WetFloorSign_01`,
+  `utility_box_01`, `portable_generator`, `tool_cart`, `cardboard_box_01`. Resized and compressed (KTX2, meshopt) by
+  `tools/garage/build_textures.py` and `tools/garage/build_props.py` into `web/public/assets/garage/`. CC0 needs no
+  credit; listed with thanks.
+
+## Fonts
+- **Barlow** and **Barlow Condensed** by Jeremy Tribby, SIL Open Font License 1.1
+  (https://github.com/jpt/barlow). Latin subsets in `web/public/fonts/`, unmodified.
