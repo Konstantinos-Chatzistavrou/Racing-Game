@@ -12,6 +12,7 @@ import { CarProbe } from './fx/carProbe';
 import { Particles } from './scene/damage';
 import { createStudioEnv } from './scene/studio';
 import { createGarageRoom } from './scene/garageRoom';
+import { configureShadowSun, refreshShadowCasters } from './scene/shadows';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { CoreCar, CoreRace, OUT, loadCore, type LapInfo, type RawInput } from './physics/core';
 import { CarBody, DT, PhysicsWorld, loadRapier, type CarShape } from './physics/world';
@@ -310,9 +311,16 @@ async function main() {
     'hood-blender': h.scene, 'rear-blender': r.scene, 'hood-dome': hd.scene, 'hood-track': ht.scene,
     'hood-vent-auth': hv.scene, 'front-split-auth': fs2.scene,
   })).catch(() => { /* fitted clones stay */ });
+  // parts modelled in Blender (shrink-wrapped onto the car's real surface)
+  void Promise.all([
+    loadGLTF(assetUrl('cars/v3/vela_front_bumper_pro.glb')),
+    loadGLTF(assetUrl('cars/v3/vela_hood_pro.glb')),
+  ]).then(([b, h2]) => visual.custom.setExtraParts({ 'front-bumper-pro': b.scene, 'hood-pro': h2.scene })).catch(() => { /* authored parts stay */ });
   // Garage interior: the showroom is a room, not the street. Built procedurally, parked cars cloned from the AI models.
   const garageRoom = createGarageRoom(scene);
   garageRoom.setVisible(false);
+  configureShadowSun(renderer, garageRoom.sun, scene, { mapSize: 2048, extent: 16 });
+  const screenNone = () => menu.screen === 'none';
   const visualsCastShadows = (on: boolean) => { visual.model.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) { m.castShadow = on; m.receiveShadow = on; } }); };
   const placeGarage = () => {
     const t = car.body.translation();
@@ -903,6 +911,7 @@ async function main() {
         placeGarage();
         garageRoom.setVisible(true);
         visualsCastShadows(true);
+        refreshShadowCasters([visual.model, garageRoom.group], [garageRoom.group], garageRoom.sun);
       } else {
         garageRoom.setVisible(false);
       }
@@ -1698,7 +1707,8 @@ async function main() {
       const tPost = performance.now();
       post.render();
       prof.post += performance.now() - tPost;
-      if (post.preset !== 'low' && post.preset !== 'medium') probe?.update(pos, visual.root);
+      // never while the garage is up: the probe's cube render rebuilds ShadowNodes and destroys the sun's shadow map
+      if (screenNone() && post.preset !== 'low' && post.preset !== 'medium') probe?.update(pos, visual.root);
       hud.rendered(now);
       if (now - statsAt > 1000) {   // draw calls are per frame; the texture scan is cached for 10 s
         statsAt = now;
