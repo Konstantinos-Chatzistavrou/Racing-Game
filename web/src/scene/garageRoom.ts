@@ -10,7 +10,7 @@ export interface GarageRoom {
   park(cars: THREE.Object3D[]): void;
 }
 
-const W = 26, D = 18, H = 7;   // room size (m)
+const W = 26, D = 18, H = 9.5;   // room size (m) - tall enough that the city never shows over the walls
 
 /** Procedural concrete: albedo with stains + a matching roughness map (no external PBR assets needed). */
 function concreteTex(rx: number, ry: number): { map: THREE.CanvasTexture; rough: THREE.CanvasTexture } {
@@ -122,7 +122,7 @@ export function createGarageRoom(scene: THREE.Scene): GarageRoom {
   }
 
   // ---- lights -----------------------------------------------------------------------------------------------
-  const sun = new THREE.DirectionalLight(0xfff1dd, 7.5);
+  const sun = new THREE.DirectionalLight(0xfff1dd, 5.6);
   sun.position.set(6, 16, 7);
   sun.target.position.set(0, 0, 0);
   sun.castShadow = true;
@@ -132,8 +132,8 @@ export function createGarageRoom(scene: THREE.Scene): GarageRoom {
   sun.shadow.bias = -0.0004;
   sun.shadow.mapSize.set(2048, 2048);
   g.add(sun, sun.target);
-  g.add(new THREE.HemisphereLight(0xcfe0f5, 0x4a4238, 3.2));
-  const frontKey = new THREE.PointLight(0xffe9d0, 28, 18, 2);
+  g.add(new THREE.HemisphereLight(0xd6e4f7, 0x4a4238, 4.0));
+  const frontKey = new THREE.PointLight(0xffe9d0, 18, 18, 2);
   frontKey.position.set(5.5, 3.4, 8.8);   // front fill, kept high so it does not mirror as a white blob in the hood
   g.add(frontKey);
   const warm = new THREE.PointLight(0xffd9a8, 60, 22, 2);
@@ -379,7 +379,7 @@ export function createGarageRoom(scene: THREE.Scene): GarageRoom {
     }
     const barMat = new THREE.MeshBasicMaterial({ color: 0xfff2d8 });
     for (const x of [-3.8, 0, 3.8]) { const b = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.08, 0.14), barMat); b.position.set(x, 5.3, zWall + zs * 0.17); bay.add(b); }
-    const bayLight = new THREE.PointLight(0xffe7c6, 70, 22, 2);
+    const bayLight = new THREE.PointLight(0xffe7c6, 45, 22, 2);
     bayLight.position.set(0, 4.6, zLight);
     bay.add(bayLight);
     for (let i = 0; i < 4; i++) { const t = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.24, 18), mat(0x101114, 0.95)); t.position.set(-6.2, 0.12 + i * 0.25, zProp); bay.add(t); }

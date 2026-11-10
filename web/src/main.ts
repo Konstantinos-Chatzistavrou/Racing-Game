@@ -322,6 +322,31 @@ async function main() {
   configureShadowSun(renderer, garageRoom.sun, scene, { mapSize: 2048, extent: 16 });
   const screenNone = () => menu.screen === 'none';
   const visualsCastShadows = (on: boolean) => { visual.model.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) { m.castShadow = on; m.receiveShadow = on; } }); };
+  // Baked garage environment for the paint: one cube render of the room (hero car hidden) -> PMREM, so the car
+  // reflects the actual workshop instead of the softbox studio.
+  let garageEnv: THREE.Texture | null = null;
+  let garageEnvTried = false;
+  const bakeGarageEnv = (): THREE.Texture | null => {
+    if (garageEnvTried) return garageEnv;
+    garageEnvTried = true;
+    try {
+      const rt = new THREE.CubeRenderTarget(256, { type: THREE.HalfFloatType });
+      const cam = new THREE.CubeCamera(0.3, 90, rt);
+      cam.position.set(0, 1.35, 0);
+      garageRoom.group.add(cam);
+      const heroVisible = visual.model.visible;
+      const prevExposure = renderer.toneMappingExposure;
+      visual.model.visible = false;
+      renderer.toneMappingExposure = prevExposure * 1.8;   // the room is lit for a camera, the bake needs more headroom
+      cam.update(renderer, scene);
+      renderer.toneMappingExposure = prevExposure;
+      visual.model.visible = heroVisible;
+      garageRoom.group.remove(cam);
+      garageEnv = pmrem.fromCubemap(rt.texture).texture;
+      rt.dispose();
+    } catch { garageEnv = null; }
+    return garageEnv;
+  };
   const placeGarage = () => {
     const t = car.body.translation();
     garageRoom.group.position.set(t.x, 0, t.z);
@@ -360,12 +385,12 @@ async function main() {
     if (!m) return;
     const mats = [m.paint, m.glass, m.carbon].filter(Boolean) as THREE.MeshPhysicalMaterial[];
     if (on) {
-      if (!studioTex) studioTex = createStudioEnv(renderer, pmrem, { intensity: 1.15 });
+      if (!studioTex) studioTex = bakeGarageEnv() ?? createStudioEnv(renderer, pmrem, { intensity: 1.15 });
       for (const mat of mats) {
         const u = mat.userData as { prevEnv?: THREE.Texture | null };
         if (!('prevEnv' in u)) u.prevEnv = mat.envMap ?? null;
         mat.envMap = studioTex;
-        mat.envMapIntensity = Math.max(mat.envMapIntensity ?? 1, 1.5);
+        mat.envMapIntensity = Math.max(mat.envMapIntensity ?? 1, 2.4);
         mat.needsUpdate = true;
       }
     } else {
@@ -912,14 +937,15 @@ async function main() {
     quit: (to) => quitSession(party ? 'lobby' : to),
     bench: (soak) => void runBench(soak),
     screen: (sc: Screen) => {
-      showroomEnv(sc !== 'none');
       renderer.toneMappingExposure = sc !== 'none' ? 1.25 : 1.1;   // showroom reads brighter, driving keeps the night exposure
       if (sc !== 'none') {
         placeGarage();
         garageRoom.setVisible(true);
         visualsCastShadows(true);
         refreshShadowCasters([visual.model, garageRoom.group], [garageRoom.group], garageRoom.sun);
+        showroomEnv(true);   // after the room is placed/visible, so the cubemap bake sees the workshop
       } else {
+        showroomEnv(false);
         garageRoom.setVisible(false);
       }
       if (sc === 'garage') { orbit.dist = 7.2; orbit.el = 0.22; }   // whole car in frame, slightly above the belt line
