@@ -1,0 +1,74 @@
+{
+  "schema": "car_visual/1",
+  "name": "K-Concept",
+  "physics": "cars/k_concept.json",
+  "model": "res://assets/cars/v3/k_concept.glb",
+  "notes": "Khronos glTF Sample Assets CarConcept (CC BY 4.0, Darmstadt Graphics Group GmbH / Khronos). Model space +X left, +Y up, +Z forward; front axle z 1.49, rear -1.31, hubs y 0.38, track 1.96.",
+  "cg_in_model_m": [
+    0,
+    0.45,
+    0.05
+  ],
+  "wheel_nodes": {
+    "fl": "WheelFrontL",
+    "fr": "WheelFrontR",
+    "rl": "WheelRearL",
+    "rr": "WheelRearR"
+  },
+  "wheel_visual_offset_m": 0,
+  "collision_box": {
+    "size_m": [
+      2.05,
+      0.8,
+      4.36
+    ],
+    "centre_in_model_m": [
+      0,
+      0.58,
+      0.24
+    ],
+    "end_lift_m": 0.13,
+    "end_lift_start_m": 1.5,
+    "note": "body 2.7 x 1.31 x 4.36 m with mirrors; flat underside between +-1.5 m; wheels are raycasts"
+  },
+  "paint_material": "Paint 2 Carmine",
+  "default_paint": [
+    0.62,
+    0.05,
+    0.04
+  ],
+  "headlights": [
+    [
+      -0.62,
+      0.55,
+      2
+    ],
+    [
+      0.62,
+      0.55,
+      2
+    ]
+  ],
+  "panels": {
+    "front": [],
+    "rear": [],
+    "left": [],
+    "right": []
+  },
+  "detachable": {},
+  "front_lights": [],
+  "rear_lights": [],
+  "engine_smoke_in_model_m": [
+    0,
+    0.6,
+    1
+  ],
+  "lod_model": "res://assets/cars/v3/k_concept.glb",
+  "lod_distance_m": 30,
+  "driver_seat_m": [
+    0.37,
+    0.3,
+    0
+  ],
+  "driver_scale": 1
+}

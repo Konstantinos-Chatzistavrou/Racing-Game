@@ -24,6 +24,7 @@ export interface Req { spLevel: number; mpLevel: number; price: number }
 
 export const CAR_REQ: Record<string, Req> = {
   vela_gt: { spLevel: 1, mpLevel: 1, price: 0 },
+  k_concept: { spLevel: 1, mpLevel: 10, price: 120_000 },
   kestrel_gt: { spLevel: 6, mpLevel: 5, price: 140_000 },
   harrier_gt: { spLevel: 12, mpLevel: 10, price: 160_000 },
 };
