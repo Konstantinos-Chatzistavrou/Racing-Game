@@ -93,3 +93,48 @@ HEADLESS=1 PROBE=tools/parts-probe.js node tools/drive.mjs "http://127.0.0.1:517
   each (traffic LOD), so parties stay at 6.
 - The garage's 3D car is the hero asset (127k tris); extra parts are hidden objects, so their cost is only when
   selected.
+
+## Authored replacement parts (Blender, 2026-11-10)
+
+All derived from this car's own meshes, so they fit by construction and carry no third-party licence:
+
+| asset | source | notes |
+|---|---|---|
+| `vela_front_wide.glb` | duplicate of `bumper_front` widened ×1.06, pushed 3.5 cm | body paint in game |
+| `vela_front_track.glb` | duplicate widened ×1.03, pushed 7 cm, lower edge ×0.82 | body paint in game |
+| `vela_hood_dome.glb` | duplicate of `hood` + `hood_inner` + `hood_vent`, raised by a parabola across x (±0.035 m) | 0.55 MB, textures stripped on export |
+| `vela_hood_vent.glb` | duplicate of `hood` + three louvre slats over the vent opening | 0.32 MB, textures stripped on export |
+
+Authoring recipe (Blender 5.2.3, `~/opt/blender-5.2.3-linux-x64`): import `/tmp/vela_png.glb` (the decoded car),
+duplicate the stock panel objects, deform their **vertices in Blender space** (`x` width, `y` front/back with
+front = −y, `z` up), clear the materials (`o.data.materials.clear()`) so no textures are embedded, select the
+copies and `export_scene.gltf(..., use_selection=True, export_apply=True)`.
+
+**Wiring for the game** (the hood hook mirrors `setShells`):
+
+```ts
+setHoods(dome: THREE.Object3D, vent: THREE.Object3D) {
+  for (const [id, g] of [['hood-fit-bulge', dome], ['hood-fit-vent', vent]] as const) {
+    this.bodyParts[id]?.removeFromParent();
+    g.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) { m.material = this.paint ?? this.aeroMat; m.castShadow = false; } });
+    g.visible = false; this.bodyParts[id] = g; this.model.add(g);
+  }
+  this.showOptional();
+}
+```
+
+- Load them in `main.ts` with `loadGLTF(assetUrl('cars/v3/vela_hood_dome.glb'))` / `vela_hood_vent.glb` and call
+  `visual.custom.setHoods(...)`; the catch keeps the stock hood.
+- Hide **all three** stock hood meshes when `c.hood !== 'stock'`: `hood`, `hood_inner`, `hood_vent`
+  (built from `getObjectByName`), otherwise the old vent floats.
+- Existing ids in the working tree: `hood-fit-smooth`, `hood-fit-bulge`, `hood-fit-vent`, `hood-fit-carbon`;
+  author more variants with the same recipe rather than duplicating the ids.
+- Audit: Front (`0,0.14,6.0`) and 3/4 (`0.8,0.17,6.5`) screenshots must show the hood seated before enabling.
+
+### Marketplace sourcing note
+
+No free marketplace was found that offers **separable hood/bumper meshes under CC0** with an unauthenticated
+download; car parts are normally shipped inside full-car models, and Sketchfab/CGTrader downloads need an
+account. Deriving parts from the car's own meshes is licence-clean, fits by construction, and is the method used
+above. For full cars, `docs/free_assets.md` remains the source of truth (Khronos CarConcept is CC BY 4.0 and
+web-ready); record licences under `assets_source/licenses/`.
