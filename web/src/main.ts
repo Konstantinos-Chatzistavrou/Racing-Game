@@ -902,11 +902,9 @@ async function main() {
       if (sc !== 'none') {
         placeGarage();
         garageRoom.setVisible(true);
-        renderer.shadowMap.enabled = true;
         visualsCastShadows(true);
       } else {
         garageRoom.setVisible(false);
-        renderer.shadowMap.enabled = false;
       }
       if (sc === 'garage') { orbit.dist = 5.9; orbit.el = 0.14; }   // Heat's garage camera: closer and lower
       if (sc === 'title' || sc === 'garage' || sc === 'modes' || sc === 'lobby') setState(sc);

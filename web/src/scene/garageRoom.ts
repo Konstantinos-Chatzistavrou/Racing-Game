@@ -69,8 +69,10 @@ export function createGarageRoom(scene: THREE.Scene): GarageRoom {
   sun.castShadow = true;
   sun.shadow.mapSize.set(1024, 1024);
   const sc = sun.shadow.camera as THREE.OrthographicCamera;
-  sc.left = -14; sc.right = 14; sc.top = 12; sc.bottom = -12; sc.near = 1; sc.far = 40;
+  sc.left = -14; sc.right = 14; sc.top = 12; sc.bottom = -12; sc.near = 0.5; sc.far = 40;
+  sc.updateProjectionMatrix();   // without this the shadow frustum stays at its defaults and nothing lands
   sun.shadow.bias = -0.0004;
+  sun.shadow.mapSize.set(2048, 2048);
   g.add(sun, sun.target);
   // cool fill from the walls so the shadow side is not black
   g.add(new THREE.HemisphereLight(0xbcd0ea, 0x3a352e, 1.15));
