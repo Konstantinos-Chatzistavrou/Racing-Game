@@ -913,6 +913,7 @@ async function main() {
     bench: (soak) => void runBench(soak),
     screen: (sc: Screen) => {
       showroomEnv(sc !== 'none');
+      renderer.toneMappingExposure = sc !== 'none' ? 1.25 : 1.1;   // showroom reads brighter, driving keeps the night exposure
       if (sc !== 'none') {
         placeGarage();
         garageRoom.setVisible(true);

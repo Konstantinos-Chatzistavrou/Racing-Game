@@ -12,9 +12,63 @@ export interface GarageRoom {
 
 const W = 26, D = 18, H = 7;   // room size (m)
 
+/** Procedural concrete: albedo with stains + a matching roughness map (no external PBR assets needed). */
+function concreteTex(rx: number, ry: number): { map: THREE.CanvasTexture; rough: THREE.CanvasTexture } {
+  const S = 512;
+  const layer = (rough: boolean) => {
+    const c = document.createElement('canvas');
+    c.width = c.height = S;
+    const x = c.getContext('2d')!;
+    x.fillStyle = rough ? '#7d7d7d' : '#5f6268';
+    x.fillRect(0, 0, S, S);
+    for (let i = 0; i < 14000; i++) {
+      const v = (Math.random() * 70) | 0;
+      x.fillStyle = rough
+        ? `rgba(${140 + v},${140 + v},${140 + v},${0.05 + Math.random() * 0.2})`
+        : `rgba(${60 + v},${62 + v},${68 + v},${0.08 + Math.random() * 0.25})`;
+      x.fillRect(Math.random() * S, Math.random() * S, 1 + Math.random() * 2, 1 + Math.random() * 2);
+    }
+    for (let i = 0; i < 24; i++) {   // stains / wear patches
+      const rr = 24 + Math.random() * 90, gx = Math.random() * S, gy = Math.random() * S;
+      const gr = x.createRadialGradient(gx, gy, 0, gx, gy, rr);
+      const a = 0.05 + Math.random() * 0.13;
+      gr.addColorStop(0, rough ? `rgba(30,30,30,${a})` : `rgba(18,18,22,${a})`);
+      gr.addColorStop(1, 'rgba(0,0,0,0)');
+      x.fillStyle = gr; x.beginPath(); x.arc(gx, gy, rr, 0, Math.PI * 2); x.fill();
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(rx, ry);
+    t.anisotropy = 8;
+    if (!rough) t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  };
+  return { map: layer(false), rough: layer(true) };
+}
+
 function mat(color: number, rough = 0.85, metal = 0.1) {
   // double-sided: the title camera sometimes sits outside the shell, and a culled wall would show the city through it
   return new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: metal, side: THREE.DoubleSide });
+}
+
+/** Soft contact shadow under the hero car: a radial alpha (procedural, no texture asset). */
+function contactShadow(): THREE.Mesh {
+  const S = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const x = c.getContext('2d')!;
+  const gr = x.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  gr.addColorStop(0, 'rgba(0,0,0,0.55)');
+  gr.addColorStop(0.55, 'rgba(0,0,0,0.30)');
+  gr.addColorStop(1, 'rgba(0,0,0,0)');
+  x.fillStyle = gr;
+  x.fillRect(0, 0, S, S);
+  const t = new THREE.CanvasTexture(c);
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(5.6, 2.6), new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false }));
+  m.rotation.x = -Math.PI / 2;
+  m.position.y = 0.015;
+  m.renderOrder = 1;
+  return m;
 }
 
 export function createGarageRoom(scene: THREE.Scene): GarageRoom {
@@ -22,10 +76,14 @@ export function createGarageRoom(scene: THREE.Scene): GarageRoom {
   g.name = 'garage_room';
 
   // ---- shell ------------------------------------------------------------------------------------------------
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D), mat(0x3d3f44, 0.9));
+  const concrete = concreteTex(5, 3.5);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D), new THREE.MeshStandardMaterial({
+    map: concrete.map, roughnessMap: concrete.rough, roughness: 0.62, metalness: 0.03, color: 0xffffff, side: THREE.DoubleSide,
+  }));
   floor.rotation.x = -Math.PI / 2;
   floor.receiveShadow = true;
   g.add(floor);
+  g.add(contactShadow());   // grounds the hero car whatever the lighting does
   const line = mat(0xd8d2c4, 0.7);
   for (const x of [-4.2, 4.2]) {
     const l = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.012, 14), line);
@@ -33,7 +91,8 @@ export function createGarageRoom(scene: THREE.Scene): GarageRoom {
     g.add(l);
   }
 
-  const wall = mat(0x4d5158, 0.88);
+  const wallTex = concreteTex(6, 2);
+  const wall = new THREE.MeshStandardMaterial({ map: wallTex.map, roughnessMap: wallTex.rough, roughness: 0.9, metalness: 0.02, color: 0xb9bdc4, side: THREE.DoubleSide });
   const rib = mat(0x2a2c31, 0.95);
   const side = (x: number, rotY: number) => {
     const w = new THREE.Mesh(new THREE.PlaneGeometry(D, H), wall);
@@ -74,8 +133,8 @@ export function createGarageRoom(scene: THREE.Scene): GarageRoom {
   sun.shadow.mapSize.set(2048, 2048);
   g.add(sun, sun.target);
   g.add(new THREE.HemisphereLight(0xcfe0f5, 0x4a4238, 3.2));
-  const frontKey = new THREE.PointLight(0xffe9d0, 55, 20, 2);
-  frontKey.position.set(5.5, 2.4, 8.5);   // low front key so the nose and wheels are not in shade
+  const frontKey = new THREE.PointLight(0xffe9d0, 28, 18, 2);
+  frontKey.position.set(5.5, 3.4, 8.8);   // front fill, kept high so it does not mirror as a white blob in the hood
   g.add(frontKey);
   const warm = new THREE.PointLight(0xffd9a8, 60, 22, 2);
   warm.position.set(-6, 4.2, -4);
@@ -320,7 +379,7 @@ export function createGarageRoom(scene: THREE.Scene): GarageRoom {
     }
     const barMat = new THREE.MeshBasicMaterial({ color: 0xfff2d8 });
     for (const x of [-3.8, 0, 3.8]) { const b = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.08, 0.14), barMat); b.position.set(x, 5.3, zWall + zs * 0.17); bay.add(b); }
-    const bayLight = new THREE.PointLight(0xffe7c6, 160, 22, 2);
+    const bayLight = new THREE.PointLight(0xffe7c6, 70, 22, 2);
     bayLight.position.set(0, 4.6, zLight);
     bay.add(bayLight);
     for (let i = 0; i < 4; i++) { const t = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.24, 18), mat(0x101114, 0.95)); t.position.set(-6.2, 0.12 + i * 0.25, zProp); bay.add(t); }
