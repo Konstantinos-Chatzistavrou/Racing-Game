@@ -39,7 +39,7 @@ export const SPLITTERS: Record<string, string> = { stock: 'Stock', ...kits('spli
 export const DIFFUSERS: Record<string, string> = { stock: 'Stock', ...kits('diffuser') };
 export const SKIRTS: Record<string, string> = { stock: 'Stock', ...kits('skirt') };
 const bodyKits = (k: BodyPartKind) => Object.fromEntries(BODY_NAMES.filter((s) => s.kind === k).map((s) => [s.id, s.name]));
-export const FRONT_BUMPERS: Record<string, string> = { stock: 'Stock', ...bodyKits('front') };
+export const FRONT_BUMPERS: Record<string, string> = { stock: 'Stock', 'front-shell-wide': 'Wide shell', 'front-shell-track': 'Track shell', ...bodyKits('front') };
 export const REAR_BUMPERS: Record<string, string> = { stock: 'Stock', ...bodyKits('rear') };
 export const HOODS: Record<string, string> = { stock: 'Stock', ...bodyKits('hood') };
 export const FENDERS: Record<string, string> = { stock: 'Stock', ...bodyKits('fender') };

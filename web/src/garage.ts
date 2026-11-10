@@ -89,6 +89,9 @@ import { PART_METRICS } from './parts-metrics';
 
 /** Measured effect of a part (from its generated geometry), or zeros for stock/unknown ids. */
 export function partEffect(id: string): { df: number; drag: number; kg: number } {
+  // fitted shells are derived from the stock bumper, so their effect is authored rather than bbox-measured
+  if (id === 'front-shell-wide') return { df: 0.03, drag: 0.008, kg: 1.8 };
+  if (id === 'front-shell-track') return { df: 0.045, drag: 0.014, kg: 2.4 };
   return (id && PART_METRICS[id]) || { df: 0, drag: 0, kg: 0 };
 }
 

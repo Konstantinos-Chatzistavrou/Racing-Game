@@ -226,6 +226,31 @@ export class CarCustomizer {
       model.add(g);
     }
     this.bodyStock = { front: model.getObjectByName('bumper_front') ?? undefined, rear: model.getObjectByName('bumper_rear') ?? undefined, hood: model.getObjectByName('hood') ?? undefined };
+    // true replacement shells: clone the model's own bumper and reshape it, so it fits the car by construction
+    const shellOf = (stock: THREE.Object3D | undefined, mode: 'wide' | 'track'): THREE.Object3D | null => {
+      if (!stock) return null;
+      const c = stock.clone(true);
+      c.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (!m.isMesh || !m.geometry) return;
+        const geo = m.geometry.clone();
+        const p = geo.attributes.position as THREE.BufferAttribute;
+        for (let i = 0; i < p.count; i++) {
+          const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+          p.setXYZ(i, x * (mode === 'wide' ? 1.045 : 1.02), (mode === 'track' ? y * 0.94 + 0.01 : y), z + 0.035);
+        }
+        p.needsUpdate = true;
+        geo.computeVertexNormals();
+        m.geometry = geo;
+        m.material = this.paint ?? this.aeroMat;
+      });
+      c.visible = false;
+      return c;
+    };
+    const wideShell = shellOf(this.bodyStock.front, 'wide');
+    const trackShell = shellOf(this.bodyStock.front, 'track');
+    if (wideShell) { wideShell.name = 'shell_front-wide'; this.bodyParts['front-shell-wide'] = wideShell; model.add(wideShell); }
+    if (trackShell) { trackShell.name = 'shell_front-track'; this.bodyParts['front-shell-track'] = trackShell; model.add(trackShell); }
     // fender flares: a half-torus arch over each wheel (a full shell read as a black disc), body-coloured
     const fenderIds = BODY_SPECS.filter((s) => s.kind === 'fender').map((s) => s.id);
     const halfW = Math.max(this.box.max.x, -this.box.min.x) * 0.92;
