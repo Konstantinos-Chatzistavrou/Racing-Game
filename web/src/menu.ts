@@ -244,26 +244,36 @@ export class Menu {
     if (this.identity.needsPick && !this.tuning) return this.pickName();
     const me = `<button class="me-chip" data-act="profile-open" ${dis}><span class="avatar">${helmetSvg(skinOf(this.sel.skin), 26)}</span><b>${esc(this.identity.name)}</b>
       <span class="dim">${this.identity.friends.incoming.length ? `· ${this.identity.friends.incoming.length} friend request${this.identity.friends.incoming.length > 1 ? 's' : ''}` : '· Profile &amp; friends'}</span></button>`;
-    return `${this.tuning ? '<div class="cover"><div class="card center"><div class="spin"></div><p>Calibrating WebGPU pipeline…</p><span class="dim">Optimizing resolution &amp; reflections for this display.</span></div></div>' : ''}
+    const st = statsOf(applyMods(this.physics[this.sel.car], modsOf(this.sel)));
+    const cls = st.power > 420 ? 'S' : st.power > 330 ? 'A' : st.power > 250 ? 'B' : 'C';
+    const nav = (act: string, n: string, label: string, sub: string, primary = false, extra = '') =>
+      `<button class="tnav huge ${primary ? 'primary' : ''}" data-act="${act}" ${dis} ${extra}><i>${n}</i><b>${label}</b><span>${sub}</span><u aria-hidden="true"></u></button>`;
+    return `${this.tuning ? '<div class="cover"><div class="card center"><div class="spin"></div><p>Tuning graphics for this device…</p><span class="dim">Measuring the street once to pick resolution and effects.</span></div></div>' : ''}
       <div class="title">
-        <div class="kicker">OPEN-WORLD STREET RACING // PACEJKA MF 6.1</div>
-        <div class="heat-chip ${this.heat >= 5 ? 'maxed' : this.heat === 4 ? 'hot' : ''}">HEAT ${this.heat}/5</div>
-        <div class="logo">OPEN<span>GRID</span></div>
-        ${me}
-        <div class="sub">Active vehicle: <b>${esc(curCar.name)}</b></div>
-        <div class="careers">${this.careerCard('sp')}${this.careerCard('mp')}</div>
-        ${earned}
-        ${invite}
-        <div class="title-btns">
-          <button class="primary huge" data-act="play" ${dis}>▶ Play</button>
-          <button class="huge" data-act="garage-open" ${dis}>⚙ Garage</button>
-          <button class="huge" data-act="shop-open" ${dis}>🛒 Shop</button>
-          <button class="huge" data-act="settings-open" ${dis}>☰ Settings</button>
-          ${this.heat > 0 && this.layLowCost >= 0 ? `<button class="huge lay" data-act="laylow" ${dis} ${this.sp.xp < this.layLowCost ? 'disabled title="Not enough reputation"' : ''}>🕶 Lay low · ${this.layLowCost} XP</button>` : ''}
+        <div class="t-brand">
+          <div class="kicker">NIGHT SHIFT // OPEN-WORLD STREET RACING</div>
+          <div class="logo">OPEN<span>GRID</span></div>
         </div>
-        <div class="dim note">${esc(this.gfxNote || 'WebGPU Clustered Forward+ · 240 Hz Physics')} · Assists: ${this.assists.preset[0].toUpperCase() + this.assists.preset.slice(1)}</div>
-        <a class="source-link dim" href="https://github.com/Konstantinos-Chatzistavrou/Racing-Game" target="_blank" rel="noopener">Source code · code AGPL-3.0 · assets CC BY-NC 4.0</a>
-      </div>`;
+        <nav class="title-btns">
+          ${nav('play', '01', 'Play', 'Race · Free roam · Online', true)}
+          ${nav('garage-open', '02', 'Garage', 'Paint, parts and tuning')}
+          ${nav('shop-open', '03', 'Shop', 'Cars, upgrades, driver gear')}
+          ${nav('settings-open', '04', 'Settings', 'Assists, controls, graphics')}
+          ${this.heat > 0 && this.layLowCost >= 0 ? nav('laylow', '05', 'Lay low', `Clear your heat · ${this.layLowCost} XP`, false, this.sp.xp < this.layLowCost ? 'disabled title="Not enough reputation"' : '').replace('tnav huge', 'tnav huge lay') : ''}
+        </nav>
+        ${invite}
+        <div class="t-driver">
+          ${me}
+          <div class="careers">${this.careerCard('sp')}${this.careerCard('mp')}</div>
+          ${earned}
+        </div>
+        <div class="t-foot">
+          <div class="dim note">${esc(this.gfxNote || 'WebGPU · 240 Hz physics')} · Assists: ${this.assists.preset[0].toUpperCase() + this.assists.preset.slice(1)}</div>
+          <a class="source-link dim" href="https://github.com/Konstantinos-Chatzistavrou/Racing-Game" target="_blank" rel="noopener">Source code · code AGPL-3.0 · assets CC BY-NC 4.0</a>
+        </div>
+      </div>
+      <div class="t-heat heat-chip ${this.heat >= 5 ? 'maxed' : this.heat === 4 ? 'hot' : ''}"><span>HEAT</span>${Array.from({ length: 5 }, (_, i) => `<i class="${i < this.heat ? 'on' : ''}"></i>`).join('')}<b>${this.heat}/5</b></div>
+      <div class="t-car"><span>ACTIVE VEHICLE</span><b>${esc(curCar.name)}</b><em><i>CLASS ${cls}</i>${Math.round(st.power)} kW · ${Math.round(st.mass)} kg</em></div>`;
   }
 
   private settings() {
@@ -422,14 +432,14 @@ export class Menu {
         </div>
       </header>
       <aside class="g-carlist panel"><h3>Your cars (${this.cars.filter((c) => w.owns(c.id)).length}/${this.cars.length})</h3>${cards}
-        ${this.cars.some((c) => !w.owns(c.id)) ? '<button class="small more-cars" data-act="shop-open">🛒 More cars in the Shop</button>' : ''}</aside>
+        ${this.cars.some((c) => !w.owns(c.id)) ? '<button class="small more-cars" data-act="shop-open">+ More cars</button>' : ''}</aside>
       <nav class="g-rail">${rail}</nav>
       <section class="g-stage panel"><div class="g-stage-scroll"><div class="g-tabtitle">${this.garageTab.toUpperCase()}</div>${this.lookNow()}${body}</div></section>
       <section class="g-live" id="g-live">${this.liveStats()}</section>
       <footer class="g-foot">
         <button data-act="home" class="back-btn">← Main Menu</button>
         <div class="g-summary"><b>${esc(this.car().name)}</b><span class="dim">${stages ? `${stages} upgrade stage${stages > 1 ? 's' : ''} fitted` : 'Stock'} · ${FINISHES[sel.finish].label} paint · ${Math.round(now.power)} kW</span></div>
-        <button class="primary huge go" data-act="play">Continue ▶</button>
+        <button class="primary huge go" data-act="play">Continue</button>
       </footer>
     </div>`;
   }
@@ -509,7 +519,7 @@ export class Menu {
     const sw = SWATCHES.map((x) => `<button class="sw ${x === paint ? 'on' : ''}" style="background:${x}" data-act="paint" data-v="${x}" aria-label="${x}"></button>`).join('');
     const fin = (Object.keys(FINISHES) as Finish[]).map((f) => `<button class="chip ${sel.finish === f ? 'on' : ''}" data-act="finish" data-v="${f}">${FINISHES[f].label}</button>`).join('');
     const looks = LOOK_PRESETS.map((p) => `<button class="chip" data-act="look" data-v="${p.id}" title="${esc(p.blurb)}">${esc(p.label)}</button>`).join('');
-    return `<h3>Heat presets <small>one click, everything below changes</small></h3><div class="chips">${looks}</div>
+    return `<h3>Style presets <small>one click, everything below changes</small></h3><div class="chips">${looks}</div>
       <h3>Body colour</h3>
       <div class="sws">${sw}<label class="sw custom" title="Custom colour"><input id="custom" type="color" value="${paint}" /></label></div>
       <h3>Finish</h3><div class="chips">${fin}</div>
@@ -592,28 +602,28 @@ export class Menu {
     return `<div class="modes-screen">
       <div class="m-head">
         <button data-act="home" class="back-btn">← Main Menu</button>
-        <div><div class="kicker">SELECT EVENT</div><h2>Choose Game Mode</h2></div>
+        <div><div class="kicker">SELECT EVENT</div><h2>Tonight's run</h2></div>
         <div class="m-car dim">Driving: <b>${esc(this.car().name)}</b></div>
       </div>
       <div class="mode-cards">
         <div class="mcard">
-          <div class="mcard-top"><span class="micon">🏁</span><b>Race</b><span class="dim">6-car grid · you vs 5 rivals</span></div>
+          <div class="mcard-top"><span class="micon">01</span><b>Race</b><span class="dim">6-car grid · you vs 5 rivals</span></div>
           <p class="dim">Start mid-pack through the city. Rivals take their own lines and fight for position. Finish ahead of them all.</p>
           <div class="opts"><span class="dim">RULES</span><span class="pill ${sel.realism ? 'gold' : ''}">${sel.realism ? 'FULL REALISM' : 'RESPAWNS'}</span><span class="dim small-note">change on the main menu</span></div>
           <div class="opts"><span class="dim">LAPS</span>${laps}</div>
-          <button class="primary huge" data-act="start-race">▶ Start Race · ${sel.laps} Lap${sel.laps > 1 ? 's' : ''}</button>
+          <button class="primary huge" data-act="start-race">Start Race · ${sel.laps} Lap${sel.laps > 1 ? 's' : ''}</button>
         </div>
         <div class="mcard">
-          <div class="mcard-top"><span class="micon">🌃</span><b>Free Roam</b><span class="dim">Just you · open city</span></div>
+          <div class="mcard-top"><span class="micon">02</span><b>Free Roam</b><span class="dim">Just you · open city</span></div>
           <p class="dim">The streets to yourself. Learn the car, chase lap times, no traffic and no clock pressure.</p>
           <div class="opts"><span class="dim">Unlimited laps · lap timer runs</span></div>
-          <button class="primary huge" data-act="start-free">▶ Drive</button>
+          <button class="primary huge" data-act="start-free">Drive</button>
         </div>
         <div class="mcard">
-          <div class="mcard-top"><span class="micon">👥</span><b>Multiplayer</b><span class="dim">Party with friends · up to ${MAX_MEMBERS}</span></div>
+          <div class="mcard-top"><span class="micon">03</span><b>Multiplayer</b><span class="dim">Party with friends · up to ${MAX_MEMBERS}</span></div>
           <p class="dim">Create a party, send the invite link, then race or cruise together. Peer-to-peer: no account needed.</p>
           <div class="opts">${inParty || '<span class="dim">Create or join a party</span>'}</div>
-          <button class="primary huge" data-act="lobby">Party Lobby ▶</button>
+          <button class="primary huge" data-act="lobby">Party Lobby</button>
         </div>
       </div>
     </div>`;

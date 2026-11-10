@@ -59,7 +59,7 @@ class Shell {
 }
 
 // ---- canvas art (signs, stencils): original graphics drawn at load, no image assets -----------------------------
-const FONT = '"Arial Black", "Segoe UI Black", "Noto Sans", system-ui, sans-serif';
+const FONT = '"Barlow Condensed", "Arial Black", "Segoe UI Black", "Noto Sans", system-ui, sans-serif';   // the UI's display face (ui.css)
 function canvasTex(w: number, h: number, draw: (x: CanvasRenderingContext2D, w: number, h: number) => void): THREE.CanvasTexture {
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
@@ -102,8 +102,8 @@ function neonText(x: CanvasRenderingContext2D, text: string, px: number, py: num
 }
 const signTex = () => canvasTex(2048, 512, (x, w, h) => {
   x.clearRect(0, 0, w, h);
-  neonText(x, 'OPEN', 70, h / 2 + 6, 300, '#eaf6ff');
-  neonText(x, 'GRID', 1090, h / 2 + 6, 300, '#ff2d6a');
+  neonText(x, 'OPEN', 250, h / 2 + 10, 400, '#eaf6ff');
+  neonText(x, 'GRID', 1100, h / 2 + 10, 400, '#ff2d6a');
 });
 const muralTex = () => canvasTex(2048, 640, (x, w, h) => {
   x.clearRect(0, 0, w, h);
@@ -204,6 +204,11 @@ export async function buildRoom(env: THREE.Texture, lamps: [number, number][] = 
   const [concreteF, brick, iron, shutter, deck, concreteW] = await Promise.all([
     maps('painted_concrete_02', true, true), maps('factory_brick'), maps('corrugated_iron_02', true, true),
     maps('painted_metal_shutter', true, true), maps('rubber_tiles'), maps('concrete_wall_008'),
+  ]);
+  // the signs are drawn with the UI's display face: wait for it (briefly), or they are baked in a fallback font
+  await Promise.race([
+    Promise.all([document.fonts.load('italic 900 120px "Barlow Condensed"'), document.fonts.load('700 120px "Barlow Condensed"')]).catch(() => undefined),
+    new Promise((r) => setTimeout(r, 2500)),
   ]);
   const group = new THREE.Group();
   group.name = 'garage';

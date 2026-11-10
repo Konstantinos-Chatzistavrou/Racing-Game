@@ -257,7 +257,7 @@ export const LOOK_PRESETS: LookPreset[] = [
       caliper: '#c8a24a', headlights: 'white', smokedTails: false, underglow: '#b14dff', tint: 1, exhaust: 'titanium' },
   },
   {
-    id: 'sunset', label: 'Heat sunset', blurb: 'Amber metallic with a gold underglow, two-tone roof',
+    id: 'sunset', label: 'Sunset run', blurb: 'Amber metallic with a gold underglow, two-tone roof',
     paint: '#ff7a00', finish: 'metallic',
     parts: { livery: 4, liveryColor: '#15171c', wing: 'gt', aero: 'gloss', rimColor: '#c8a24a', rimFinish: 'satin',
       caliper: '#c0160f', headlights: 'yellow', smokedTails: true, underglow: '#ffb547', tint: 1, exhaust: 'titanium' },

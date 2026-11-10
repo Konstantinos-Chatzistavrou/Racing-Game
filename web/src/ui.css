@@ -1,0 +1,315 @@
+/* Open Grid UI, "Night Shift" design layer (loaded after style.css, which keeps the structure and the phone rules).
+   One system for every screen:
+   - type: Barlow Condensed italic for anything that is a NAME or a NUMBER (titles, buttons, speed, laps),
+     Barlow for sentences. Sizes never go below 11 px on desktop.
+   - colour: ink panels; hot magenta for the one action and the current state, cyan for information,
+     amber for money / warnings. Neon is for state, never decoration.
+   - shape: parallelogram buttons (the lean of the logo), cut top-right corners on panels, hairline borders.
+   Performance rule from style.css still holds: no backdrop-filter or filter over the live canvas. */
+@font-face { font-family: "Barlow"; font-weight: 400; font-display: swap; src: url(/fonts/Barlow-400.woff2) format("woff2"); }
+@font-face { font-family: "Barlow"; font-weight: 500; font-display: swap; src: url(/fonts/Barlow-500.woff2) format("woff2"); }
+@font-face { font-family: "Barlow"; font-weight: 600; font-display: swap; src: url(/fonts/Barlow-600.woff2) format("woff2"); }
+@font-face { font-family: "Barlow"; font-weight: 700; font-display: swap; src: url(/fonts/Barlow-700.woff2) format("woff2"); }
+@font-face { font-family: "Barlow Condensed"; font-weight: 600; font-display: swap; src: url(/fonts/BarlowCondensed-600.woff2) format("woff2"); }
+@font-face { font-family: "Barlow Condensed"; font-weight: 700; font-display: swap; src: url(/fonts/BarlowCondensed-700.woff2) format("woff2"); }
+@font-face { font-family: "Barlow Condensed"; font-weight: 700; font-style: italic; font-display: swap; src: url(/fonts/BarlowCondensed-700i.woff2) format("woff2"); }
+@font-face { font-family: "Barlow Condensed"; font-weight: 800; font-style: italic; font-display: swap; src: url(/fonts/BarlowCondensed-800i.woff2) format("woff2"); }
+@font-face { font-family: "Barlow Condensed"; font-weight: 900; font-style: italic; font-display: swap; src: url(/fonts/BarlowCondensed-900i.woff2) format("woff2"); }
+
+:root {
+  --hot: #ff2d6a; --hot2: #ff6a3d; --cy: #19d3ff; --amber: #ffb02e;
+  --accent: var(--hot); --accent2: var(--hot2); --warn: var(--amber);
+  --ink: #05070c; --panel: #080b12ee; --panel2: #0e131ef2; --line: #ffffff16; --line2: #ffffff30;
+  --display: "Barlow Condensed", "Arial Narrow", "Segoe UI", system-ui, sans-serif;
+  --text: "Barlow", "Inter", "Segoe UI", system-ui, sans-serif;
+  --cut: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+  --lean: polygon(12px 0, 100% 0, calc(100% - 12px) 100%, 0 100%);
+  --r: 0px;
+}
+html, body { font-family: var(--text); font-size: 15px; }
+
+/* ---- shared pieces ------------------------------------------------------------------------------------------- */
+#menu .kicker { font: 700 12px/1 var(--display); letter-spacing: .34em; color: var(--hot); margin-bottom: 8px; }
+#menu h2 { font: italic 900 38px/1 var(--display); letter-spacing: .01em; text-transform: uppercase; margin: 0 0 18px; }
+#menu h3 { font: 700 12px/1 var(--display); letter-spacing: .26em; color: var(--dim); margin: 20px 0 10px; }
+#menu h3::before { width: 14px; height: 2px; border-radius: 0; background: var(--hot); }
+#menu h3 small { font: 500 11px var(--text); letter-spacing: .02em; }
+#menu button { border-radius: 0; font-family: var(--display); font-weight: 700; font-size: 15px; letter-spacing: .08em; text-transform: uppercase;
+  padding: 9px 18px; background: #ffffff0a; border: 1px solid var(--line2); transition: background .12s, border-color .12s, color .12s, transform .08s; }
+#menu button:hover:not(:disabled) { background: #ffffff1c; border-color: #ffffff66; }
+#menu button.primary { background: linear-gradient(100deg, var(--hot), var(--hot2)); border-color: transparent; font-style: italic; font-weight: 800;
+  letter-spacing: .1em; clip-path: var(--lean); padding-left: 26px; padding-right: 26px; }
+#menu button.primary:hover:not(:disabled) { background: linear-gradient(100deg, #ff4a80, #ff8257); }
+#menu .small { font-size: 13px; padding: 7px 14px; }
+#menu .huge { font-size: 19px; padding: 14px 34px; }
+#menu .chip { border-radius: 0; font: 600 14px/1 var(--display); letter-spacing: .08em; padding: 8px 14px; }
+#menu .chip.on { background: #ff2d6a2e; border-color: var(--hot); color: #fff; box-shadow: inset 3px 0 0 var(--hot); }
+#menu .card, #menu .panel, #menu .g-bottom { border-radius: 0; background: var(--panel); border: 1px solid var(--line); }
+#menu .card { border-top: 0; padding: 30px 36px; clip-path: var(--cut); position: relative; }
+#menu .card::before { content: ""; position: absolute; left: 0; top: 0; width: 64px; height: 3px; background: linear-gradient(90deg, var(--hot), var(--hot2)); }
+#menu .note { font-size: 12px; }
+#menu .pill { border-radius: 0; font: 700 11px/1 var(--display); letter-spacing: .16em; padding: 4px 8px; }
+#menu input[type=text] { border-radius: 0; font-family: var(--text); }
+#menu .back-btn { font-size: 13px; letter-spacing: .14em; color: var(--dim); background: transparent; clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 100%, 0 100%); padding-right: 22px; }
+#menu .back-btn:hover:not(:disabled) { color: var(--fg); }
+#menu .nav-focus { outline: 2px solid #fff; outline-offset: 2px; box-shadow: 0 0 0 5px #ff2d6a70; }
+.spin { border-top-color: var(--hot); }
+
+/* ---- enter gate + loading -------------------------------------------------------------------------------------- */
+#enter, #loading, #loader { background: radial-gradient(90% 70% at 50% 110%, #2a0716 0%, #0a0d16 46%, var(--ink) 78%); }
+.enter-brand, .load-brand { font: italic 900 clamp(64px, 11vw, 150px)/.84 var(--display); letter-spacing: -.01em; }
+.enter-brand span, .load-brand span { color: var(--hot); }
+.enter-msg { font: 700 clamp(13px, 1.5vw, 18px)/1 var(--display); letter-spacing: .42em; }
+.enter-hint, .load-sub, #load-msg, #loader .load-msg { font-family: var(--display); font-weight: 600; letter-spacing: .3em; }
+.load-sub { font-size: 13px; color: var(--hot); margin: 14px 0 36px; }
+.load-bar, .ld-bar { height: 2px; border-radius: 0; }
+.load-bar i { background: linear-gradient(90deg, var(--hot), var(--hot2)); }
+.ld-tip { font-size: 14px; }
+
+/* ---- title ------------------------------------------------------------------------------------------------------ */
+#menu[data-screen="title"]::before { background: linear-gradient(90deg, #05070cf2 0%, #05070cc4 24%, #05070c55 42%, #05070c00 60%),
+  linear-gradient(0deg, #05070cb0 0%, #05070c00 22%); }
+#menu .title { left: clamp(28px, 4.6vw, 96px); top: 0; bottom: 0; transform: none; justify-content: center; gap: 18px; max-width: 520px; }
+#menu .t-brand .kicker { margin-bottom: 10px; }
+#menu .logo { font: italic 900 clamp(72px, 8.6vw, 148px)/.8 var(--display); letter-spacing: -.012em; text-transform: uppercase; }
+#menu .logo span { color: var(--hot); margin-left: .06em; }
+#menu .title-btns { display: flex; flex-direction: column; gap: 6px; width: min(460px, 100%); margin-top: 10px; }
+#menu .tnav { position: relative; display: grid; grid-template-columns: 34px 1fr; grid-template-rows: auto auto; column-gap: 12px; align-items: baseline;
+  width: 100%; text-align: left; padding: 12px 22px 11px 16px; background: #0a0e16d0; border: 1px solid var(--line); clip-path: var(--lean); overflow: hidden;
+  transition: background .14s, border-color .14s, padding-left .14s; }
+#menu .tnav i { grid-row: 1 / 3; align-self: center; font: 700 14px/1 var(--display); font-style: normal; letter-spacing: .1em; color: #ffffff55; padding-left: 12px; }
+#menu .tnav b { font: italic 800 30px/1 var(--display); letter-spacing: .03em; }
+#menu .tnav span { font: 500 13px/1.25 var(--text); letter-spacing: .01em; text-transform: none; color: var(--dim); }
+#menu .tnav u { position: absolute; right: 22px; top: 50%; width: 9px; height: 9px; border-right: 2px solid #ffffff60; border-top: 2px solid #ffffff60; transform: translateY(-50%) rotate(45deg); transition: right .14s, border-color .14s; }
+#menu .tnav:hover:not(:disabled), #menu .tnav.nav-focus { background: #131a27e8; border-color: #ffffff50; padding-left: 24px; }
+#menu .tnav:hover:not(:disabled) u { right: 16px; border-color: #fff; }
+#menu .tnav.primary { background: linear-gradient(100deg, var(--hot), var(--hot2)); border-color: transparent; padding-top: 15px; padding-bottom: 14px; }
+#menu .tnav.primary b { font-size: 40px; font-weight: 900; }
+#menu .tnav.primary i, #menu .tnav.primary span { color: #ffffffd0; }
+#menu .tnav.primary u { border-color: #fff; }
+#menu .tnav.primary:hover:not(:disabled) { background: linear-gradient(100deg, #ff4a80, #ff8257); }
+#menu .tnav.lay b { color: var(--amber); }
+#menu .title-btns button:not(.primary) { background: #0a0e16d0; border-color: var(--line); font-weight: 700; }
+#menu .t-driver { display: flex; flex-direction: column; gap: 8px; width: min(460px, 100%); margin-top: 6px; }
+#menu .me-chip { margin: 0; align-self: flex-start; border-radius: 0; padding: 6px 16px 6px 8px; font: 600 15px/1 var(--text); letter-spacing: 0; text-transform: none; background: #0a0e16d0; }
+#menu .me-chip b { font: italic 800 19px/1 var(--display); letter-spacing: .03em; text-transform: none; }
+#menu .me-chip .dim { font-size: 12px; }
+#menu .careers { gap: 6px; max-width: none; margin: 0; }
+#menu .ccard { border-radius: 0; background: #0a0e16d0; padding: 9px 12px; gap: 4px; }
+#menu .ccard > .dim:first-child { font: 700 11px/1 var(--display); letter-spacing: .24em; }
+#menu .ccard b { font: italic 800 20px/1 var(--display); letter-spacing: .02em; }
+#menu .xpbar { height: 3px; border-radius: 0; }
+#menu .xpbar i { background: linear-gradient(90deg, var(--cy), #7be4ff); }
+#menu .credits { color: var(--amber); font-family: var(--display); font-size: 17px; }
+#menu .t-foot { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+#menu .t-foot .note { margin: 0; min-height: 0; }
+#menu .source-link { font-size: 12px; }
+#menu .earned { font: 700 15px var(--display); letter-spacing: .04em; }
+#menu .invite { border-radius: 0; }
+/* heat: top right, five pips */
+#menu .t-heat { position: absolute; right: clamp(20px, 3vw, 56px); top: 26px; display: flex; align-items: center; gap: 5px; padding: 8px 14px; border-radius: 0;
+  background: #0a0e16d0; border: 1px solid var(--line); clip-path: var(--lean); font: 700 13px/1 var(--display); letter-spacing: .24em; color: var(--dim); pointer-events: none; }
+#menu .t-heat span { margin-right: 6px; padding-left: 8px; }
+#menu .t-heat i { width: 16px; height: 6px; background: #ffffff1c; transform: skewX(-24deg); }
+#menu .t-heat i.on { background: linear-gradient(90deg, var(--amber), var(--hot)); box-shadow: 0 0 10px #ff2d6a80; }
+#menu .t-heat b { margin-left: 8px; padding-right: 8px; color: var(--fg); letter-spacing: .06em; font-size: 15px; }
+#menu .t-heat.maxed { background: #0a0e16d0; color: var(--hot); }
+/* the car on the turntable gets a name plate */
+#menu .t-car { position: absolute; right: clamp(20px, 3vw, 56px); bottom: 34px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; text-align: right; pointer-events: none; }
+#menu .t-car span { font: 700 12px/1 var(--display); letter-spacing: .34em; color: var(--hot); }
+#menu .t-car b { font: italic 900 clamp(40px, 4.6vw, 76px)/.86 var(--display); letter-spacing: .01em; text-transform: uppercase; text-shadow: 0 4px 30px #000a; }
+#menu .t-car em { display: flex; align-items: center; gap: 10px; font: 600 17px/1 var(--display); font-style: normal; letter-spacing: .12em; color: #d5dbe6; }
+#menu .t-car em i { font-style: normal; font-weight: 700; font-size: 13px; letter-spacing: .18em; color: #07090d; background: var(--fg); padding: 4px 12px; clip-path: polygon(7px 0, 100% 0, calc(100% - 7px) 100%, 0 100%); }
+#menu .cover { background: #05070cf7; }
+
+/* ---- game modes --------------------------------------------------------------------------------------------------- */
+#menu[data-screen="modes"], #menu[data-screen="lobby"] { background: linear-gradient(180deg, #05070c70 0%, #05070ce0 62%); }
+#menu .m-head h2 { font-size: 46px; margin: 0; }
+#menu .m-car { font: 600 15px var(--display); letter-spacing: .1em; text-transform: uppercase; }
+#menu .mode-cards { gap: 14px; }
+#menu .mcard { border-radius: 0; border-top: 1px solid var(--line); clip-path: var(--cut); padding: 24px 24px 22px; gap: 14px; position: relative; background: #080b12f2;
+  transition: border-color .14s, background .14s; }
+#menu .mcard::before { content: ""; position: absolute; left: 0; top: 0; width: 72px; height: 3px; background: linear-gradient(90deg, var(--hot), var(--hot2)); transition: width .18s ease-out; }
+#menu .mcard:hover { border-color: #ffffff40; background: #0c111bf5; }
+#menu .mcard:hover::before { width: 100%; }
+#menu .mcard-top { grid-template-columns: 1fr; row-gap: 4px; }
+#menu .mcard-top .micon { grid-row: auto; font: 700 14px/1 var(--display); letter-spacing: .2em; color: var(--hot); }
+#menu .mcard-top b { font: italic 900 44px/.9 var(--display); letter-spacing: .01em; text-transform: uppercase; }
+#menu .mcard-top span.dim { font: 600 14px var(--display); letter-spacing: .12em; text-transform: uppercase; }
+#menu .mcard p { font-size: 15px; line-height: 1.5; }
+#menu .opts > .dim:first-child { font: 700 12px/1 var(--display); letter-spacing: .22em; }
+#menu .mcard .huge { clip-path: var(--lean); }
+
+/* ---- cards: pause, results, settings, shop, lobby ----------------------------------------------------------------- */
+#menu[data-screen="pause"], #menu[data-screen="results"] { background: #05070cc8; }
+#menu .pause-card { min-width: 380px; text-align: left; }
+#menu .pause-card h2 { font-size: 64px; margin-bottom: 20px; }
+#menu .btns.col { gap: 6px; }
+#menu .btns.col button { text-align: left; padding: 13px 20px; font-size: 17px; clip-path: var(--lean); padding-left: 28px; }
+#menu .big { font: italic 900 72px/1 var(--display); letter-spacing: 0; }
+#menu .big small { font-size: 30px; }
+#menu .srow { font-size: 15px; padding: 8px 10px; }
+#menu .srow .spos { font: italic 900 20px/1 var(--display); }
+#menu .srow.you { border-radius: 0; background: #ff2d6a26; box-shadow: inset 3px 0 0 var(--hot); }
+#menu .rows .row { font-size: 15px; }
+#menu .rows .row span, #menu .srow2 > .dim:first-child, #menu .field > span, #menu .invite-box > span { font: 700 12px/1 var(--display); letter-spacing: .22em; }
+#menu .lobby-card, #menu .settings-card, #menu .shop-card { padding: 28px 32px; }
+#menu .lobby-head h2 { font-size: 44px; margin: 0; }
+#menu .lcol, #menu .member, #menu .scard, #menu .dev, #menu .invite-box { border-radius: 0; }
+#menu .scard b, #menu .car b { font: italic 800 20px/1 var(--display); letter-spacing: .03em; text-transform: uppercase; }
+#menu .car-badge { border-radius: 0; font: 700 10px/1 var(--display); letter-spacing: .18em; }
+#menu .mini em { border-radius: 0; font: 600 13px var(--display); letter-spacing: .04em; }
+#menu .gtab { border-radius: 0; font: 700 14px/1 var(--display); letter-spacing: .14em; padding: 8px 14px; }
+#menu .gtab.on { background: #ff2d6a2e; border-color: var(--hot); }
+#menu .pip { border-radius: 0; font-size: 12px; }
+#menu .wallet-pill { border-radius: 0; font: 700 18px var(--display); clip-path: var(--lean); padding: 8px 20px; }
+#menu .mod > div:first-child b { font: 700 16px var(--display); letter-spacing: .08em; text-transform: uppercase; }
+#countdown { font: italic 900 clamp(120px, 24vw, 300px)/1 var(--display); }
+
+/* ---- garage (desktop) ---------------------------------------------------------------------------------------------- */
+@media (min-width: 1101px) and (not (pointer: coarse)) {
+  .garage { grid-template-columns: 214px minmax(0, 1fr) 348px !important; grid-template-rows: 64px minmax(0, 1fr) auto 78px 56px !important;
+    grid-template-areas: "head head head" "rail . stage" "cars cars stage" "live live live" "foot foot foot"; gap: 10px !important; padding: 16px 20px 14px !important; }
+  .garage::before { background: linear-gradient(90deg, #05070ccc 0%, #05070c30 16%, transparent 30%, transparent 62%, #05070c50 100%), linear-gradient(0deg, #05070ca8 0%, transparent 26%); }
+  #menu .g-head { grid-area: head !important; gap: 22px; }
+  #menu .g-rail { grid-area: rail !important; justify-content: flex-start; gap: 3px; padding-top: 6px; }
+  #menu .g-stage { grid-area: stage !important; }
+  #menu .g-carlist { grid-area: cars !important; }
+  .garage > .g-live { grid-area: live !important; }
+  .garage > .g-foot { grid-area: foot !important; }
+
+  #menu .g-brand { font: italic 900 46px/.9 var(--display); letter-spacing: 0; gap: 14px; }
+  #menu .g-brand span { font: 700 12px/1 var(--display); letter-spacing: .34em; }
+  #menu .g-carsum { padding-left: 20px; gap: 5px; }
+  #menu .g-name { font: italic 800 24px/1 var(--display); letter-spacing: .04em; gap: 12px; }
+  #menu .g-name i { font: 700 11px/1 var(--display); letter-spacing: .2em; padding: 4px 11px; background: var(--fg); }
+  #menu .g-stats { gap: 18px; font: 600 12px/1 var(--display); letter-spacing: .2em; }
+  #menu .g-stats b { font: italic 800 19px/1 var(--display); }
+  #menu .g-cams { gap: 3px; }
+  #menu .g-cams .chip { font: 700 12px/1 var(--display); letter-spacing: .14em; padding: 8px 11px; clip-path: polygon(7px 0, 100% 0, calc(100% - 7px) 100%, 0 100%); background: #0a0e16d8; box-shadow: none; }
+  #menu .g-cams .chip:hover { color: #fff; border-color: var(--cy); }
+
+  /* category rail: the main navigation of the garage */
+  #menu .g-rail .rail { padding: 11px 14px 10px 12px; gap: 12px; background: #0a0e16d0; border: 1px solid var(--line); clip-path: var(--lean); padding-left: 22px; }
+  #menu .g-rail .rail i { font: 700 12px/1 var(--display); letter-spacing: .1em; }
+  #menu .g-rail .rail b { font: italic 800 21px/1 var(--display); letter-spacing: .05em; }
+  #menu .g-rail .rail:hover { transform: translateX(4px); background: #131a27e8; }
+  #menu .g-rail .rail.on { background: linear-gradient(100deg, var(--hot), var(--hot2)); box-shadow: none; transform: translateX(8px); }
+
+  /* parts panel */
+  #menu .g-stage { padding: 0 18px 18px; background: #080b12f4; clip-path: var(--cut); box-shadow: none; }
+  #menu .g-tabtitle { margin: 0 -18px 12px; padding: 18px 18px 12px; font: italic 900 34px/1 var(--display); letter-spacing: .02em; background: linear-gradient(180deg, #080b12 80%, #080b12e0); border-bottom: 1px solid var(--line); }
+  #menu .g-tabtitle::after { width: 64px; height: 3px; margin-top: 10px; background: linear-gradient(90deg, var(--hot), var(--hot2)); }
+  #menu .g-stage h3 { font: 700 12px/1 var(--display); letter-spacing: .26em; margin: 20px 0 9px; }
+  #menu .g-stage h3::before { width: 14px; height: 2px; }
+  #menu .g-stage .chips { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+  #menu .g-stage .chip { font: 700 14px/1.15 var(--display); letter-spacing: .08em; padding: 11px 12px 11px 15px; background: #0e131e; box-shadow: none; }
+  #menu .g-stage .chip.on { background: linear-gradient(90deg, #ff2d6a40, #0e131e 70%); border-color: #ff2d6aaa; }
+  #menu .g-stage .chip.on::before { background: var(--hot); }
+  #menu .sws { gap: 9px; }
+  #menu .sw { width: 34px; height: 34px; border-radius: 0; transform: skewX(-10deg); border: 2px solid #ffffff22; }
+  #menu .sw.on { border-color: #fff; box-shadow: 0 0 0 2px var(--hot); }
+  #menu .skin { border-radius: 0; font: 700 13px var(--display); letter-spacing: .08em; }
+
+  /* your cars: a strip along the bottom of the stage */
+  #menu .g-carlist { flex-direction: row; align-items: stretch; gap: 6px; padding: 0; background: none; border: 0; box-shadow: none; clip-path: none; overflow-x: auto; overflow-y: hidden; }
+  #menu .g-carlist h3 { writing-mode: vertical-rl; transform: rotate(180deg); margin: 0; font: 700 11px/1 var(--display); letter-spacing: .24em; align-self: center; }
+  #menu .g-carlist h3::before { display: none; }
+  #menu .g-carlist .car { flex: none; width: 196px; padding: 10px 14px 10px 20px; background: #0a0e16d8; clip-path: var(--lean); }
+  #menu .g-carlist .car.on { background: linear-gradient(100deg, #ff2d6a3a, #0a0e16e0 70%); border-color: #ff2d6aaa; }
+  #menu .g-carlist .car.on::before { display: none; }
+  #menu .g-carlist .car-head b { font: italic 800 20px/1 var(--display); }
+  #menu .g-carlist .car-badge { font: 700 10px/1 var(--display); padding: 3px 6px; }
+  #menu .g-carlist .car > span { display: none; }
+  #menu .g-carlist .mini { margin-top: 7px; font: 600 13px var(--display); gap: 5px; }
+  #menu .g-carlist .mini em { padding: 2px 6px; }
+  #menu .g-carlist .more-cars { flex: none; align-self: stretch; width: auto; margin: 0; font-size: 13px; clip-path: var(--lean); padding: 0 22px; }
+
+  /* live numbers */
+  .g-live { padding: 10px 18px; gap: 22px; background: #080b12f4; border: 1px solid var(--line); box-shadow: none; }
+  .g-live .lv span { font: 700 11px/1 var(--display); letter-spacing: .24em; }
+  .g-live .lv b { font: italic 800 23px/1.05 var(--display); letter-spacing: .02em; }
+  .g-live .lv i { font: 500 11px var(--text); }
+  .g-live .lv em { font: 700 13px var(--display); }
+  .g-live .lbar { height: 2px; }
+  .g-live .lbar i { background: linear-gradient(90deg, var(--cy), #7be4ff); }
+
+  #menu .g-foot .back-btn { font: 700 14px/1 var(--display); letter-spacing: .16em; padding: 12px 26px 12px 16px; }
+  #menu .g-foot .g-summary b { font: italic 800 20px/1 var(--display); }
+  #menu .g-foot .g-summary span { font: 500 13px var(--text); letter-spacing: .02em; }
+  #menu .g-foot .go { font: italic 900 24px/1 var(--display); letter-spacing: .1em; padding: 15px 54px; box-shadow: none; clip-path: var(--lean); }
+}
+
+/* ---- HUD -------------------------------------------------------------------------------------------------------------- */
+#hud-actions { gap: 4px; }
+#hud-actions button { border-radius: 0; font: 700 13px/1 var(--display); letter-spacing: .14em; text-transform: uppercase; padding: 7px 12px 7px 16px; background: #080b12c8;
+  border: 1px solid var(--line); color: #c9d0dc; clip-path: polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%); padding-right: 16px; }
+#hud-actions button kbd { margin-left: 6px; font: 600 10px/1 ui-monospace, monospace; color: var(--dim); border: 1px solid #ffffff26; padding: 1px 4px; }
+#hud-garage { border-color: var(--line) !important; }
+#hud-garage:hover { background: #ff2d6a30 !important; }
+#perf { font-size: 10px; opacity: .7; }
+#laps { border-radius: 0; border: 1px solid var(--line); border-top: 0; background: #080b12d8; clip-path: polygon(0 0, 100% 0, 100% 100%, 14px 100%, 0 calc(100% - 14px)); min-width: 210px; padding: 12px 16px 14px; }
+#laps::before { content: ""; position: absolute; left: 0; top: 0; width: 100%; height: 3px; background: linear-gradient(90deg, var(--hot), var(--hot2)); }
+#laps .row { font: 600 17px/1.5 var(--display); letter-spacing: .04em; }
+#laps .row.big { font: italic 800 40px/1.1 var(--display); letter-spacing: .01em; }
+#laps .k { font: 700 12px/1 var(--display); letter-spacing: .24em; align-self: center; }
+#laps .row.pos span:last-child { font: italic 900 26px/1 var(--display); color: var(--amber); }
+#board { border-radius: 0; background: #080b12d8; font: 600 15px var(--display); letter-spacing: .03em; top: 176px; min-width: 210px; }
+#board .b { border-radius: 0; padding: 3px 6px; }
+#board .b i { font: italic 800 15px var(--display); }
+#board .b.you { background: #ff2d6a3a; box-shadow: inset 3px 0 0 var(--hot); }
+#toast { font: 700 16px var(--display); letter-spacing: .36em; }
+#toast b { font: italic 900 78px/1 var(--display); letter-spacing: .01em; }
+#speed { font: italic 900 62px/1 var(--display); letter-spacing: 0; top: 124px; }
+#unit { font: 700 12px/1 var(--display); letter-spacing: .34em; top: 184px; }
+#gear { font: italic 900 38px/1 var(--display); color: var(--hot); top: 62px; }
+#gauge .dial-bg { fill: #05070cd0; stroke: #ffffff18; }
+#gauge .lbl { font: 600 12px var(--display); }
+#revfill.red, #needle { stroke: var(--hot); }
+#gauge .hub { stroke: var(--hot); }
+#assists { font: 600 12px var(--display); letter-spacing: .18em; }
+#damage { font: 600 13px var(--display); letter-spacing: .12em; }
+#warn .chip { border-radius: 0; font: 700 14px var(--display); letter-spacing: .16em; }
+#help { font: 500 12px var(--text); opacity: .8; }
+#help kbd { border-radius: 0; }
+#heat { font: 700 13px/1 var(--display); letter-spacing: .2em; gap: 4px; }
+#heat i { width: 16px; height: 6px; border-radius: 0; border: 0; background: #ffffff20; transform: skewX(-24deg); }
+#heat i.on { background: linear-gradient(90deg, var(--amber), var(--hot)); }
+#heat b { font-size: 15px; margin-left: 6px; }
+#cops { font: italic 800 17px/1.2 var(--display); letter-spacing: .14em; }
+#launch { font: italic 900 22px/1 var(--display); letter-spacing: .3em; }
+#minimap .gps-turn { border-radius: 0; font: 600 15px var(--display); letter-spacing: .04em; background: #080b12e6; }
+#spectate { border-radius: 0; font-family: var(--display); font-size: 16px; }
+#spectate button { border-radius: 0; font-family: var(--display); }
+#tags .tag { border-radius: 0; font: 700 14px var(--display); letter-spacing: .06em; }
+#credits { font-size: 10px; }
+
+/* ---- phones and short windows: the structure rules in style.css stay in charge; only type and shape carry over --------- */
+@media (pointer: coarse), (max-height: 560px) {
+  #menu .title { gap: 6px; top: auto; bottom: auto; }
+  #menu .logo { font-size: clamp(30px, 11vh, 60px); }
+  #menu .title-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 0; }
+  #menu .tnav { display: flex; align-items: center; gap: 8px; padding: 8px 14px; }
+  #menu .tnav i, #menu .tnav span, #menu .tnav u { display: none; }
+  #menu .tnav b, #menu .tnav.primary b { font-size: 17px; }
+  #menu .tnav.primary { padding: 8px 14px; }
+  #menu .t-driver { margin-top: 0; gap: 5px; width: 100%; }
+  #menu .t-foot, #menu .t-car { display: none; }
+  #menu .t-heat { top: calc(6px + env(safe-area-inset-top)); right: calc(8px + env(safe-area-inset-right)); padding: 4px 8px; font-size: 10px; }
+  #menu .t-heat i { width: 9px; height: 4px; }
+  #menu .t-heat b { font-size: 11px; }
+  #menu h2 { font-size: 24px; margin-bottom: 10px; }
+  #menu .m-head h2, #menu .lobby-head h2 { font-size: 24px; }
+  #menu .mcard-top b { font-size: 24px; }
+  #menu .mcard { padding: 12px 14px; gap: 8px; }
+  #menu .huge { font-size: 14px; padding: 9px 16px; }
+  #menu .pause-card h2 { font-size: 34px; margin-bottom: 10px; }
+  #menu .btns.col button { padding: 9px 18px; font-size: 14px; }
+  #menu .big { font-size: 40px; }
+  #menu button { font-size: 13px; }
+  #menu .chip { font-size: 12px; padding: 6px 10px; }
+  #laps .row.big { font-size: 20px; }
+  #laps .row { font-size: 13px; }
+  #speed { font-size: 58px; top: 126px; }
+}
+@media (prefers-reduced-motion: reduce) { #menu .tnav, #menu .mcard::before, #menu .g-rail .rail { transition: none; } }

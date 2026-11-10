@@ -6,7 +6,9 @@
   <meta name="theme-color" content="#05070b" />
   <meta name="mobile-web-app-capable" content="yes" />
   <title>Open Grid</title>
+  <link rel="preload" href="/fonts/BarlowCondensed-800i.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href="/src/style.css" />
+  <link rel="stylesheet" href="/src/ui.css" />
 </head>
 <body>
   <canvas id="view"></canvas>
@@ -20,7 +22,7 @@
   <div id="loading" hidden>
     <div class="load-box">
       <div class="load-brand">OPEN<span>GRID</span></div>
-      <div class="load-sub">OPEN-WORLD STREET RACING // WEBGPU MOTORSPORT SIM</div>
+      <div class="load-sub">NIGHT SHIFT // OPEN-WORLD STREET RACING</div>
       <div class="load-bar"><i id="load-fill"></i></div>
       <div id="load-msg">Loading…</div>
     </div>
@@ -34,10 +36,10 @@
   <div id="hud" hidden>
     <div id="hud-top-left">
       <div id="hud-actions">
-        <button id="hud-garage" type="button" title="Leave the session for the menu (G)">← Menu</button>
-        <button id="hud-pause" type="button" title="Pause (Esc)">⏸ Pause</button>
-        <button id="hud-reset" type="button" title="Reset / Repair Car (R)">⟲ Reset</button>
-        <button id="hud-cam" type="button" title="Switch Camera (C)">🎥 Cam</button>
+        <button id="hud-garage" type="button" title="Leave the session for the menu (G)">Menu <kbd>G</kbd></button>
+        <button id="hud-pause" type="button" title="Pause (Esc)">Pause <kbd>Esc</kbd></button>
+        <button id="hud-reset" type="button" title="Reset / Repair Car (R)">Reset <kbd>R</kbd></button>
+        <button id="hud-cam" type="button" title="Switch Camera (C)">Camera <kbd>C</kbd></button>
       </div>
       <div id="perf"></div>
       <div id="heat" aria-label="Wanted heat"></div>
