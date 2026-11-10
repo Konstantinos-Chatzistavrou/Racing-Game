@@ -49,9 +49,9 @@ export const PRESETS: Record<PresetName, Preset> = {
   // The bloom numbers are per preset and bias the halo to emitters (see BLOOM): the better the preset, the more
   // the signs are allowed to bloom and the less the car body washes out.
   max: { aa: 'smaa', ao: true, ssr: true, bloom: 0.25, shadowEvery: 1, grade: 'full', grain: true, bloomStrength: 0.7, bloomRadius: 0.6, bloomThreshold: 1.5 },
-  ultra: { aa: 'smaa', ssr: true, bloom: 0.25, shadowEvery: 2, grade: 'full', grain: true, bloomStrength: 0.62, bloomRadius: 0.58, bloomThreshold: 1.45 },
-  high: { aa: 'smaa', bloom: 0.25, shadowEvery: 3, grade: 'full', grain: true, bloomStrength: 0.55, bloomRadius: 0.55, bloomThreshold: 1.35 },
-  medium: { aa: 'fxaa', bloom: 0.25, shadowEvery: 3, grade: 'full', grain: false, bloomStrength: 0.45, bloomRadius: 0.5, bloomThreshold: 1.25 },
+  ultra: { aa: 'smaa', ssr: true, bloom: 0.25, shadowEvery: 2, grade: 'full', grain: true, bloomStrength: 0.42, bloomRadius: 0.55, bloomThreshold: 1.62 },
+  high: { aa: 'smaa', bloom: 0.25, shadowEvery: 3, grade: 'full', grain: true, bloomStrength: 0.38, bloomRadius: 0.52, bloomThreshold: 1.50 },
+  medium: { aa: 'fxaa', bloom: 0.25, shadowEvery: 3, grade: 'full', grain: false, bloomStrength: 0.32, bloomRadius: 0.5, bloomThreshold: 1.40 },
   low: { aa: 'none', bloom: 0, shadowEvery: 4, grade: 'tone', grain: false },
 };
 /** final-image look defaults (fx/grade.ts); ?tm=agx|aces|neutral|uchimura, ?grade=0 for A/B */

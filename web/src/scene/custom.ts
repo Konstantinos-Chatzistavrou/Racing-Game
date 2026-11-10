@@ -48,7 +48,7 @@ export function installLivery(paint: THREE.MeshPhysicalMaterial): LiveryUniforms
   // driven by two uniforms, so a colour change (or turning it off) is a uniform write - no light, no recompile.
   const hLow = u.inv.mul(vec4(positionWorld, 1)).xyz.y.sub(u.bottom).div(u.top.sub(u.bottom));
   const under = float(1).sub(smoothstep(0.02, 0.2, hLow));
-  paint.emissiveNode = rgb(u.glow).mul(u.glowAmt.mul(under).mul(0.5));
+  paint.emissiveNode = rgb(u.glow).mul(u.glowAmt.mul(under).mul(0.18));   // was 0.5: the paint read as a tinted glow
   return u;
 }
 export interface AeroUniforms { flat: THREE.UniformNode<'float', number>; color: THREE.UniformNode<'color', THREE.Color>; rough: THREE.UniformNode<'float', number> }
@@ -413,7 +413,7 @@ export class CarCustomizer {
     if (glow) this.glowColor.value.set(glow);
     const lv = this.paint?.userData.livery as LiveryUniforms | undefined;
     if (lv) { lv.glow.value.set(glow || 0x000000); lv.glowAmt.value = glow ? 1 : 0; }
-    for (const m of this.rim) { m.emissive.set(glow || 0x000000); m.emissiveIntensity = glow ? 0.28 : 0; }
+    for (const m of this.rim) { m.emissive.set(glow || 0x000000); m.emissiveIntensity = glow ? 0.12 : 0; }
     this.showOptional();
   }
 
