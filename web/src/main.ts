@@ -9,6 +9,7 @@
 import * as THREE from 'three/webgpu';
 import { Post, PRESETS, PRESET_ORDER, ScaledClusteredLighting, type PresetName } from './post';
 import { CarProbe } from './fx/carProbe';
+import { Particles } from './scene/damage';
 import { createStudioEnv } from './scene/studio';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { CoreCar, CoreRace, OUT, loadCore, type LapInfo, type RawInput } from './physics/core';
@@ -49,7 +50,7 @@ import { skinOf } from './scene/driver';
 import RAPIERLib from '@dimforge/rapier3d-compat';
 import { AiTraffic, Lane } from './ai';
 import { Cops } from './cops';
-import { loadGLTF } from './scene/loaders';
+import { assetUrl, loadGLTF } from './scene/loaders';
 import { Identity } from './identity';
 import { usernameError } from './username';
 import { formatLap } from './hud';
@@ -159,6 +160,10 @@ async function main() {
   scene.environmentIntensity = 0.03;
   scene.add(new THREE.HemisphereLight(0x0a0a14, 0x000000, 0.1));
   const moon = new THREE.DirectionalLight(0x7088c0, 0.04);   // a trace of cold top light on roofs and car bodies
+  // rim light: one extra directional from behind-left, very low, so silhouettes separate from the night
+  const rimLight = new THREE.DirectionalLight(0x8fb4ff, 0.07);
+  rimLight.position.set(-0.45, 0.55, -1);
+  scene.add(rimLight, rimLight.target);
   moon.position.set(-60, 120, 40);
   scene.add(moon);
 
@@ -288,6 +293,19 @@ async function main() {
   const probeEvery = num('probe', isTouch ? 0 : 4);
   const probeIntensity = num('probei', 1.25);
   const probe = webgpu && probeEvery > 0 ? new CarProbe(renderer, scene, pmrem, num('probesize', isTouch ? 48 : 128), probeEvery) : null;
+  // Blender-authored replacement shells (vela_front_wide / vela_front_track): swapped in when they arrive
+  void Promise.all([
+    loadGLTF(assetUrl('cars/v3/vela_front_wide.glb')),
+    loadGLTF(assetUrl('cars/v3/vela_front_track.glb')),
+  ]).then(([w, t]) => visual.custom.setShells(w.scene, t.scene)).catch(() => { /* keep the derived shells */ });
+  // Tyre smoke: billboards at the rear contact patches, emitted from the core's slip ratio (not a canned effect)
+  const tireSmoke = webgpu ? new Particles(180, { additive: false, gravity: 0.25, grow: 1.4, drag: 1.1, style: 'smoke', opacity: 0.15 }) : null;
+  if (tireSmoke) tireSmoke.color.setRGB(0.72, 0.72, 0.76);   // grey tyre smoke, not tail-light red
+  if (tireSmoke) { tireSmoke.sprite.frustumCulled = false; scene.add(tireSmoke.sprite); }
+  const smokeP = new THREE.Vector3(), smokeV = new THREE.Vector3(), smokeF = new THREE.Vector3(), smokeR = new THREE.Vector3();
+  // Launch control: hold the throttle on the grid, the start clamps wheelspin for ~1.1 s
+  let launchArmed = false, launchUntil = 0;
+  const launchEl = document.getElementById('launch');
   // Showroom environment: a bright studio with softboxes for the garage/title (the probe's night-city cube is for
   // driving). Swapped on the car's own materials only, so the city keeps its own lighting.
   let studioTex: THREE.Texture | null = null;
@@ -1252,6 +1270,8 @@ async function main() {
     if (raceLaps() === 0) { ai.go(); setState('race'); setExtra(); return; }
     for (const t of ['3', '2', '1']) { menu.countdown(t); await sleep(900); if (state !== 'countdown') { menu.countdown(''); return; } }
     menu.countdown('GO');
+    if (launchArmed) launchUntil = ticks * DT + 1.1;   // throttle held on the grid: clamp the launch
+    launchArmed = false;
     setState('race');
     if (ranked && party?.isHost) ranked.start(raceLaps(), useNyc ? 'nyc' : 'city', realism());   // the room's clock starts
     raceT0 = ticks * DT;
@@ -1460,7 +1480,30 @@ async function main() {
       prevPos.copy(physPos);
       prevQuat.copy(physQuat);
       const script = (g.__game as { script?: ((tick: number) => RawInput) | null }).script;   // dev / replay: inputs by tick
-      car.tick(script ? script(ticks) : state === 'race' ? input.poll() : IDLE, input.assists);
+      let tin = script ? script(ticks) : state === 'race' ? input.poll() : IDLE;
+      if (state === 'countdown' && input.raw.throttle > 0.5) launchArmed = true;
+      if (state === 'race' && launchUntil > 0 && ticks * DT < launchUntil) {
+        const ph = Math.min(1, Math.max(0, (ticks * DT - (launchUntil - 1.1)) / 1.1));
+        tin = { ...tin, throttle: Math.min(tin.throttle, 0.55 + 0.45 * ph) };   // ramp instead of instant full power
+      }
+      car.tick(tin, input.assists);
+      if (tireSmoke) {
+        if (state === 'race' && ticks % 3 === 0) {
+          const slip = Math.max(Math.abs(car.out[OUT.wheel(2) + 7]), Math.abs(car.out[OUT.wheel(3) + 7]));
+          const kmh = Math.abs(car.out[OUT.speed]) * 3.6;
+          if (slip > 0.32 && kmh > 3) {
+            smokeF.set(0, 0, 1).applyQuaternion(quat);
+            smokeR.set(1, 0, 0).applyQuaternion(quat);
+            for (const side of [-1, 1]) {
+              smokeP.copy(pos).addScaledVector(smokeF, -1.35).addScaledVector(smokeR, side * 0.8).setY(0.12);
+              smokeV.set((Math.random() - 0.5) * 1.1, 0.7 + Math.random() * 0.7, (Math.random() - 0.5) * 1.1);
+              tireSmoke.emit(smokeP, smokeV, 0.9 + Math.random() * 0.7, 0.3 + Math.min(1, slip) * 0.45);
+            }
+          }
+        }
+        tireSmoke.update(frame);
+      }
+      if (launchEl) launchEl.textContent = state === 'countdown' && launchArmed ? 'LAUNCH READY' : state === 'race' && launchUntil > 0 && ticks * DT < launchUntil ? 'LAUNCH' : '';
       if (inShowroom) { car.body.setLinvel({ x: 0, y: Math.min(0, car.body.linvel().y), z: 0 }, true); car.body.setAngvel({ x: 0, y: 0, z: 0 }, true); settledShowroom++; }   // parked for the showroom
       ai.tick(DT, car.body.translation());
       remote?.tick(now - (acc - DT) * 1000, DT);   // other players' bodies at this tick's time

@@ -315,6 +315,23 @@ export class CarCustomizer {
     if (lu) { lu.bottom.value = this.box.min.y + 0.1; lu.top.value = this.box.max.y; }
   }
 
+  /**
+   * Swap in shells authored in Blender (GLBs that already sit at the car's own coordinates): they replace the
+   * runtime-derived clones and are fitted by construction because they were cut from this car's bumper.
+   */
+  setShells(wide: THREE.Object3D, track: THREE.Object3D) {
+    const pairs: [string, THREE.Object3D][] = [['front-shell-wide', wide], ['front-shell-track', track]];
+    for (const [id, g] of pairs) {
+      this.bodyParts[id]?.removeFromParent();
+      g.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) { m.material = this.paint ?? this.aeroMat; m.castShadow = false; m.frustumCulled = false; } });
+      g.name = 'shell_' + id;
+      g.visible = false;
+      this.bodyParts[id] = g;
+      this.model.add(g);
+    }
+    this.showOptional();
+  }
+
   /** Apply a full set of choices (cheap: uniforms and visibility only). paintHex: the body colour (aero 'body'). */
   apply(c: Custom, paintHex?: string) {
     this.current = c;
