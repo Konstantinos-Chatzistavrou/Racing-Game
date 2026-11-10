@@ -343,7 +343,7 @@ export function setupCarMaterials(model: THREE.Object3D, cfg: CarVisualConfig, p
 
 export class CarVisual {
   readonly root = new THREE.Group();          // placed at the physics body (CG)
-  private wheels: { node: THREE.Object3D; rest: THREE.Quaternion; restPos: THREE.Vector3; radius: number; caliper?: THREE.Object3D; caliperRest?: THREE.Quaternion; spin: number }[] = [];
+  private wheels: { node: THREE.Object3D; rest: THREE.Quaternion; restPos: THREE.Vector3; radius: number; caliper?: THREE.Object3D; caliperRest?: THREE.Quaternion; spin: number; off: boolean; hub: THREE.Vector3 }[] = [];
   /** seconds between DRAWN frames (main.ts sets it from the cap): decides when the spokes alias and the blur disc takes over */
   renderDt = 1 / 60;
   private blurMat: THREE.MeshStandardNodeMaterial | null = null;
@@ -389,6 +389,8 @@ export class CarVisual {
         caliper,
         caliperRest: caliper?.quaternion.clone(),
         spin: 0,
+        off: false,
+        hub: node.position.clone(),
       });
     }
     this.paint = setupCarMaterials(model, cfg, null);
@@ -517,6 +519,11 @@ export class CarVisual {
     for (const s of this.headlights) s.intensity = this.lightsOn && !this.lightsBroken ? this.headlightIntensity * this.dim : 0;
   }
 
+  /** Wheel i (FL FR RL RR): its node, tyre radius and current hub centre in MODEL space (crash damage tears wheels off). */
+  wheel(i: number): { node: THREE.Object3D; radius: number; hub: THREE.Vector3 } { return this.wheels[i]; }
+  /** A torn-off wheel is no longer placed by the suspension (DamageVisuals flies it as debris); false puts it back. */
+  setWheelOff(i: number, off: boolean) { this.wheels[i].off = off; }
+
   /** Wheel hub centres and outer tyre radii in car MODEL space (used by Dents to keep crumpled fenders out of tyres). */
   wheelWells(): { pos: THREE.Vector3; radius: number }[] {
     const off = this.cfg.wheel_visual_offset_m ?? 0;
@@ -562,6 +569,11 @@ export class CarVisual {
         centre.z = THREE.MathUtils.clamp(centre.z, w.restPos.z - 0.032, w.restPos.z + 0.032);
       } else {
         centre = this.tmpCentre.copy(w.restPos);
+      }
+      w.hub.copy(centre);
+      if (w.off) {            // torn off (DamageVisuals owns the wheel now): the caliper stays on the hub
+        if (w.caliper) w.caliper.position.copy(centre);
+        continue;
       }
       wheelMinBottom = Math.min(wheelMinBottom, centre.y - w.radius);
 

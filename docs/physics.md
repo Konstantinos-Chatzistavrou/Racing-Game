@@ -143,12 +143,26 @@ In Godot (`--autotest`): ABS full pedal from 100 km/h = 33.6 m (fixed 0.78 pedal
   A car pushing a wall at full throttle is < 1 g; real impacts are tens of g. Test: 10 s of 0.8 g
   pushing -> 0 kJ.
 - Zones: front/rear if `|x| > 1.2 |y|` at the impact point (body frame), else left/right.
-  `zone += dE / 90 kJ`; front hits also damage the engine (60 %); wheels within 1 m of the impact
-  take `(1 - d) dE / 25 kJ`.
-- Effects: engine power x(1 - 0.85 engine), drag x(1 + 0.5 mean zone), spring rate x(1 - 0.5 wheel),
-  toe-out up to 4 deg per wheel (car pulls), tyre grip x(1 - 0.2 wheel).
-- Validation: 50 km/h wall -> 132 kJ (= theory), front zone 1.0, engine power x0.25; 8 km/h bump
-  -> 2.6 %; bent front-left wheel -> 19 deg heading drift in 4 s hands-off (intact: 0.00 deg).
+- **Two layers (2026-11-11).** Panels: crush depth `x = sqrt(2 E / k)` from ALL the energy a zone took (k = 1.0 MN/m
+  front/rear, 0.35 sides); this drives dents, bumpers, lights and drag only. Structure: only the part of one crash
+  event above what the crumple zone takes. With `dv = J / m` the event's speed change so far, each energy increment is
+  weighted `w = clamp((dv - lo) / (hi - lo), 0, 1)`: structural band 9 -> 18 m/s, wheel band 5 -> 11 m/s. Energies
+  per kg of car (kJ/t), so the thresholds are speeds. One full stop against a wall gives `v^2 / 2 - 94.5` kJ/t
+  (60 km/h: 46, 80: 152, 100: 291, 130: 557).
+- Engine: 0 at 150, wrecked at 600 kJ/t in the engine bay (front hits in full, other zones 25 %). Cabin: 300 kJ/t into
+  one side. Wheels: 75 kJ/t (wheel band) of direct hits within 0.7 m, plus 15 % of the structural energy of the zone
+  the crash lands in; from 0.95 the wheel is gone (grip x0.35 at that corner, the game throws the wheel as debris and
+  the hub sparks). Totaled (report flag: race DNF, HUD; the car still limps): engine >= 0.9, cabin, three wheels gone,
+  or 1200 kJ/t in total.
+- Overheating and fire: severity `s = max(engine, structural / 1200)`. From 0.5 the engine steams (builds over 20 s,
+  HUD "ENGINE OVERHEATING") and stays that way; only from 0.9 does it go on to burn (flames grow over 45 s). Brakes
+  lose effect from damage only above s = 0.9 (240 s to failure at s = 1) and in a fire (40 s at full fire).
+- Effects: engine power x(1 - 0.7 engine) with a 0.25 limp floor, drag x(1 + 0.3 mean zone), spring rate
+  x(1 - 0.4 wheel), toe-out up to 1.5 deg per wheel (car pulls), tyre grip x(1 - 0.1 wheel).
+- Validation (`rs_tests`, damage): wall at 30 km/h crush 0.30 m, engine 0; 65 and 80 km/h engine 0; 100 km/h engine
+  0.29, front wheels 0.56; 135 km/h engine 0.98, both front wheels off, totaled. Forty 30 km/h bumps: no structural
+  damage. 50 km/h T-bone: dented, drivable; 110 km/h sideways into a wall: totaled (cabin). 115 km/h wall: steam, no
+  fire, brakes intact after 90 s. 50 km/h hit on the front-left wheel: 8.9 deg heading drift in 4 s hands-off.
 
 ## 11. AI street racer (Phase 4). `core/src/ai.cpp`
 - Path: pure pursuit to a point `Ld = clamp(3.5 + 0.4 v, 5, 30)` m ahead on the route + lane
@@ -181,10 +195,12 @@ In Godot (`--autotest`): ABS full pedal from 100 km/h = 33.6 m (fixed 0.78 pedal
 - **Two-layer tread temperature**: surface C_s = 1.5 kJ/K (takes all sliding power), core C_c = 16 kJ/K, conduction 400 W/K,
   surface air cooling 20 + 2.5 v W/K, core relaxes to the rolling equilibrium (78 C). 10 s at 25 kW sliding from 30 C:
   surface 94 C, core 53 C. Grip window on 0.65 core + 0.35 surface around 90 C +- 25; surface over 140 C greases.
-- **Brake discs**: per wheel, heated by T_brake |w| (a locked wheel heats the tyre, not the disc), cooled by hA = 5 + 1.0 v
-  W/K (vented) + radiation eps sigma A (T^4 - Ta^4); cast iron 8.5 / 6 kg front / rear. Pad friction vs. disc temperature:
-  0.86 cold, 1.0 at 250-500 C, 0.82 at 700, 0.52 at 900. Six back-to-back ABS stops from 200 km/h: 135, 136, 136, 137,
-  160, 202 m; front discs 306 -> 967 C. HUD shows BRAKES HOT / FADING over 620 C.
+- **Brake discs**: per wheel, heated by T_brake |w| (a locked wheel heats the tyre, not the disc), cooled by hA = 5 + 2.5 v
+  W/K (ducted, vented; was 5 + 1.0 v until 2026-11-11) + radiation eps sigma A (T^4 - Ta^4); cast iron 8.5 / 6 kg front /
+  rear. Pad friction vs. disc temperature (sport pad): 0.86 cold, 1.0 at 300-650 C, 0.95 at 750, 0.85 at 850, 0.72 at
+  950, 0.60 at 1050. Eight back-to-back ABS stops from 200 km/h with no air between: 134.6, 135.1, 135.1, 135.1, 134.9,
+  134.1, 138.0, 151.0 m; front discs 300 -> 998 C. A 650 C disc coasting from 216 km/h is at 456 C after 10 s. HUD shows
+  BRAKES HOT / FADING over 720 C.
 - Output buffer: [184+i] disc C, [188+i] tread surface C, [192+i] pressure kPa, [196+i] pad mu.
 
 ## Fitted tyre data, suspension kinematics, aero ride height, turn slip, steering feel (2026-11-08)

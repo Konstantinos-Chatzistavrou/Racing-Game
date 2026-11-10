@@ -148,12 +148,13 @@ export class Hud {
     if (out) {
       let t = 0, mu = 1;
       for (let i = 0; i < 4; i++) { t = Math.max(t, out[OUT.brakeTemp(i)]); mu = Math.min(mu, out[OUT.padMu(i)]); }
-      if (t > 620 && !(dmg && (dmg.brakesFailed || dmg.brakes < 0.97))) chips.push(`<div class="chip ${mu < 0.75 ? 'red' : ''}">${ICON_BRAKE}BRAKES ${mu < 0.95 ? 'FADING' : 'HOT'} ${Math.round(t / 10) * 10}°C</div>`);
+      if (t > 720 && !(dmg && (dmg.brakesFailed || dmg.brakes < 0.97))) chips.push(`<div class="chip ${mu < 0.75 ? 'red' : ''}">${ICON_BRAKE}BRAKES ${mu < 0.95 ? 'FADING' : 'HOT'} ${Math.round(t / 10) * 10}°C</div>`);
     }
     if (this.outWarn) chips.push(`<div class="chip">${this.outWarn}</div>`);
     if (dmg) {
       if (dmg.fire > 0) chips.push(`<div class="chip red">${ICON_FIRE}ENGINE FIRE</div>`);
       else if (dmg.smoulder > 0) chips.push(`<div class="chip">${ICON_FIRE}ENGINE OVERHEATING</div>`);
+      if (dmg.wheel.some((w) => w >= 0.95)) chips.push(`<div class="chip red">WHEEL LOST</div>`);
       if (dmg.brakesFailed) chips.push(`<div class="chip red">${ICON_BRAKE}NO BRAKES</div>`);
       else if (dmg.brakes < 0.97) chips.push(`<div class="chip">${ICON_BRAKE}BRAKES FADING ${Math.round(dmg.brakes * 100)}%</div>`);
     }

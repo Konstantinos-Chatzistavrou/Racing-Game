@@ -84,9 +84,10 @@ struct TireParams {
 struct BrakeThermal {
     double disc_mass_front = 8.5, disc_mass_rear = 6.0;   // kg (cast iron, c = 460 J/kg K)
     double disc_area_front = 0.13, disc_area_rear = 0.10; // m^2 of radiating / cooled surface
-    // Convective cooling h A = base + per_mps v (W/K): ~35 W/K for a vented disc at 30 m/s (h ~100 W/m^2K over ~0.35 m^2
-    // of faces and vanes): a hot disc takes minutes, not seconds, to come back down.
-    double cooling_base = 5.0, cooling_per_mps = 1.0;
+    // Convective cooling h A = base + per_mps v (W/K). A ducted, vented disc sheds ~80 W/K at 30 m/s and ~180 W/K at
+    // 70 m/s (h ~200-450 W/m^2K over ~0.4 m^2 of faces and vanes): a 600 C disc drops 15-25 C/s on a fast straight,
+    // so only repeated hard stops from high speed with little air in between push it into fade.
+    double cooling_base = 5.0, cooling_per_mps = 2.5;
     double start_temp_c = 150;                             // warm brakes
 };
 

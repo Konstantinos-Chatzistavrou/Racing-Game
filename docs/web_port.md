@@ -68,11 +68,14 @@ totaled; bent toe up to 1.5 deg, weaker springs, power loss). The web side only 
   wheels sharing a material are never dented and broken-off parts keep their dents.
 - Never immovable: "totaled" is only a report flag now; engine power floor 0.25 (limp home), the
   bridge no longer cuts the input. Native test: wrecked car reaches 55 km/h in 6 s.
-- Fire + brakes in the core (`DamageModel::update`): severity = max(engine, total kJ / 900);
-  from 0.6 the bay smoulders 10 s, then burns (flames grow over 45 s; flickering orange point light
-  created at start with intensity 0). Brake wear from severity and fire: fade to 30 %, then failure
-  (all brakes incl. handbrake). HUD lamps: ENGINE OVERHEATING / ENGINE FIRE, BRAKES FADING / NO BRAKES.
-  Browser: 67 km/h -> 57 km/h in 1 s on failed brakes vs 67 -> 30 repaired.
+- Fire + brakes in the core (`DamageModel::update`): severity = max(engine, structural kJ/t / 1200);
+  from 0.5 the bay steams (builds over 20 s), from 0.9 it then burns (flames grow over 45 s; flickering
+  orange point light created at start with intensity 0). Brake wear from a wreck (s > 0.9) and fire: fade
+  to 30 %, then failure (all brakes incl. handbrake). HUD lamps: ENGINE OVERHEATING / ENGINE FIRE,
+  BRAKES FADING / NO BRAKES, WHEEL LOST. Thresholds raised 2026-11-11 (were 900 kJ total, 0.6, 10 s):
+  see docs/physics.md section 10.
+- Wheels come off (2026-11-11): core wheel damage >= 0.95 -> `DamageVisuals.detachWheel`: an 18 kg Rapier
+  cylinder on the axle, leaving with the car's speed; the caliper stays, the hub throws sparks while moving.
 - Reverse by pedal (core Controls, auto and manual): brake > 0.8 held 0.4 s at < 0.5 m/s -> R, pedals
   swap; throttle held at a standstill -> 1st. The 0.5 spawn hold never reverses. Touch BRAKE too.
   Respawn resets to 1st (a pedal reverse used to survive R and drive the car backward).

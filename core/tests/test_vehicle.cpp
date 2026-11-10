@@ -190,13 +190,13 @@ RS_TEST(anti_pitch) {
 }
 
 // ---------------------------------------------------------------- brake fade
-// Six back-to-back ABS stops from 200 km/h (no cooling lap between): each dumps ~700 kJ into each front disc. Street
-// pads fade above ~600 C: the last stop must be clearly longer than the first, the discs well past 600 C.
+// Eight back-to-back ABS stops from 200 km/h with NO air between them (the worst case: each dumps ~700 kJ into each front
+// disc). Sport pads hold to ~700 C, so the first four stops are the same length; after that the pads fade, slowly.
 RS_TEST(brake_fade) {
     CarConfig cfg = test::car();
     const double v0 = 200 / 3.6;
-    double temp = cfg.brake_thermal.start_temp_c, first = 0, last = 0;
-    for (int k = 0; k < 6; ++k) {
+    double temp = cfg.brake_thermal.start_temp_c, first = 0, fourth = 0, last = 0;
+    for (int k = 0; k < 8; ++k) {
         auto s = test::make_sim(cfg);
         s->reset({}, 0, v0);
         s->vehicle.set_brake_temperature(temp);
@@ -212,11 +212,22 @@ RS_TEST(brake_fade) {
         temp = 0.5 * (s->last.wheels[FL].brake_temp_c + s->last.wheels[FR].brake_temp_c);
         std::printf("         stop %d: %.1f m, front discs %.0f C, pad mu %.2f\n", k + 1, d, temp, s->last.wheels[FL].brake_mu);
         if (k == 0) first = d;
+        if (k == 3) fourth = d;
         last = d;
     }
     test::check_range("200-0 km/h, first stop", first, 100, 150, "m");
-    test::check_range("front disc temperature after 6 stops", temp, 600, 1000, "C");
-    test::check_range("6th stop / 1st stop (fade)", last / first, 1.08, 2.0, "x");
+    test::check_range("4th stop / 1st stop (no fade yet)", fourth / first, 0.97, 1.03, "x");
+    test::check_range("front disc temperature after 8 stops", temp, 800, 1100, "C");
+    test::check_range("8th stop / 1st stop (fade)", last / first, 1.08, 2.0, "x");
+    // Air cools them: a 650 C disc coasting from 216 km/h for 10 s is back in its working range.
+    auto s = test::make_sim(cfg);
+    s->reset({}, 0, 60);
+    s->vehicle.set_brake_temperature(650);
+    DriverInput in;
+    in.clutch = 1;
+    for (int i = 0; i < 10 * 240; ++i) s->step(in);
+    std::printf("         650 C disc, 10 s coasting from 216 km/h: %.0f C at %.0f km/h\n", s->last.wheels[FL].brake_temp_c, test::speed(*s) * 3.6);
+    test::check_range("front disc after 10 s of air at speed", s->last.wheels[FL].brake_temp_c, 380, 560, "C");
 }
 
 // ---------------------------------------------------------------- cornering

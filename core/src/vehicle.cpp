@@ -4,13 +4,13 @@
 namespace rs {
 
 /**
- * Brake pad friction vs. disc temperature, relative to its working range (road / track-day performance pad).
- * Cold pads bite ~20 % less; 250-500 C is the plateau; above ~600 C the resin gasses out and the pads fade
- * (~0.5 of their grip at 900 C). Brake torque at full pedal = brake_torque_total * this.
+ * Brake pad friction vs. disc temperature, relative to its working range (track-day / sport pad on a vented iron disc).
+ * Cold pads bite ~15 % less; 300-650 C is the plateau; past ~700 C the resin gasses out and the pads fade, slowly at
+ * first (0.95 at 750 C, 0.85 at 850 C, 0.6 at 1050 C). Brake torque at full pedal = brake_torque_total * this.
  */
 double brake_pad_mu(double t) {
-    static const double T[] = {0, 100, 200, 300, 500, 600, 700, 800, 900, 1000};
-    static const double M[] = {0.86, 0.95, 0.99, 1.0, 1.0, 0.94, 0.82, 0.66, 0.52, 0.45};
+    static const double T[] = {0, 100, 200, 300, 650, 750, 850, 950, 1050, 1100};
+    static const double M[] = {0.86, 0.95, 0.99, 1.0, 1.0, 0.95, 0.85, 0.72, 0.60, 0.55};
     if (t <= T[0]) return M[0];
     for (int i = 1; i < 10; ++i) if (t <= T[i]) return M[i - 1] + (M[i] - M[i - 1]) * (t - T[i - 1]) / (T[i] - T[i - 1]);
     return M[9];

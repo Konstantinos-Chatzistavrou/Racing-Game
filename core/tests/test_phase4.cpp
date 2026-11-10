@@ -73,40 +73,54 @@ RS_TEST(damage) {
     CarConfig cfg = test::car();
     std::array<Vec3, 4> wp;
     for (int w = 0; w < 4; ++w) wp[w] = {cfg.wheels[w].x, cfg.wheels[w].y, 0};
-    // Full-width wall impacts at various speeds (impulse J = m v, split over 3 ticks).
-    struct Case { double kmh; double crush_lo, crush_hi; bool totaled; const char* what; };
-    Case cases[] = {{30, 0.27, 0.33, false, "30 km/h wall: smashed front, engine intact"},
-                    {50, 0.48, 0.55, false, "50 km/h wall: engine damaged, still runs"},
-                    {65, 0.64, 0.70, true, "65 km/h wall: totaled"}};
+    // Full-width wall impacts at various speeds (impulse J = m v, split over 3 ticks). Panels crush from 30 km/h on;
+    // the structure (engine, wheels) only pays for the part of a crash above the crumple zone's capacity.
+    struct Case { double kmh; double eng_lo, eng_hi; bool totaled; const char* what; };
+    Case cases[] = {{30, 0, 0, false, "30 km/h wall: smashed front, engine intact"},
+                    {65, 0, 0, false, "65 km/h wall: engine intact"},
+                    {80, 0, 0.05, false, "80 km/h wall: engine barely touched"},
+                    {100, 0.22, 0.40, false, "100 km/h wall: engine hurt, still runs"},
+                    {135, 0.9, 1.0, true, "135 km/h wall: totaled"}};
     for (const Case& c : cases) {
         DamageModel m(cfg.mass, wp);
         double j = cfg.mass * c.kmh / 3.6;
         for (int i = 0; i < 3; ++i) m.add_contact(1, {2.2, 0.1, 0}, j / 3, i / 240.0, 1 / 240.0);
         const DamageReport& r = m.report();
-        std::printf("         %-46s %5.0f kJ  crush %.2f m  engine %.2f  power x%.2f  %s\n", c.what, r.total_energy_kj,
-                    r.crush[ZoneFront], r.engine, m.engine_power_factor(), r.totaled ? "TOTALED" : "drivable");
-        test::check_range(c.what, r.crush[ZoneFront], c.crush_lo, c.crush_hi, "m");
+        std::printf("         %-42s %5.0f kJ  crush %.2f m  structural %4.0f kJ/t  engine %.2f  front wheels %.2f  %s\n", c.what,
+                    r.total_energy_kj, r.crush[ZoneFront], r.structural_kj_per_t, r.engine, r.wheel[FL], r.totaled ? "TOTALED" : "drivable");
+        test::check_range(c.what, r.engine, c.eng_lo, c.eng_hi, "engine");
         test::check(c.totaled ? "  ...is totaled" : "  ...is still drivable", r.totaled == c.totaled);
+        if (c.kmh == 30) test::check_range("  ...front crush", r.crush[ZoneFront], 0.27, 0.33, "m");
+        if (c.kmh == 135) test::check("  ...and both front wheels are torn off", m.wheel_off(FL) && m.wheel_off(FR) && !m.wheel_off(RL) && m.grip_factor(FL) < 0.5);
     }
+    // Small hits never add up to a wreck: forty 30 km/h wall bumps bend panels only.
+    DamageModel bumps(cfg.mass, wp);
+    for (int k = 0; k < 40; ++k) bumps.add_contact(100 + k, {2.2, 0.1, 0}, cfg.mass * 30 / 3.6, k * 1.0, 1 / 240.0);
+    test::check("forty 30 km/h bumps: no structural damage, not totaled",
+                bumps.report().structural_kj_per_t == 0.0 && bumps.report().engine == 0.0 && !bumps.report().totaled && bumps.report().wheel[FL] == 0.0);
     // Car-to-car: 30 km/h rear-end between equal cars. Reduced mass m/2 -> J = (m/2) dv per car.
     DamageModel shunt(cfg.mass, wp);
     shunt.add_contact(2, {2.2, 0, 0}, 0.5 * cfg.mass * 30 / 3.6, 0, 1 / 240.0);
     test::check_range("30 km/h rear-end (each car): crush", shunt.report().crush[ZoneFront], 0.10, 0.18, "m");
     test::check("  ...engine untouched", shunt.report().engine == 0.0);
-    // T-bone at 50 km/h into the left door: cabin intrusion -> totaled.
+    // T-bone at 50 km/h into the left door (equal cars): the door caves in, the car drives on.
     DamageModel tbone(cfg.mass, wp);
     tbone.add_contact(3, {0.0, 0.95, 0}, 0.5 * cfg.mass * 50 / 3.6, 0, 1 / 240.0);
-    test::check("50 km/h T-bone into the door: totaled (cabin)", tbone.report().totaled && tbone.report().totaled_reason == "cabin");
+    test::check("50 km/h T-bone into the door: dented, drivable", tbone.report().crush[ZoneLeft] > 0.2 && !tbone.report().totaled);
+    // Sliding sideways into a wall at 110 km/h: cabin intrusion -> totaled.
+    DamageModel slide(cfg.mass, wp);
+    slide.add_contact(3, {0.0, 0.95, 0}, cfg.mass * 110 / 3.6, 0, 1 / 240.0);
+    test::check("110 km/h sideways into a wall: totaled (cabin)", slide.report().totaled && slide.report().totaled_reason == "cabin");
     // Pushing a wall at full throttle for 10 s (~0.8 g contact force) must cause NO damage.
     DamageModel push(cfg.mass, wp);
     for (int i = 0; i < 2400; ++i) push.add_contact(4, {2.2, 0, 0}, 0.8 * cfg.mass * kGravity / 240.0, i / 240.0, 1 / 240.0);
     test::check_range("10 s pushing a wall at 0.8 g: damage", push.report().total_energy_kj, 0, 0.0, "kJ");
-    // A side hit on the front-left wheel bends it: the car then pulls (mildly) when driven straight.
+    // A 50 km/h side hit on the front-left wheel bends it: the car then pulls (mildly) when driven straight.
     double yaw_drift[2];
     for (int dmg = 0; dmg < 2; ++dmg) {
         auto s = test::make_sim(cfg);
         s->reset({}, 0, 22, 4);
-        if (dmg) s->vehicle.add_contact(3, {cfg.wheels[FL].x, 0.95, 0}, cfg.mass * 25 / 3.6);
+        if (dmg) s->vehicle.add_contact(3, {cfg.wheels[FL].x, 0.95, 0}, cfg.mass * 50 / 3.6);
         DriverInput in;
         in.gear = 4;
         test::SpeedController sc;

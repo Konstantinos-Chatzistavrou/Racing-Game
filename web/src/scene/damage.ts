@@ -1,7 +1,7 @@
 // Visual side of crash damage (port of game/scripts/damage_visuals.gd). The CORE decides how far
 // each zone is crushed (energy -> crush depth, core/src/damage.cpp); this module SHOWS it:
 //   - dents at the actual impact point, in the vertex shader (dents.ts: accumulated, zero CPU),
-//   - parts breaking off as physics debris (bumpers, mirrors), broken lights (headlights flicker
+//   - parts breaking off as physics debris (bumpers, mirrors; wheels in a heavy wreck), broken lights (headlights flicker
 //     for 2 s after a heavy front hit, then die), engine smoke, sparks,
 //   - engine fire: the core's smoulder -> fire state (smoke, then growing flames + a flickering
 //     orange point light from the engine bay). No explosion; R repairs.
@@ -22,7 +22,10 @@ const INWARD = [new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 0, 1), new THR
 const SKIP = ['wheel_', 'caliper_', 'interior', 'seat', 'dashboard', 'steering', 'wheel_well', 'underbody', 'hood_inner', 'glass'];
 // Break-off thresholds in metres of zone crush (same as the Godot build).
 const BREAK_CRUSH: Record<string, number> = { bumper_front: 0.3, bumper_rear: 0.3, mirror_L: 0.12, mirror_R: 0.12 };
+const UNIT = new THREE.Vector3(1, 1, 1);
 const LIGHTS_CRUSH = 0.12;
+// Core wheel damage from which the wheel is gone (DamageParams::wheel_off): it rolls away, the hub drags and sparks.
+const WHEEL_OFF = 0.95;
 // A front hit this big (kJ; ~15 kJ = a 16 km/h stop for this car) breaks the headlights too,
 // even below LIGHTS_CRUSH. Either way they flicker (loose connector) for FLICKER_S, then die.
 const HEADLIGHT_KJ = 15;
@@ -171,7 +174,7 @@ export class Particles {
   clear() { this.life.fill(0); this.active = 0; this.sprite.visible = false; }
 }
 
-interface Debris { node: THREE.Object3D; parent: THREE.Object3D; local: THREE.Matrix4; body: RAPIER.RigidBody; age: number }
+interface Debris { node: THREE.Object3D; parent: THREE.Object3D; local: THREE.Matrix4; body: RAPIER.RigidBody; age: number; wheel?: number; scale?: THREE.Vector3 }
 
 export class DamageVisuals {
   private deformables: THREE.Mesh[] = [];
@@ -196,6 +199,8 @@ export class DamageVisuals {
   private flicker = 0;        // s of headlight flicker left (> 0 = flickering)
   private flickerHold = 0;    // s until the next flicker level
   private smokeAcc = 0;
+  private wheelsOff: number[] = [];
+  private hubAcc = 0;
   private dmg: Damage | null = null;
   get last(): Damage | null { return this.dmg; }
   get debrisCount(): number { return this.detached.size; }
@@ -259,8 +264,12 @@ export class DamageVisuals {
   dispose() {
     this.scene.remove(this.smoke.sprite, this.sparks.sprite, this.flames.sprite, this.flameCore.sprite, this.embers.sprite);
     this.car.root.remove(this.fireLight);
-    for (const d of this.detached.values()) if (d.body.isValid()) this.pw.world.removeRigidBody(d.body);
+    for (const d of this.detached.values()) {
+      if (d.body.isValid()) this.pw.world.removeRigidBody(d.body);
+      this.scene.remove(d.node);          // loose parts of the car being swapped out
+    }
     this.detached.clear();
+    this.wheelsOff.length = 0;
   }
 
   /** Every frame. Damage is read from the core at 20 Hz; dents are applied one panel per frame. */
@@ -274,6 +283,7 @@ export class DamageVisuals {
     this.updateFlicker(dt);
     if (this.dmg && (this.dmg.engine > 0.25 || this.dmg.totaled || this.dmg.smoulder > 0)) this.emitSmoke(dt);
     this.updateFire(dt);
+    if (this.wheelsOff.length) this.hubSparks(dt);
     this.t += dt;
     if (this.t < 0.05) return;
     this.t = 0;
@@ -297,6 +307,7 @@ export class DamageVisuals {
       const zi = ZONES.indexOf(zone as (typeof ZONES)[number]);
       if (zi >= 0 && d.crush[zi] > (BREAK_CRUSH[name] ?? 0.3)) this.detach(name);
     }
+    for (let i = 0; i < 4; i++) if (d.wheel[i] >= WHEEL_OFF) this.detachWheel(i);
     // ---- lights
     let glass = false;
     const heavyFront = d.impacts > this.lastImpacts && d.lastZone === 0 && d.lastKj >= HEADLIGHT_KJ;
@@ -434,6 +445,59 @@ export class DamageVisuals {
   }
 
   /**
+   * A wheel is torn off (core wheel damage >= WHEEL_OFF): an 18 kg cylinder that leaves with the car's speed, rolling,
+   * kicked outward. The caliper and disc stay on the hub; the core drops that corner's grip to steel-on-asphalt.
+   */
+  private detachWheel(i: number) {
+    const key = `wheel${i}`;
+    if (this.detached.has(key)) return;
+    const w = this.car.wheel(i);
+    const node = w.node;
+    if (!node.parent) return;
+    const parent = node.parent;
+    const local = node.matrix.clone();
+    node.updateWorldMatrix(true, true);
+    const wp = new THREE.Vector3(), wq = new THREE.Quaternion(), ws = new THREE.Vector3();
+    node.matrixWorld.decompose(wp, wq, ws);
+    const rootQ = this.car.root.getWorldQuaternion(new THREE.Quaternion());
+    const axle = new THREE.Vector3(1, 0, 0).applyQuaternion(rootQ);                     // world; model X = left
+    const out = axle.clone().multiplyScalar(w.hub.x >= 0 ? 1 : -1);
+    const body = this.pw.world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(wp.x, wp.y, wp.z).setRotation(wq).setLinearDamping(0.05).setAngularDamping(0.25));
+    // Rapier's cylinder stands on Y: turn it onto the axle, in the wheel node's own frame.
+    const axleLocal = axle.clone().applyQuaternion(wq.clone().invert());
+    const cq = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), axleLocal);
+    this.pw.world.createCollider(RAPIER.ColliderDesc.cylinder(0.11, w.radius).setRotation(cq).setMass(18).setFriction(0.9).setRestitution(0.45).setCollisionGroups(GROUP_DEBRIS), body);
+    const v = this.car.velocity;
+    const lin = new THREE.Vector3(v.x * 0.9, v.y * 0.9 + 1.8, v.z * 0.9).addScaledVector(out, 2.5 + Math.random() * 1.5);
+    body.setLinvel(lin, true);
+    const spin = new THREE.Vector3(0, 1, 0).cross(lin).multiplyScalar(1 / Math.max(0.2, w.radius));   // rolling: w = n x v / r
+    body.setAngvel({ x: spin.x + (Math.random() - 0.5) * 3, y: spin.y, z: spin.z + (Math.random() - 0.5) * 3 }, true);
+    this.car.setWheelOff(i, true);
+    this.scene.attach(node);
+    node.matrixAutoUpdate = false;
+    node.traverse((o) => { o.layers.set(DEBRIS_LAYER); if (o.name.startsWith('wheel_blur_')) o.visible = false; });   // no spin blur on a loose wheel
+    this.detached.set(key, { node, parent, local, body, age: 0, wheel: i, scale: ws });
+    this.wheelsOff.push(i);
+  }
+
+  /** The bare hub drags along the road: a spray of sparks behind every missing wheel while the car moves. */
+  private hubSparks(dt: number) {
+    const speed = this.car.velocity.length();
+    if (speed < 2) return;
+    this.hubAcc += dt * Math.min(70, 8 + speed * 2.2);
+    const p = new THREE.Vector3(), v = new THREE.Vector3();
+    while (this.hubAcc >= 1) {
+      this.hubAcc -= 1;
+      const w = this.car.wheel(this.wheelsOff[Math.floor(Math.random() * this.wheelsOff.length)]);
+      p.copy(w.hub).setY(w.hub.y - w.radius * 0.85);
+      this.car.model.localToWorld(p);
+      v.copy(this.car.velocity).multiplyScalar(0.25 + Math.random() * 0.3);
+      v.x += (Math.random() - 0.5) * 2.5; v.y += 0.8 + Math.random() * 2.2; v.z += (Math.random() - 0.5) * 2.5;
+      this.sparks.emit(p, v, 0.25 + Math.random() * 0.35, 0.03 + Math.random() * 0.025);
+    }
+  }
+
+  /**
    * Parts that are hit but not yet torn off hang: a bumper sags on its top clips with one corner dropping (up to ~20 deg),
    * a mirror folds back on its hinge. From 35 % of the crush that tears the part off, fully hanging at 100 %.
    */
@@ -463,7 +527,7 @@ export class DamageVisuals {
       if (!d.body.isValid()) continue;
       d.age += dt;
       const t = d.body.translation(), r = d.body.rotation();
-      d.node.matrix.compose(new THREE.Vector3(t.x, t.y, t.z), new THREE.Quaternion(r.x, r.y, r.z, r.w), new THREE.Vector3(1, 1, 1));
+      d.node.matrix.compose(new THREE.Vector3(t.x, t.y, t.z), new THREE.Quaternion(r.x, r.y, r.z, r.w), d.scale ?? UNIT);
       d.node.matrixWorldNeedsUpdate = true;
       if (d.age > 30) { this.pw.world.removeRigidBody(d.body); d.node.visible = false; }
     }
@@ -497,13 +561,15 @@ export class DamageVisuals {
     for (const d of this.detached.values()) {
       if (d.body.isValid()) this.pw.world.removeRigidBody(d.body);
       d.parent.add(d.node);
-      d.node.traverse((o) => o.layers.set(0));
+      d.node.traverse((o) => { o.layers.set(0); if (o.name.startsWith('wheel_blur_')) o.visible = true; });
+      if (d.wheel !== undefined) this.car.setWheelOff(d.wheel, false);
       d.node.matrix.copy(d.local);
       d.node.matrix.decompose(d.node.position, d.node.quaternion, d.node.scale);
       d.node.matrixAutoUpdate = true;
       d.node.visible = true;
     }
     this.detached.clear();
+    this.wheelsOff.length = 0;
     for (const [m, mat] of this.lightMats) m.material = mat;
     this.lightMats.clear();
     this.car.lightsBroken = false;

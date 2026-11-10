@@ -226,8 +226,8 @@ RS_TEST(wreck_drivable_fire_brakes) {
     CarConfig cfg = test::car();
     auto s = test::make_sim(cfg);
     s->settle(1.0);
-    // Wreck it: 80 km/h into a wall, both doors caved in, three wheels smashed.
-    s->vehicle.add_contact(1, {2.2, 0.1, 0}, cfg.mass * 80 / 3.6);
+    // Wreck it: 140 km/h into a wall, both doors caved in, three wheels smashed.
+    s->vehicle.add_contact(1, {2.2, 0.1, 0}, cfg.mass * 140 / 3.6);
     s->vehicle.add_contact(2, {0.0, 0.95, 0}, cfg.mass * 12);
     s->vehicle.add_contact(3, {0.0, -0.95, 0}, cfg.mass * 12);
     for (int w = 0; w < 3; ++w) s->vehicle.add_contact(10 + w, {cfg.wheels[w].x, cfg.wheels[w].y, 0}, cfg.mass * 15);
@@ -243,7 +243,7 @@ RS_TEST(wreck_drivable_fire_brakes) {
     test::check_range("totaled car still drives forward (limp home)", s->last.speed * 3.6, 10, 400, "km/h");
     raw.throttle = 0;
     double t_fire = -1, t_fail = -1;
-    for (int i = 0; i < 90 * 240; ++i) {
+    for (int i = 0; i < 120 * 240; ++i) {
         drive(*s, c, raw);
         double t = i / 240.0;
         if (t_fire < 0 && r.fire > 0) t_fire = t;
@@ -253,6 +253,30 @@ RS_TEST(wreck_drivable_fire_brakes) {
     test::check("wreck catches fire (smoulders first)", t_fire >= 0);
     test::check("brakes fail completely later", t_fail > t_fire || (t_fail >= 0 && t_fire >= 0));
     test::check("full fire after a while", r.fire > 0.9);
+    // A hard crash short of a wreck (115 km/h wall): the engine overheats (steam) but never burns, the brakes stay.
+    {
+        auto h = test::make_sim(cfg);
+        h->settle(1.0);
+        h->vehicle.add_contact(1, {2.2, 0.1, 0}, cfg.mass * 115 / 3.6);
+        const DamageReport& hr = h->vehicle.damage_model().report();
+        Controls hc(cfg);
+        RawInput idle;
+        for (int i = 0; i < 90 * 240; ++i) drive(*h, hc, idle);
+        std::printf("         115 km/h wall, 90 s later: engine %.2f, steam %.2f, fire %.2f, brakes %.2f\n", hr.engine, hr.smoulder, hr.fire, hr.brakes);
+        test::check("115 km/h wall: overheating, not totaled", hr.smoulder >= 1.0 && !hr.totaled);
+        test::check("  ...no fire, brakes intact", hr.fire == 0.0 && hr.brakes == 1.0);
+    }
+    // A 90 km/h wall hit: nothing overheats.
+    {
+        auto h = test::make_sim(cfg);
+        h->settle(1.0);
+        h->vehicle.add_contact(1, {2.2, 0.1, 0}, cfg.mass * 90 / 3.6);
+        const DamageReport& hr = h->vehicle.damage_model().report();
+        Controls hc(cfg);
+        RawInput idle;
+        for (int i = 0; i < 30 * 240; ++i) drive(*h, hc, idle);
+        test::check("90 km/h wall: no overheating, no fire, brakes intact", hr.smoulder == 0.0 && hr.fire == 0.0 && hr.brakes == 1.0 && !hr.totaled);
+    }
     s->vehicle.damage_model().repair();
     s->step(c.update(raw, s->last, s->dt));
     test::check("repair clears fire and brakes", r.fire == 0 && r.brakes == 1.0 && !r.brakes_failed);
