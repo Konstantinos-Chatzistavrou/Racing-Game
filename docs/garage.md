@@ -1,5 +1,35 @@
 # Garage and customisation: current state (2026-11-10)
 
+## The garage scene (rebuilt 2026-11-10, `web/src/scene/garage/`)
+
+The showroom screens (title, garage, modes, lobby) render their **own scene** with their own pipeline
+(`web/src/showroomPost.ts`); the city is not drawn there. Why: at 1920x1080 the old garage cost 68 ms of GPU on ultra
+(787 draws, 1.24 M triangles - the city behind the walls, ~50 lights per pixel, a sun shadow map every frame), and the
+graphics tuner, which measured on that view, dropped the whole game to "medium, 50 %".
+
+| piece | file | how |
+|---|---|---|
+| room shell, steel, fixtures, signs | `room.ts` | generated in code, merged per material (8 draws) |
+| lighting | `bake.ts` | computed once per vertex on the CPU (irradiance + dominant direction); box occluders for props, pillars, cars |
+| surfaces | `materials.ts` | unlit, bake-driven, world-planar CC0 PBR sets (Poly Haven, KTX2) |
+| floor | `materials.ts` `floorMaterial` | real planar mirror (three `reflector`, mip-blurred by roughness), turntable deck + LED ring as masks |
+| props | `props.ts` | 17 CC0 models, shaded by the same bake; all stand outside the camera orbit (r = 7.6 m) |
+| car | `main.ts` `setGarage` | only the MODEL moves onto the turntable; its root and headlight spots stay in the city scene, so no light set changes |
+| reflections in the paint | `Garage.captureEnv` | the room rendered into a cube; the car's reflection probe is filled from it (`CarProbe.fromCube`) |
+
+Measured (headless Chrome, i3-1315U iGPU, 1920x1080): max 41 fps, ultra 52, high / medium / low 60 (before: 11-20).
+Assets are rebuilt with `tools/garage/build_textures.py` and `tools/garage/build_props.py` (need `tools/ktx/`).
+
+Rules that fall out of this design:
+- A new light in the garage is a line in `room.ts` (`bake.point / spot / line`), never a three.js light.
+- Anything placed inside r = 8 m of the turntable can end up between the camera and the car: keep props at the walls.
+- The car's seat height comes from `CarVisual.groundY`; wheel boxes must be measured through the whole node chain
+  (`addBlurDisc`): the old local-matrix measure read a 1 m tyre radius.
+- Depth of field is a half-res gaussian mixed by distance from the focus plane; three's DepthOfFieldNode costs ~13 ms here.
+
+The sections below describe the customisation system; the old "Environment" notes (studio env, sun shadow) are obsolete.
+
+
 Everything here was built and screenshot-audited in this repo; treat it as the source of truth for the next session.
 
 ## Screens and layout

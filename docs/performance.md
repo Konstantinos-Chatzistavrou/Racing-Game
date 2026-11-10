@@ -297,3 +297,27 @@ measured worst case was 837 draws and 15.4 fps, which is why net.ts swaps in the
 The 6-player cap is therefore right for the frame budget (and for the P2P host topology), not arbitrary. If it is
 ever raised: cull remotes beyond ~120 m first (free, most of the cost in a spread-out race), merge the traffic
 model's 31 draws down to a handful, then consider 8.
+
+
+## Driving tiers at 1080p (2026-11-10)
+
+Measured in headless Chrome on the i3-1315U iGPU, 1920x937 canvas, free roam at the start line (`web/tools/cdp.mjs`).
+
+Cost model of the street before any effect: **GPU = ~6.5 ms fixed + ~27 ms x scale^2** (scale 1 = 1.8 MP). At a low
+resolution the fixed part dominates (11-12 ms: one million triangles, 750 k of them instanced trees and lamps, plus
+the light clusters) and the main thread's `post.render()` costs 9-14 ms for ~190 draws, 106 of them the player's car.
+
+| lever | where | gain |
+|---|---|---|
+| fixed pixel budget per preset (max 0.80, ultra 0.88, high 1.0, medium 0.62, low 0.5 MP) | `main.ts PRESET_MP` | the tier's frame rate |
+| street-light reach x0.66-0.9 and a cap on live lights | `nyc/props.ts rangeScale / lightCap` | 3.5-4.5 ms at 0.9 MP; nothing more below x0.7 |
+| rivals' headlights as clustered point lights instead of spots | `ai.ts` | ~1.5 ms (spots are evaluated for every pixel, even switched off) |
+| ground noise from textures (`fx/noiseTex.ts`) instead of 6 Perlin + 1 Worley per pixel | `groundMaterials.ts`, `depthFx.ts` | 2-2.5 ms on ultra |
+
+Result: max 30.9 fps, ultra 34.7, high 35.5, medium 47, low 46-50 (before, at full resolution: 12.9 / 18 / 20 / 19 / 22.7).
+
+Tried, no gain: a shorter far ring on low (560 m), zero-scaling far tree instances (degenerate triangles cost almost
+as much as drawn ones: only fewer submitted instances help), the reflection probe off or at a longer interval.
+
+Open levers, in order: merge the player car's static meshes (no car on screen = 60 fps on low: 3.2 ms of CPU),
+distance-limited tree instances per preset (needs per-tile add/remove of the tree sets), FSR1 EASU for the upscale.
