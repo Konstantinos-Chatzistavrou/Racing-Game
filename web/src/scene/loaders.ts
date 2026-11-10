@@ -77,5 +77,27 @@ function shareTextures(root: THREE.Object3D) {
   });
 }
 
+const texCache = new Map<string, Promise<THREE.Texture>>();
+/**
+ * A standalone KTX2 texture (block-compressed in VRAM, mips included), cached per URL. `srgb` marks colour maps;
+ * normal / ARM maps stay linear. Repeat wrapping + anisotropy: these are tiling surface textures (the garage).
+ */
+export function loadKTX2(url: string, srgb: boolean, anisotropy = 8): Promise<THREE.Texture> {
+  const key = `${url}|${srgb}`;
+  let p = texCache.get(key);
+  if (!p) {
+    if (!ktx2) return Promise.reject(new Error('initLoaders() first'));
+    p = ktx2.loadAsync(url).then((t) => {
+      t.wrapS = t.wrapT = 1000;   // THREE.RepeatWrapping (type-only three import here)
+      t.colorSpace = srgb ? 'srgb' : '';
+      t.anisotropy = anisotropy;
+      return t as THREE.Texture;
+    });
+    texCache.set(key, p);
+    p.catch(() => texCache.delete(key));
+  }
+  return p;
+}
+
 /** Game asset path from a Godot-style res:// path (the visual JSONs still use those). */
 export const assetUrl = (res: string) => res.replace('res://assets/', '/assets/');

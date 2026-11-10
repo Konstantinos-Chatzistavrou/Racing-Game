@@ -39,3 +39,6 @@
 __pycache__/
 .vercel
 .env*
+
+# garage asset build cache (downloads from Poly Haven)
+/tools/garage/.cache/

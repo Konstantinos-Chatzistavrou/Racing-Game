@@ -73,7 +73,7 @@ type SMAALike = THREE.TempNode<'vec4'> & { setSize(w: number, h: number): void; 
 const SMAANode = (SMAAModule as unknown as { default: new (t: THREE.Node) => SMAALike }).default;
 
 /** SMAA that sizes its targets from the render scale (stock SMAANode uses the full drawing buffer). */
-class ScaledSMAA extends SMAANode {
+export class ScaledSMAA extends SMAANode {
   scale = 1;
   constructor(t: THREE.Node) {
     super(t);
@@ -96,6 +96,19 @@ class ScaledSMAA extends SMAANode {
 const FIXED_GRID = [1920, 1088] as const;   // drawing-buffer size the cluster grid is built for (multiple of the 32 px tile)
 
 export class ScaledClusteredLighting extends ClusteredLighting {
+  private plain = new WeakMap<object, THREE.LightsNode>();
+  /**
+   * A scene flagged `userData.plainLights` (the garage) gets an ordinary forward LightsNode: it has two lights, and
+   * clusters are built for one camera - its mirror and cube renders would look lights up in the wrong tiles.
+   */
+  getNode(scene: THREE.Scene) {
+    if ((scene as { isScene?: boolean }).isScene && scene.userData?.plainLights) {
+      let n = this.plain.get(scene);
+      if (!n) { n = new THREE.LightsNode(); this.plain.set(scene, n); }
+      return n as unknown as ReturnType<ClusteredLighting['getNode']>;
+    }
+    return super.getNode(scene);
+  }
   createNode(lights: THREE.Light[] = []) {
     type CL = {
       create(w: number, h: number): void; tileSize: number; zSlices: number; _bufferSize: unknown;
@@ -130,7 +143,7 @@ export class ScaledClusteredLighting extends ClusteredLighting {
  * so at scale 1 it is plain RCAS and at 0.7 it reconstructs and sharpens in one go (no extra
  * render target). sharpness: 0 = strongest, 2 = none (RCAS convention).
  */
-function casUpscale(src: THREE.TextureNode, sharpness: THREE.UniformNode<'float', number>, grain: boolean) {
+export function casUpscale(src: THREE.TextureNode, sharpness: THREE.UniformNode<'float', number>, grain: boolean, finish?: (rgb: THREE.Node<'vec3'>) => THREE.Node<'vec3'>) {
   return Fn(() => {
     const t = vec2(1).div(vec2(textureSize(src) as unknown as THREE.Node<'ivec2'>));
     const p = uv();
@@ -144,12 +157,13 @@ function casUpscale(src: THREE.TextureNode, sharpness: THREE.UniformNode<'float'
     const lobeRGB = max(hitMin.negate(), hitMax).toConst();
     const lobe = max(float(-(0.25 - 1 / 16)), min(max(lobeRGB.r, max(lobeRGB.g, lobeRGB.b)), 0)).mul(sharpness.negate().exp2()).toConst();
     const rgb = b.rgb.add(d.rgb).add(f.rgb).add(h.rgb).mul(lobe).add(e.rgb).div(lobe.mul(4).add(1));
-    return vec4(grain ? filmGrain(rgb) : rgb, 1);
+    const done = finish ? finish(rgb as unknown as THREE.Node<'vec3'>) : (rgb as unknown as THREE.Node<'vec3'>);
+    return vec4(grain ? filmGrain(done) : done, 1);
   })();
 }
 
 /** Render-to-texture in 8 bit: everything after the tone map is display-referred (0..1, sRGB). */
-const rtt8 = (n: THREE.Node) => rtt(n, null, null, { type: THREE.UnsignedByteType }) as unknown as THREE.RTTNode;
+export const rtt8 = (n: THREE.Node) => rtt(n, null, null, { type: THREE.UnsignedByteType }) as unknown as THREE.RTTNode;
 
 export class Post {
   private scenePass: THREE.PassNode;

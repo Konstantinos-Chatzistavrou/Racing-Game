@@ -27,6 +27,8 @@ export const GRADE = {
   grain: uniform(0.009),
 };
 
+const DEFAULT_GRADE = GRADE;
+
 /**
  * A named look is just a set of the uniforms above. Nothing here is applied by default.
  *
@@ -81,8 +83,18 @@ const ign = (p: THREE.Node<'vec2'>, off: F) => {
   return q.x.mul(0.06711056).add(q.y.mul(0.00583715)).fract().mul(52.9829189).fract();
 };
 
+export type GradeSet = typeof GRADE;
+/** A second, independent set of knobs (the garage has its own exposure and grade: it is an interior, not a night street). */
+export function makeGrade(l: Look): GradeSet {
+  return {
+    exposure: uniform(l.exposure), contrast: uniform(l.contrast), lift: uniform(l.lift), gamma: uniform(l.gamma), sat: uniform(l.sat),
+    shadowTint: uniform(new THREE.Vector3(...l.shadowTint)), highlightTint: uniform(new THREE.Vector3(...l.highlightTint)),
+    split: uniform(l.split), dither: uniform(1.0), grain: uniform(l.grain),
+  };
+}
+
 /** HDR linear (scene + bloom) -> display-referred sRGB 0..1, graded and dithered. */
-export function toneGrade(hdr: THREE.Node, curve: CurveName, full: boolean): THREE.Node<'vec4'> {
+export function toneGrade(hdr: THREE.Node, curve: CurveName, full: boolean, GRADE: GradeSet = DEFAULT_GRADE): THREE.Node<'vec4'> {
   const rgb = (hdr as THREE.Node<'vec4'>).rgb;
   let lin: Node3;
   if (curve === 'agx') lin = agxToneMapping(rgb, GRADE.exposure) as Node3;
@@ -116,7 +128,7 @@ export function toneGrade(hdr: THREE.Node, curve: CurveName, full: boolean): THR
 }
 
 /** Animated film grain on the final (canvas resolution) colour; strongest in the mid-tones. */
-export function filmGrain(c: THREE.Node<'vec3'>): THREE.Node<'vec3'> {
+export function filmGrain(c: THREE.Node<'vec3'>, GRADE: GradeSet = DEFAULT_GRADE): THREE.Node<'vec3'> {
   const t = floor(time.mul(24)).mod(64);   // 24 grain frames per second
   const n = ign(screenCoordinate, t).sub(0.5);
   const w = float(1).sub(abs(luma(c).mul(2).sub(1)).mul(0.6));   // 1 in mid-tones, 0.4 at black/white
