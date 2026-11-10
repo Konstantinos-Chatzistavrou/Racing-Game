@@ -405,6 +405,12 @@ async function main() {
         mesh.material = Array.isArray(mesh.material) ? mats.map((x) => x.clone()) : (mats[0] as THREE.Material).clone();
         const mm = mesh.material as THREE.MeshStandardMaterial;
         if (mm && mm.color && /paint/i.test(mm.name ?? '')) mm.color.setHex(i ? 0x2a4fd6 : 0xe8e8ea);
+        // parked cars are switched off: their headlights at emissive 10 bloom into a huge white orb in the garage
+        for (const mat of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+          const st = mat as THREE.MeshStandardMaterial;
+          if (st && st.emissive && /light|drl|lens|tail|turn|interior/i.test(st.name ?? '')) st.emissiveIntensity = 0.05;
+          else if (st && st.emissive && st.emissiveIntensity > 0.5) st.emissiveIntensity = 0.05;
+        }
       });
       parked.push(clone);
     }
@@ -915,7 +921,7 @@ async function main() {
       } else {
         garageRoom.setVisible(false);
       }
-      if (sc === 'garage') { orbit.dist = 5.9; orbit.el = 0.14; }   // Heat's garage camera: closer and lower
+      if (sc === 'garage') { orbit.dist = 7.2; orbit.el = 0.22; }   // whole car in frame, slightly above the belt line
       if (sc === 'title' || sc === 'garage' || sc === 'modes' || sc === 'lobby') setState(sc);
       if (sc === 'garage') preloadGarageCars();
     },

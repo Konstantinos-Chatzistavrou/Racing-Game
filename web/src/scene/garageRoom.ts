@@ -13,7 +13,8 @@ export interface GarageRoom {
 const W = 26, D = 18, H = 7;   // room size (m)
 
 function mat(color: number, rough = 0.85, metal = 0.1) {
-  return new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: metal });
+  // double-sided: the title camera sometimes sits outside the shell, and a culled wall would show the city through it
+  return new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: metal, side: THREE.DoubleSide });
 }
 
 export function createGarageRoom(scene: THREE.Scene): GarageRoom {
@@ -62,7 +63,7 @@ export function createGarageRoom(scene: THREE.Scene): GarageRoom {
   }
 
   // ---- lights -----------------------------------------------------------------------------------------------
-  const sun = new THREE.DirectionalLight(0xfff1dd, 4.4);
+  const sun = new THREE.DirectionalLight(0xfff1dd, 7.5);
   sun.position.set(6, 16, 7);
   sun.target.position.set(0, 0, 0);
   sun.castShadow = true;
@@ -72,7 +73,7 @@ export function createGarageRoom(scene: THREE.Scene): GarageRoom {
   sun.shadow.bias = -0.0004;
   sun.shadow.mapSize.set(2048, 2048);
   g.add(sun, sun.target);
-  g.add(new THREE.HemisphereLight(0xbcd0ea, 0x3a352e, 1.45));
+  g.add(new THREE.HemisphereLight(0xcfe0f5, 0x4a4238, 3.2));
   const frontKey = new THREE.PointLight(0xffe9d0, 55, 20, 2);
   frontKey.position.set(5.5, 2.4, 8.5);   // low front key so the nose and wheels are not in shade
   g.add(frontKey);
@@ -305,6 +306,28 @@ export function createGarageRoom(scene: THREE.Scene): GarageRoom {
       j.add(w);
     }
     prop(j, -4.9, 0, -5.9, 0.3);
+  }
+
+  // ---- lit workshop bays at both ends: whichever way the camera looks there is dressing behind the car
+  for (const zs of [-1, 1]) {
+    const bay = new THREE.Group();
+    const zWall = zs * 8.42, zLight = zs * 7.2, zProp = zs * 8.0;
+    for (const [x, c] of [[-2.8, 0xb23a2e], [0.6, 0x2e6fb2]] as [number, number][]) {
+      const frame = new THREE.Mesh(new THREE.BoxGeometry(2.9, 2.0, 0.06), mat(0x14161a, 0.8));
+      frame.position.set(x, 3.3, zWall); bay.add(frame);
+      const p = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 1.7), new THREE.MeshStandardMaterial({ color: c, roughness: 0.8, emissive: c, emissiveIntensity: 0.5, side: THREE.DoubleSide }));
+      p.position.set(x, 3.3, zWall + zs * 0.04); bay.add(p);
+    }
+    const barMat = new THREE.MeshBasicMaterial({ color: 0xfff2d8 });
+    for (const x of [-3.8, 0, 3.8]) { const b = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.08, 0.14), barMat); b.position.set(x, 5.3, zWall + zs * 0.17); bay.add(b); }
+    const bayLight = new THREE.PointLight(0xffe7c6, 160, 22, 2);
+    bayLight.position.set(0, 4.6, zLight);
+    bay.add(bayLight);
+    for (let i = 0; i < 4; i++) { const t = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.24, 18), mat(0x101114, 0.95)); t.position.set(-6.2, 0.12 + i * 0.25, zProp); bay.add(t); }
+    const chest = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.95, 0.65), mat(0xb23a2e, 0.55, 0.4));
+    chest.position.set(6.1, 0.48, zProp); bay.add(chest);
+    bay.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) { m.receiveShadow = true; m.castShadow = true; } });
+    g.add(bay);
   }
 
   // ---- shadow flags: room shell receives, props cast ---------------------------------------------------------
