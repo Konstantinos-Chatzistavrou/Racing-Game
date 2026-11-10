@@ -10,8 +10,9 @@
 import * as THREE from 'three/webgpu';
 import {
   uv, vec2, vec3, float, mix, smoothstep, step, fract, floor, abs, max, min, clamp, hash, vertexColor, positionView, time,
-  mx_noise_float, mx_worley_noise_vec2, bumpMap, length, normalWorld,
+  bumpMap, length, normalWorld,
 } from 'three/tsl';
+import { noise01, worleyEdge } from '../../fx/noiseTex';
 
 export const GROUND_MATERIAL_NAMES = ['road', 'sidewalk', 'curb', 'marking', 'crosswalk', 'plaza', 'grass', 'water', 'rail'] as const;
 export type GroundMaterialName = typeof GROUND_MATERIAL_NAMES[number];
@@ -28,7 +29,7 @@ const dist = length(positionView);
 const near = float(1).sub(smoothstep(35, 95, dist));                    // 1 close .. 0 far: fades high frequency detail (cost + shimmer)
 const vc = vertexColor();
 const ao = vc.a;                                                        // 0.6 at the kerb .. 1
-const n01 = (p: any) => mx_noise_float(p).mul(0.5).add(0.5);
+const n01 = (p: any) => noise01(p);   // precomputed gradient noise (fx/noiseTex.ts): one texture read, not ~40 ops
 const cellHash = (c: any) => hash(c.x.mul(127.1).add(c.y.mul(311.7)).add(17.0));
 
 function std(rough: number) {
@@ -65,8 +66,8 @@ function road() {
   const mCollar = smoothstep(0.37, 0.42, mDist).mul(float(1).sub(smoothstep(0.42, 0.54, mDist))).mul(mHas);
   const waffle = step(0.42, fract(R.x.mul(18.0))).mul(step(0.42, fract(R.y.mul(18.0)))).mul(near);
   // cracks: thin lines where the two nearest cell distances of a worley field nearly meet, only in worn zones
-  const w = mx_worley_noise_vec2(R.mul(0.55).add(vec2(11.0, 7.0)));
-  const crack = float(1).sub(smoothstep(0.0, 0.028, w.y.sub(w.x))).mul(smoothstep(0.58, 0.78, wearLo)).mul(near);
+  const w = worleyEdge(R.mul(0.55).add(vec2(11.0, 7.0)));
+  const crack = float(1).sub(smoothstep(0.0, 0.028, w)).mul(smoothstep(0.58, 0.78, wearLo)).mul(near);
   // puddles: large-scale noise peaks plus the gutter (low baked alpha at the kerb) collecting water
   const gutter = float(1).sub(smoothstep(0.76, 0.98, ao));
   const pud = max(smoothstep(0.58, 0.74, n01(P.mul(0.068).add(vec2(3.1, 9.4)))), gutter.mul(smoothstep(0.45, 0.72, wearMid))).mul(float(1).sub(manhole));

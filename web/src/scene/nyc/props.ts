@@ -550,6 +550,10 @@ export class NycProps {
   private nearAt = 0;
   /** photoreal tree range around the camera, m (main.ts sets it per quality preset: 80 on max/ultra, less on phones' presets) */
   nearR = 80;
+  /** reach of the street lights relative to their authored range (a preset knob: every metre of reach is paid per pixel) */
+  rangeScale = 1;
+  /** how many of the pooled street lights may be lit at once (preset knob) */
+  lightCap = 99;
   private camPos = new THREE.Vector3();
   /** Poles and trees are solid Rapier colliders (obstacles.ts): no proximity break here. */
   solidPoles = false;
@@ -1332,6 +1336,7 @@ export class NycProps {
       } else if (s.id >= 0 && s.target === 0 && s.cur < 0.02) s.id = -1;
       s.cur += (s.target - s.cur) * k;
       s.light.intensity = s.cur < 0.01 ? 0 : s.base * s.cur;
+      s.light.distance = s.cur < 0.01 ? 0.01 : s.prange * this.rangeScale;   // a dark slot reaches nothing: no cluster lists it
     }
   }
 
@@ -1356,7 +1361,7 @@ export class NycProps {
       for (let i = 0; i < G.length; i++) push(2, i, G[i][0], G[i][1], 0.7, 150);
     }
     cand.sort((a, b) => a.score - b.score);
-    const n = Math.min(this.lights.length, cand.length);
+    const n = Math.min(this.lightCap, this.lights.length, cand.length);
     const sel = this.selected; sel.clear();
     const byId = new Map<number, (typeof cand)[number]>();
     for (let i = 0; i < n; i++) { sel.add(cand[i].id); byId.set(cand[i].id, cand[i]); }

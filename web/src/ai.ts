@@ -24,6 +24,9 @@ import { createContactShadow, setupCarMaterials, type CarVisualConfig } from './
 import { assetUrl, loadGLTF } from './scene/loaders';
 import { drawEarly } from './scene/nyc/breach';
 
+/** strength of a rival's headlight pool on the road (a clustered point light, see create()) */
+const AI_BEAM = 170;
+
 interface RouteSample { x: number; y: number; z: number; width_left: number; width_right: number }
 
 const G = 9.81, WHEEL_R = 0.34;
@@ -160,7 +163,7 @@ interface AiCar {
   shadow: THREE.Object3D | null;
   body: RAPIER.RigidBody;
   wheels: { node: THREE.Object3D; rest: THREE.Quaternion }[];
-  light: THREE.SpotLight | null;
+  light: THREE.PointLight | null;
   /** small parts drawn only near the camera (interior, brake discs, calipers, exhaust, plate, underbody) and whether they are shown */
   detail: THREE.Object3D[]; detailOn: boolean;
   /** merged wheel meshes (merge.ts mergeSpinningWheels): userData.spin = wheel angle */
@@ -259,12 +262,14 @@ export class AiTraffic {
       scene.add(root);
       // One unshadowed spot per car (cheap): lights up the road ahead, walls and the player as it
       // passes. The light set never changes (that recompiles materials): 'off' parks the cars far below the city instead.
-      let light: THREE.SpotLight | null = null;
+      // A POINT light on the road ahead of the nose, not a spot at the lenses: spots are evaluated for every pixel of
+      // the frame (five rivals = five per-pixel lights, even switched off in free roam, ~1.5 ms at 1080p on the iGPU),
+      // point lights go through the clustered path and cost only where their pool reaches.
+      let light: THREE.PointLight | null = null;
       if (!black) {
-        light = new THREE.SpotLight(0xfff3e0, 700, 55, 0.5, 0.5, 2);
-        light.position.set(0, 0.55, 2.2);   // at the projector lenses (vela_gt.visual.json headlights)
-        light.target.position.set(0, -0.5, 16);
-        root.add(light, light.target);
+        light = new THREE.PointLight(0xfff3e0, AI_BEAM, 15, 2);
+        light.position.set(0, 0.85, 7.2);
+        root.add(light);
       }
       const body = pw.world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased());
       // Box from 0.15 m (nothing wedges under it) to 1.0 m: BELOW the top of the player's hull (1.2 m).
@@ -313,7 +318,7 @@ export class AiTraffic {
     for (const c of this.cars) {
       c.model.visible = mode === 'race';
       if (c.shadow) c.shadow.visible = mode === 'race';
-      if (c.light) c.light.intensity = mode === 'race' ? 700 : 0;
+      if (c.light) c.light.intensity = mode === 'race' ? AI_BEAM : 0;
       c.body.setEnabled(mode === 'race');
     }
     this.reset();
@@ -369,7 +374,7 @@ export class AiTraffic {
    * render builds all their pipelines, shadow pass included. Call setMode() afterwards.
    */
   stage(ground: THREE.Vector3, yaw: number) {
-    for (const c of this.cars) { c.model.visible = true; if (c.shadow) c.shadow.visible = true; if (c.light) c.light.intensity = 700; c.body.setEnabled(true); }
+    for (const c of this.cars) { c.model.visible = true; if (c.shadow) c.shadow.visible = true; if (c.light) c.light.intensity = AI_BEAM; c.body.setEnabled(true); }
     for (let i = 0; i < this.cars.length; i++) {
       const d = 9 + 6 * i;
       this.park(i, 0, { pos: new THREE.Vector3(ground.x + Math.sin(yaw) * d, ground.y, ground.z + Math.cos(yaw) * d), yaw });

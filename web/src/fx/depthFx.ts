@@ -5,7 +5,8 @@
 // car roofs) reflects with fixed low roughness; everything else is discarded by SSR before ray-marching (weight 0).
 // No per-material puddles (that needs the material roughness attachment), no TRAA (SMAA stays).
 import * as THREE from 'three/webgpu';
-import { dot, float, getNormalFromDepth, getViewPosition, mix, mx_noise_float, rtt, smoothstep, uniform, uv, vec2, vec3, vec4 } from 'three/tsl';
+import { dot, float, getNormalFromDepth, getViewPosition, mix, rtt, smoothstep, uniform, uv, vec2, vec3, vec4 } from 'three/tsl';
+import { noise11 as mx_noise_float } from './noiseTex';   // the same fields the road material reads (groundMaterials.ts)
 import { ssr } from 'three/addons/tsl/display/SSRNode.js';
 import { ao as gtao } from 'three/addons/tsl/display/GTAONode.js';
 import { ssrOptions } from './ssr';

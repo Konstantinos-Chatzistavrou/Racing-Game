@@ -118,18 +118,28 @@ async function main() {
   // the panel in post.ts. A 1x canvas (915 x 412 on a 2.6x phone) was stretched by the browser: every texture looked unloaded.
   const baseRatio = Math.min(devicePixelRatio, isTouch ? 2 : 1);
   const GFX_KEY = 'nr.gfx.v4';
-  const GFX_SCALE = { max: 1, ultra: 1, high: 1, medium: 0.85, low: 0.7 } as const;
+  const GFX_SCALE = { max: 1, ultra: 1, high: 1, medium: 0.85, low: 0.7 } as const;   // phones (their canvas is tuned separately)
+  /**
+   * Desktop: every preset renders a fixed PIXEL budget, whatever the window size, and the last pass sharpens it up to
+   * the canvas (post.ts). Measured on the i3 iGPU the street costs about 6.5 ms + 27 ms per 2 megapixels before any
+   * effect, so resolution is the one lever that moves a tier: 0.5 MP is the 45-60 fps picture, 1 MP the 30 fps one.
+   * A window smaller than the budget simply renders 1:1.
+   */
+  const PRESET_MP: Record<PresetName, number> = { max: 0.8e6, ultra: 0.88e6, high: 1.0e6, medium: 0.62e6, low: 0.5e6 };
   let gfx: Gfx = 'auto';
   try { const g = localStorage.getItem(GFX_KEY); if (g === 'max' || g === 'ultra' || g === 'high' || g === 'medium' || g === 'low') gfx = g; } catch { /* storage blocked */ }
   let adaptive = gfx === 'auto' && !params.has('scale');
   const maxScale = 1;
   const targetPixels = isTouch ? 0.72e6 : 0.9e6;
-  const MIN_RENDER = isTouch ? 0.35 : 0.5;   // lowest render scale (a 2x phone canvas at 0.5 was the old 1x picture)
+  const MIN_RENDER = isTouch ? 0.35 : 0.45;   // lowest render scale (a 2x phone canvas at 0.5 was the old 1x picture)
   const guessScale = () => Math.min(maxScale, Math.max(MIN_RENDER, Math.round(Math.sqrt(targetPixels / (innerWidth * innerHeight * baseRatio ** 2)) * 10) / 10));
   let SCALE_KEY = `nr.scale.v5.${innerWidth}x${innerHeight}`;
   let stored = NaN;
   try { stored = Number(localStorage.getItem(SCALE_KEY) ?? NaN); } catch { /* storage blocked */ }
-  let scale = params.has('scale') ? num('scale', 1) : gfx !== 'auto' ? (isTouch ? Math.min(GFX_SCALE[gfx], guessScale()) : GFX_SCALE[gfx]) : stored >= MIN_RENDER && stored <= maxScale ? stored : guessScale();
+  const presetScale = (p: PresetName) => isTouch ? Math.min(GFX_SCALE[p], guessScale())
+    : Math.min(maxScale, Math.max(MIN_RENDER, Math.round(Math.sqrt(PRESET_MP[p] / (innerWidth * innerHeight * baseRatio ** 2)) * 20) / 20));
+  const scalePinned = params.has('scale');
+  let scale = scalePinned ? num('scale', 1) : gfx !== 'auto' ? presetScale(gfx) : stored >= MIN_RENDER && stored <= maxScale ? stored : guessScale();
   renderer.setPixelRatio(baseRatio);
   renderer.setSize(innerWidth, innerHeight);
   // Quality preset (post.ts PRESETS), lowered by the adaptive system BEFORE the scale; stored like it.
@@ -139,6 +149,7 @@ async function main() {
   let storedPreset: string | null = null;
   try { storedPreset = localStorage.getItem(PRESET_KEY); } catch { /* storage blocked */ }
   let presetIdx = Math.max(0, PRESET_ORDER.indexOf((PRESET_ORDER.includes(params.get('quality') as PresetName) ? params.get('quality') : gfx !== 'auto' ? gfx : storedPreset ?? defaultPreset) as PresetName));
+  if (!isTouch && !scalePinned) scale = presetScale(PRESET_ORDER[presetIdx]);   // desktop: always the preset's budget (a stored scale is a phone thing)
   renderer.toneMapping = THREE.AgXToneMapping;
   renderer.toneMappingExposure = 1.1;
   renderer.shadowMap.enabled = params.get('shadows') !== '0';
@@ -626,10 +637,15 @@ async function main() {
     }
     dimLamps(on);
   };
-  const NEAR_TREES: Record<PresetName, number> = { max: 80, ultra: 80, high: 70, medium: 55, low: 40 };   // photoreal tree range, m
+  const NEAR_TREES: Record<PresetName, number> = { max: 80, ultra: 80, high: 70, medium: 45, low: 28 };   // photoreal tree range, m
+  // Street-light reach (clustered point lights): about half the per-pixel cost of the street is these lights, and
+  // 0.7 x their authored range gives most of it back; below that nothing more is saved (measured).
+  const LIGHT_RANGE: Record<PresetName, number> = { max: 0.9, ultra: 0.8, high: 0.74, medium: 0.7, low: 0.66 };
+  /** street lights alive at once (the nearest ones): fewer lights, smaller cluster lists */
+  const LIGHT_CAP: Record<PresetName, number> = { max: 36, ultra: 32, high: 28, medium: 22, low: 16 };
   post.onPreset = (p) => {
     city.setBundled(true); city.props.drawScale = driving() ? DRAW_SCALE[p] : Math.min(0.45, DRAW_SCALE[p]);
-    const sp = nyc?.streetProps; if (sp) sp.nearR = NEAR_TREES[p];
+    const sp = nyc?.streetProps; if (sp) { sp.nearR = NEAR_TREES[p]; sp.rangeScale = LIGHT_RANGE[p]; sp.lightCap = LIGHT_CAP[p]; }
   };
   post.onPreset(post.preset);
   // Headlight shadow map: only the car bodies cast into it (the city does not cast), re-rendered
@@ -735,14 +751,16 @@ async function main() {
   const citySettled = () => { const s = nyc?.stats(); return !s || (s.loading === 0 && s.queued === 0); };
   let driveWinTime = 0, driveFrames = 0;
   const startScale = () => guessScale();
-  const setPreset = (i: number) => {
+  /** `resize`: also move to the preset's own pixel budget (desktop; a render-target resize, so never while driving). */
+  const setPreset = (i: number, resize = true) => {
     presetIdx = i;
     post.preset = PRESET_ORDER[i];
+    if (resize && !isTouch && !scalePinned && scale !== presetScale(post.preset)) applyScale(presetScale(post.preset));
     syncShowPreset();
     try { localStorage.setItem(PRESET_KEY, post.preset); } catch { /* storage blocked */ }
   };
   const applyScale = (x: number) => {
-    scale = Math.min(maxScale, Math.max(MIN_SCALE, Math.round(x * 10) / 10));
+    scale = Math.min(maxScale, Math.max(MIN_SCALE, Math.round(x * 20) / 20));
     post.setScale(scale);   // render targets + cluster grid resize: the hitch the cover hides
     try { localStorage.setItem(SCALE_KEY, String(scale)); } catch { /* storage blocked */ }
   };
@@ -759,10 +777,11 @@ async function main() {
     lastSize = k; lastPixels = px;
     SCALE_KEY = `nr.scale.v5.${k}`; PRESET_KEY = `nr.preset.v5.${k}`;
     try { localStorage.setItem(PRESET_KEY, post.preset); } catch { /* storage blocked */ }
-    if (!adaptive) return;
+    if (!adaptive && isTouch) return;
     let sc = NaN;
     try { sc = Number(localStorage.getItem(SCALE_KEY) ?? NaN); } catch { /* storage blocked */ }
     stored = sc;
+    if (!isTouch) { if (!scalePinned) applyScale(presetScale(post.preset)); setExtra(); return; }
     applyScale(sc >= MIN_SCALE && sc <= maxScale ? sc : scale * ratio);
     setExtra();
   }
@@ -773,7 +792,7 @@ async function main() {
     }
     tuning = true; wentDown = false; lowStreak = 0; okStreak = 0; quietWindows = 0; p50s.length = 0; tuneStart = performance.now();
     upSteps = full ? 1 : 0;
-    if (full || Number.isNaN(stored)) { setPreset(PRESET_ORDER.indexOf(defaultPreset)); applyScale(startScale()); }
+    if (full || Number.isNaN(stored)) { setPreset(PRESET_ORDER.indexOf(defaultPreset)); if (isTouch) applyScale(startScale()); }
     frameTimes.length = 0;
     winStart = performance.now() + 450;   // let the cover frame pacing settle briefly
     menu.setTuning(true);
@@ -792,7 +811,7 @@ async function main() {
     adaptive = false; presetPinned = true;
     tuning = false;
     setPreset(PRESET_ORDER.indexOf(g));
-    applyScale(isTouch ? Math.min(GFX_SCALE[g], guessScale()) : GFX_SCALE[g]);   // phones: fixed presets keep the tuned pixel budget
+    applyScale(presetScale(g));   // desktop: the preset's pixel budget; phones: fixed presets keep the tuned budget
     menu.setTuning(false, `Graphics fixed: ${g}`);
     setExtra();
   };
@@ -810,8 +829,9 @@ async function main() {
     get party() { return party; }, get remote() { return remote; }, streetProps, obstacles, standings: () => standings(), get lap() { return lap; },
     bench: (soak = false) => runBench(soak),
     setPreset: (name: PresetName) => { setPreset(PRESET_ORDER.indexOf(name)); setExtra(); },
-    garage, showPost, get inGarage() { return inGarage; },
+    garage, showPost, probe, get inGarage() { return inGarage; },
     setScale: (x: number) => { scale = x; post.setScale(x); setExtra(); },
+    presetScale, get scale() { return scale; },
     pipelines: () => ({ atStart: pipelinesAtStart, now: (renderer as unknown as { _pipelines: { caches: Map<string, unknown> } })._pipelines.caches.size }),
     // Rapier cost per step + what it simulates (static city colliders have no body: never integrated)
     physics: () => ({ stepMs, bodies: pw.world.bodies.len(), colliders: pw.world.colliders.len(),
@@ -1741,10 +1761,10 @@ async function main() {
           const dfps = driveFrames / driveWinTime;
           driveWinTime = 0; driveFrames = 0;
           const medIdx = PRESET_ORDER.indexOf('medium');
-          if (dfps < (isTouch ? 42 : 34) && !presetPinned && presetIdx < medIdx) {
-            setPreset(presetIdx + 1); setExtra();
-          } else if (dfps < 26 && !presetPinned && presetIdx < PRESET_ORDER.length - 1) {
-            setPreset(presetIdx + 1); setExtra();
+          if (dfps < (isTouch ? 42 : 27.5) && !presetPinned && presetIdx < medIdx) {
+            setPreset(presetIdx + 1, false); setExtra();
+          } else if (dfps < 25 && !presetPinned && presetIdx < PRESET_ORDER.length - 1) {
+            setPreset(presetIdx + 1, false); setExtra();
           }
         }
       } else if (state !== 'race') { driveWinTime = 0; driveFrames = 0; }
@@ -1818,10 +1838,10 @@ async function main() {
       // better than a sharp low preset, and it is where the frame is actually lost (the pinned profile in
       // docs/performance.md is fill-bound: 25.6 -> 31.0 fps from scale 1.0 to 0.8).
       if (warm) { tuneStart = now; }   // the timeout clock runs on measurable windows only
-      else if (low && lowStreak >= 2 && scale > RES_FLOOR + 1e-6) { applyScale(scale - STEP); wentDown = true; lowStreak = 0; p50s.length = 0; }
+      else if (low && lowStreak >= 2 && isTouch && scale > RES_FLOOR + 1e-6) { applyScale(scale - STEP); wentDown = true; lowStreak = 0; p50s.length = 0; }
       else if (low && lowStreak >= 2 && !presetPinned && presetIdx < PRESET_ORDER.length - 1) { setPreset(presetIdx + 1); wentDown = true; lowStreak = 0; p50s.length = 0; }
       else if (low && lowStreak >= 2 && scale > MIN_SCALE + 1e-6) { applyScale(scale - STEP); wentDown = true; lowStreak = 0; }
-      else if (high && upSteps > 0 && scale < maxScale - 1e-6) { applyScale(scale + STEP); upSteps--; }
+      else if (high && isTouch && upSteps > 0 && scale < maxScale - 1e-6) { applyScale(scale + STEP); upSteps--; }
       // done when two windows in a row sit in the band (the frame holds the cap) or when time is up
       okStreak = !warm && !low && !high ? okStreak + 1 : 0;
       if (okStreak >= 2 || (now - tuneStart > TUNE_TIMEOUT && !warm)) finishTuning();

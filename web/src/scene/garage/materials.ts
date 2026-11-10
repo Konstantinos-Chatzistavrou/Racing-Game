@@ -8,9 +8,10 @@
 // tiling is in metres, and merged pieces line up on their own.
 import * as THREE from 'three/webgpu';
 import {
-  abs, attribute, cameraPosition, cameraWorldMatrix, cross, dot, float, max, mix, mx_noise_float, normalMap, normalWorldGeometry, normalize,
+  abs, attribute, cameraPosition, cameraWorldMatrix, cross, dot, float, max, mix, normalMap, normalWorldGeometry, normalize,
   pmremTexture, positionWorld, pow, reflect, reflector, select, smoothstep, texture, uv, vec2, vec3, vec4, length, uniform,
 } from 'three/tsl';
+import { noise01 } from '../../fx/noiseTex';
 
 type V3 = THREE.Node<'vec3'>;
 type F = THREE.Node<'float'>;
@@ -160,8 +161,8 @@ export function floorMaterial(concrete: SurfaceMaps, deck: SurfaceMaps, env: THR
   const onDeck = float(1).sub(smoothstep(radius - 0.012, radius + 0.012, r));
   const stC = P.xz.div(3.2), stD = P.xz.div(1.6);
   // large-scale wear so the 3.2 m concrete tile does not read as a repeat
-  const wear = mx_noise_float(P.xz.mul(0.33)).mul(0.5).add(0.5);
-  const wear2 = mx_noise_float(P.xz.mul(1.3).add(vec2(7.1, 2.3))).mul(0.5).add(0.5);
+  const wear = noise01(P.xz.mul(0.33));
+  const wear2 = noise01(P.xz.mul(1.3).add(vec2(7.1, 2.3)));
   const albC = (texture(concrete.diff, stC).rgb as V3).mul(mix(float(0.62), float(1.0), wear)).mul(vec3(0.74, 0.78, 0.86));
   const albD = (texture(deck.diff, stD).rgb as V3).mul(vec3(0.5, 0.52, 0.56));
   const alb = mix(albC, albD, onDeck) as V3;
