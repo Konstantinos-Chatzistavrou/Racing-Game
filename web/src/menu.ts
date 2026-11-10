@@ -415,6 +415,7 @@ export class Menu {
           <button class="chip" data-act="cam" data-v="2.45,0.16,6.2">R 3/4</button>
           <button class="chip" data-act="cam" data-v="3.14,0.15,6.0">Rear</button>
           <button class="chip" data-act="cam" data-v="1.57,0.03,5.0">Low</button>
+          <button class="chip" data-act="cam" data-v="0.35,0.05,4.2">Nose</button>
           <button class="chip" data-act="cam" data-v="1.5,0.05,3.4">Wheel</button>
           <button class="chip" data-act="cam" data-v="0.9,0.55,6.8">Top</button>
           <button class="chip" data-act="cam" data-v="orbit">Orbit</button>
