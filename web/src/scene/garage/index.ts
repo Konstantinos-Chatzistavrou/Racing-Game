@@ -26,12 +26,12 @@ export class Garage {
   /** set when the props have arrived and the environment should be captured again */
   dirtyEnv = true;
 
-  private constructor(private renderer: THREE.WebGPURenderer, private pmrem: THREE.PMREMGenerator) {
+  private constructor(private renderer: THREE.WebGPURenderer, private pmrem: THREE.PMREMGenerator, cubeSize: number) {
     this.scene.name = 'garage_scene';
     this.scene.userData.plainLights = true;   // post.ts ScaledClusteredLighting: this scene uses plain forward lights
     this.scene.background = new THREE.Color(0x020308);
     this.scene.fog = new THREE.FogExp2(0x0a0c16, 0.022);
-    this.cube = new THREE.CubeRenderTarget(256, { type: THREE.HalfFloatType, generateMipmaps: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
+    this.cube = new THREE.CubeRenderTarget(cubeSize, { type: THREE.HalfFloatType, generateMipmaps: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
     this.cubeCam = new THREE.CubeCamera(0.2, 60, this.cube);
     this.cubeCam.position.set(0, 1.15, 0);
     this.envRT = pmrem.fromCubemap(this.cube.texture);
@@ -51,8 +51,8 @@ export class Garage {
   get floor() { return this.room.floor; }
   get bake() { return this.room.bake; }
 
-  static async create(renderer: THREE.WebGPURenderer, pmrem: THREE.PMREMGenerator): Promise<Garage> {
-    const g = new Garage(renderer, pmrem);
+  static async create(renderer: THREE.WebGPURenderer, pmrem: THREE.PMREMGenerator, cubeSize = 256): Promise<Garage> {
+    const g = new Garage(renderer, pmrem, cubeSize);
     g.room = await buildRoom(g.envRT.texture, LAMPS);
     g.scene.add(g.room.group);
     for (const [x, z] of LAMPS) {

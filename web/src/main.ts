@@ -10,9 +10,8 @@ import * as THREE from 'three/webgpu';
 import { Post, PRESETS, PRESET_ORDER, ScaledClusteredLighting, type PresetName } from './post';
 import { CarProbe } from './fx/carProbe';
 import { Particles } from './scene/damage';
-import { createStudioEnv } from './scene/studio';
-import { createGarageRoom } from './scene/garageRoom';
-import { configureShadowSun, refreshShadowCasters } from './scene/shadows';
+import { Garage } from './scene/garage';
+import { SHOW_PRESETS, ShowroomPost } from './showroomPost';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { CoreCar, CoreRace, OUT, loadCore, type LapInfo, type RawInput } from './physics/core';
 import { CarBody, DT, PhysicsWorld, loadRapier, type CarShape } from './physics/world';
@@ -294,7 +293,11 @@ async function main() {
   // as a visible hitch about once a second while driving. ?probe=N turns it on for an experiment.
   const probeEvery = num('probe', isTouch ? 0 : 4);
   const probeIntensity = num('probei', 1.25);
-  const probe = webgpu && probeEvery > 0 ? new CarProbe(renderer, scene, pmrem, num('probesize', isTouch ? 48 : 128), probeEvery) : null;
+  const probeSize = num('probesize', isTouch ? 48 : 256);
+  const probe = webgpu && probeEvery > 0 ? new CarProbe(renderer, scene, pmrem, probeSize, probeEvery) : null;
+  // The garage: its own scene (scene/garage). Built while the car loads; its cube matches the probe's so the probe
+  // can prefilter the room into the texture the car's materials already sample (no material ever changes).
+  const garageP = Garage.create(renderer, pmrem, probe ? probeSize : 128);
   // Blender-authored replacement shells (vela_front_wide / vela_front_track): swapped in when they arrive
   void Promise.all([
     loadGLTF(assetUrl('cars/v3/vela_front_wide.glb')),
@@ -316,42 +319,7 @@ async function main() {
     loadGLTF(assetUrl('cars/v3/vela_front_bumper_pro.glb')),
     loadGLTF(assetUrl('cars/v3/vela_hood_pro.glb')),
   ]).then(([b, h2]) => visual.custom.setExtraParts({ 'front-bumper-pro': b.scene, 'hood-pro': h2.scene })).catch(() => { /* authored parts stay */ });
-  // Garage interior: the showroom is a room, not the street. Built procedurally, parked cars cloned from the AI models.
-  const garageRoom = createGarageRoom(scene);
-  garageRoom.setVisible(false);
-  configureShadowSun(renderer, garageRoom.sun, scene, { mapSize: 2048, extent: 16 });
   const screenNone = () => menu.screen === 'none';
-  const visualsCastShadows = (on: boolean) => { visual.model.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) { m.castShadow = on; m.receiveShadow = on; } }); };
-  // Baked garage environment for the paint: one cube render of the room (hero car hidden) -> PMREM, so the car
-  // reflects the actual workshop instead of the softbox studio.
-  let garageEnv: THREE.Texture | null = null;
-  let garageEnvTried = false;
-  const bakeGarageEnv = (): THREE.Texture | null => {
-    if (garageEnvTried) return garageEnv;
-    garageEnvTried = true;
-    try {
-      const rt = new THREE.CubeRenderTarget(256, { type: THREE.HalfFloatType });
-      const cam = new THREE.CubeCamera(0.3, 90, rt);
-      cam.position.set(0, 1.35, 0);
-      garageRoom.group.add(cam);
-      const heroVisible = visual.model.visible;
-      const prevExposure = renderer.toneMappingExposure;
-      visual.model.visible = false;
-      renderer.toneMappingExposure = prevExposure * 1.8;   // the room is lit for a camera, the bake needs more headroom
-      cam.update(renderer, scene);
-      renderer.toneMappingExposure = prevExposure;
-      visual.model.visible = heroVisible;
-      garageRoom.group.remove(cam);
-      garageEnv = pmrem.fromCubemap(rt.texture).texture;
-      rt.dispose();
-    } catch { garageEnv = null; }
-    return garageEnv;
-  };
-  const placeGarage = () => {
-    const t = car.body.translation();
-    garageRoom.group.position.set(t.x, 0, t.z);
-    garageRoom.group.rotation.y = 0;
-  };
   // Tyre smoke: billboards at the rear contact patches, emitted from the core's slip ratio (not a canned effect)
   const tireSmoke = webgpu ? new Particles(180, { additive: false, gravity: 0.25, grow: 1.4, drag: 1.1, style: 'smoke', opacity: 0.15 }) : null;
   if (tireSmoke) tireSmoke.color.setRGB(0.72, 0.72, 0.76);   // grey tyre smoke, not tail-light red
@@ -360,12 +328,9 @@ async function main() {
   // Launch control: hold the throttle on the grid, the start clamps wheelspin for ~1.1 s
   let launchArmed = false, launchUntil = 0;
   const launchEl = document.getElementById('launch');
-  // Showroom environment: a bright studio with softboxes for the garage/title (the probe's night-city cube is for
-  // driving). Swapped on the car's own materials only, so the city keeps its own lighting.
-  let studioTex: THREE.Texture | null = null;
-  const showroomEnv = (on: boolean) => {
-    // In the garage the car's own lamps are nearly off (Heat's garage has no headlight blowout): dim every emissive
-    // "light" material and restore it when driving.
+  // In the garage the car's own lamps are nearly off (no headlight blowout in the room): every emissive "light"
+  // material is dimmed and restored for driving. Uniform writes only.
+  const dimLamps = (on: boolean) => {
     visual.model.traverse((o) => {
       const mesh = o as THREE.Mesh;
       if (!mesh.isMesh) return;
@@ -373,35 +338,13 @@ async function main() {
       for (const mm of mats) {
         const mat = mm as THREE.MeshStandardMaterial;
         if (!mat || !mat.emissive) continue;
-        const u = mat.userData as { showroomEmiss?: number; showroomSave?: number };
-        if (!u.showroomEmiss) u.showroomEmiss = 1;
+        const u = mat.userData as { showroomSave?: number };
         const name = (mat.name ?? '') + ' ' + (mesh.name ?? '');
         if (!/light|drl|lens|beam|tail/i.test(name)) continue;
-        if (on) { if (u.showroomSave === undefined) u.showroomSave = mat.emissiveIntensity ?? 1; mat.emissiveIntensity = (u.showroomSave ?? 1) * 0.06; }
+        if (on) { if (u.showroomSave === undefined) u.showroomSave = mat.emissiveIntensity ?? 1; mat.emissiveIntensity = (u.showroomSave ?? 1) * 0.16; }
         else if (u.showroomSave !== undefined) { mat.emissiveIntensity = u.showroomSave; u.showroomSave = undefined; }
       }
     });
-    const m = (visual.model.userData as { carMats?: Record<string, THREE.MeshPhysicalMaterial | null> }).carMats;
-    if (!m) return;
-    const mats = [m.paint, m.glass, m.carbon].filter(Boolean) as THREE.MeshPhysicalMaterial[];
-    if (on) {
-      if (!studioTex) studioTex = bakeGarageEnv() ?? createStudioEnv(renderer, pmrem, { intensity: 1.15 });
-      for (const mat of mats) {
-        const u = mat.userData as { prevEnv?: THREE.Texture | null };
-        if (!('prevEnv' in u)) u.prevEnv = mat.envMap ?? null;
-        mat.envMap = studioTex;
-        mat.envMapIntensity = Math.max(mat.envMapIntensity ?? 1, 2.4);
-        mat.needsUpdate = true;
-      }
-    } else {
-      for (const mat of mats) {
-        const u = mat.userData as { prevEnv?: THREE.Texture | null };
-        if (!('prevEnv' in u)) continue;
-        mat.envMap = u.prevEnv ?? null;
-        delete u.prevEnv;
-        mat.needsUpdate = true;
-      }
-    }
   };
   probe?.attach(visual.model, probeIntensity);
   let remote: RemoteCars | null = null;   // other players' cars, while a party session runs
@@ -414,6 +357,7 @@ async function main() {
   // Rapier only indexes new colliders for queries during a step: step once so the spawn probe
   // below can see the city (without this the first spawn misses the road and drops 3 m).
   pw.world.step();
+  const garage = await garageP;
   const aiCount = Math.max(0, Math.min(5, num('ai', 5)));
   if (aiCount > 0) say('Loading rivals…');
   const ai = await AiTraffic.create(scene, pw, defaultCfg, route.samples, aiCount, params.get('blackcar') === '1', physics.vela_gt ?? physics[catalog[0].id]);
@@ -439,7 +383,7 @@ async function main() {
       });
       parked.push(clone);
     }
-    garageRoom.park(parked);
+    garage.park(parked);
   } catch { /* no parked cars */ }
 
   // Start line = first route sample (core coords: Z-up) -> three (x, z, -y).
@@ -646,14 +590,42 @@ async function main() {
   input.onHud = () => { if (driving()) hud.toggle(); };
   input.onGarage = () => { if (driving()) quitSession(party ? 'lobby' : 'title'); };
 
-  // Showroom studio rig for title/garage views: elevated off-axis warm softbox key + opposite cool rim kicker.
-  // Intensity changes only (never visibility) so lit material shaders never recompile.
-  const showKey = new THREE.SpotLight(0xfff4e8, 0, 16, 0.62, 0.95, 2);
-  const showRim = new THREE.PointLight(0x98b8ff, 0, 14, 2);
-  scene.add(showKey, showKey.target, showRim);
   // --- post-processing ------------------------------------------------------------------------
   const DRAW_SCALE: Record<PresetName, number> = { max: 1, ultra: 0.9, high: 0.9, medium: 0.78, low: 0.62 };
   const post = new Post(renderer, scene, camera, { bloom: params.get('bloom') !== '0', aa: params.get('aa') !== '0', scale, preset: PRESET_ORDER[presetIdx] });
+  // The showroom's own pipeline on the garage scene. Phones keep their tuned pixel budget there too.
+  const showPost = new ShowroomPost(renderer, garage.scene, camera, PRESET_ORDER[presetIdx]);
+  const showScale = (p: PresetName) => (isTouch ? Math.min(SHOW_PRESETS[p].scale, Math.max(0.5, guessScale())) : SHOW_PRESETS[p].scale);
+  const syncShowPreset = () => {
+    const p = post.preset;
+    showPost.preset = p;
+    if (showPost.scale !== showScale(p)) showPost.setScale(showScale(p));
+    garage.floor.setResolution(SHOW_PRESETS[p].mirror * (isTouch ? 0.5 : 1));
+  };
+  syncShowPreset();
+  /**
+   * Hero car in the garage or on the street. Only the MODEL moves between the scenes: the car's root (with its
+   * headlight spots) stays in the city, so the city's light set - and with it every compiled city shader - never
+   * changes. In the garage the car's reflection probe is filled from the room; back on the street it captures the city.
+   */
+  let inGarage = false;
+  const IDENT_Q = new THREE.Quaternion();
+  const setGarage = (on: boolean, recapture = true) => {
+    if (on === inGarage) return;
+    inGarage = on;
+    if (on) {
+      visual.model.position.set(0, 0, 0);
+      garage.holder.add(visual.model);
+      garage.holder.position.set(0, -visual.groundY, 0);
+      if (garage.dirtyEnv) garage.captureEnv();
+      probe?.fromCube(garage.cube.texture);
+    } else {
+      visual.root.add(visual.model);
+      visual.model.position.copy(visual.cg).negate();
+      if (recapture) { visual.root.updateMatrixWorld(true); probe?.captureAll(pos, visual.root); }
+    }
+    dimLamps(on);
+  };
   const NEAR_TREES: Record<PresetName, number> = { max: 80, ultra: 80, high: 70, medium: 55, low: 40 };   // photoreal tree range, m
   post.onPreset = (p) => {
     city.setBundled(true); city.props.drawScale = driving() ? DRAW_SCALE[p] : Math.min(0.45, DRAW_SCALE[p]);
@@ -708,6 +680,16 @@ async function main() {
     damage.repair();
     visual.lightsOn = true; visual.applyHeadlights();
   }
+  // the garage: car in the room, room into the cube, every showroom preset once
+  {
+    setGarage(true);
+    await renderer.compileAsync(garage.scene, camera);
+    garage.captureEnv();
+    probe?.fromCube(garage.cube.texture);
+    await showPost.warmup();
+    setGarage(false, false);
+  }
+  void garage.loadProps().catch(() => { /* the room works without its dressing */ });
   ai.setMode('off');
   city.props.warmup(false);
   nyc?.breaches.warmup(false);
@@ -756,6 +738,7 @@ async function main() {
   const setPreset = (i: number) => {
     presetIdx = i;
     post.preset = PRESET_ORDER[i];
+    syncShowPreset();
     try { localStorage.setItem(PRESET_KEY, post.preset); } catch { /* storage blocked */ }
   };
   const applyScale = (x: number) => {
@@ -827,6 +810,7 @@ async function main() {
     get party() { return party; }, get remote() { return remote; }, streetProps, obstacles, standings: () => standings(), get lap() { return lap; },
     bench: (soak = false) => runBench(soak),
     setPreset: (name: PresetName) => { setPreset(PRESET_ORDER.indexOf(name)); setExtra(); },
+    garage, showPost, get inGarage() { return inGarage; },
     setScale: (x: number) => { scale = x; post.setScale(x); setExtra(); },
     pipelines: () => ({ atStart: pipelinesAtStart, now: (renderer as unknown as { _pipelines: { caches: Map<string, unknown> } })._pipelines.caches.size }),
     // Rapier cost per step + what it simulates (static city colliders have no body: never integrated)
@@ -937,26 +921,14 @@ async function main() {
     quit: (to) => quitSession(party ? 'lobby' : to),
     bench: (soak) => void runBench(soak),
     screen: (sc: Screen) => {
-      renderer.toneMappingExposure = sc !== 'none' ? 1.25 : 1.1;   // showroom reads brighter, driving keeps the night exposure
-      if (sc !== 'none') {
-        placeGarage();
-        garageRoom.setVisible(true);
-        visualsCastShadows(true);
-        refreshShadowCasters([visual.model, garageRoom.group], [garageRoom.group], garageRoom.sun);
-        showroomEnv(true);   // after the room is placed/visible, so the cubemap bake sees the workshop
-      } else {
-        showroomEnv(false);
-        garageRoom.setVisible(false);
-      }
-      if (sc === 'garage') { orbit.dist = 7.2; orbit.el = 0.22; }   // whole car in frame, slightly above the belt line
+      if (sc === 'garage') { orbit.dist = 6.6; orbit.el = 0.17; }   // whole car in frame, just above the belt line
       if (sc === 'title' || sc === 'garage' || sc === 'modes' || sc === 'lobby') setState(sc);
       if (sc === 'garage') preloadGarageCars();
     },
     // garage camera presets are relative to the car: 0 = in front, pi/2 = the driver's (left) side, pi = behind
     cam: (az, el, dist) => {
-      if (Number.isNaN(az)) { orbit.holdUntil = 0; orbit.el = 0.22; orbit.dist = 7.6; orbit.drag = false; return; }   // Orbit button: turntable now
-      const f = tmpD.set(0, 0, 1).applyQuaternion(quat);
-      orbit.az = Math.atan2(f.x, f.z) + az; orbit.el = el; orbit.dist = dist; orbit.drag = false;
+      if (Number.isNaN(az)) { orbit.holdUntil = 0; orbit.el = 0.17; orbit.dist = 6.8; orbit.drag = false; return; }   // Orbit button: turntable now
+      orbit.az = az; orbit.el = el; orbit.dist = dist; orbit.drag = false;   // in the garage the car's nose points down +z
       orbit.holdUntil = performance.now() + 15000;   // the turntable waits while you look at that part
     },
     // ---- multiplayer ----
@@ -1243,6 +1215,8 @@ async function main() {
       const cfg = path === DEFAULT_VISUAL ? defaultCfg : await fetchVisualCfg(path);
       const next = await CarVisual.load(cfg, visual.headlights);
       probe?.attach(next.model, probeIntensity);
+      const wasInGarage = inGarage;
+      setGarage(false, false);
       scene.remove(visual.root);
       damage.dispose();
       visualPath = path; visualCfg = cfg; visual = next; shape = shapeOf(cfg);
@@ -1256,6 +1230,8 @@ async function main() {
       wireDamage();
       headShadows = visual.headlights.filter((s) => s.castShadow).map((s) => s.shadow);
       for (const sh of headShadows) sh.autoUpdate = false;
+      visual.update(pos, quat, car.out);
+      setGarage(wasInGarage);
     }
     visual.setPaint(paintOf(sel, catalog), sel.finish);
     applyLook();
@@ -1265,7 +1241,7 @@ async function main() {
       settledShowroom = 0;
       syncPose();
       post.carPos.copy(pos);
-      probe?.captureAll(pos, visual.root);
+      if (!inGarage) probe?.captureAll(pos, visual.root);
     }
     Object.assign(g.__game, { visual, damage });   // `car` / `core` are live getters on __game
   }).catch((e) => console.error('car swap failed', e)));
@@ -1340,7 +1316,7 @@ async function main() {
   /** Respawn and start: 3-2-1 in a race, straight into the car otherwise. */
   async function beginRace() {
     resetCar();
-    showKey.intensity = showRim.intensity = 0;
+    setGarage(false);
     visual.dim = 1;
     visual.applyHeadlights();
     readBody(physPos, physQuat);
@@ -1470,30 +1446,31 @@ async function main() {
   const endDrag = () => { orbit.drag = false; };
   dom.addEventListener('pointerup', endDrag);
   dom.addEventListener('pointercancel', endDrag);
-  dom.addEventListener('wheel', (e) => { if (!driving()) orbit.dist = Math.min(11, Math.max(4.5, orbit.dist + e.deltaY * 0.004)); }, { passive: true });
+  dom.addEventListener('wheel', (e) => { if (!driving()) orbit.dist = Math.min(inGarage ? 7.6 : 11, Math.max(inGarage ? 3.6 : 4.5, orbit.dist + e.deltaY * 0.004)); }, { passive: true });
   const tmpT = new THREE.Vector3(), tmpP = new THREE.Vector3(), tmpR = new THREE.Vector3(), tmpD = new THREE.Vector3();
+  /**
+   * Showroom camera. In the garage it orbits the turntable (car at the origin, nose down +z) and stays inside the
+   * room; behind the tuner's cover it orbits the car where it stands on the street (that view is what gets measured).
+   */
   const placeShowroom = (dt: number, carPos: THREE.Vector3) => {
-    if (!orbit.drag && performance.now() > orbit.holdUntil) orbit.az += dt * (state === 'title' ? 0.2 : 0.1);
-    // on the title the car sits right of centre (the logo is on the left); in the garage it is centred
-    orbit.shift += ((state === 'title' ? 1.7 : 0) - orbit.shift) * (1 - Math.exp(-dt * 4));
-    tmpT.copy(carPos).add(tmpD.set(0, 0.25, 0));
+    if (!orbit.drag && performance.now() > orbit.holdUntil) orbit.az += dt * (state === 'title' ? 0.16 : 0.08);
+    // on the title the car sits right of centre (the menu is on the left); in the garage it is centred
+    orbit.shift += ((state === 'title' ? 1.55 : state === 'garage' ? -0.35 : 0) - orbit.shift) * (1 - Math.exp(-dt * 4));
+    if (inGarage) tmpT.set(0, 0.58, 0); else tmpT.copy(carPos).add(tmpD.set(0, 0.25, 0));
+    const dist = inGarage ? Math.min(7.6, Math.max(3.2, orbit.dist)) : orbit.dist;
     const ce = Math.cos(orbit.el);
-    tmpP.set(Math.sin(orbit.az) * ce, Math.sin(orbit.el), Math.cos(orbit.az) * ce).multiplyScalar(orbit.dist).add(tmpT);
-    const hit = pw.raycast(tmpT, tmpP, car.body);   // pull in front of walls (not the car itself)
-    if (hit && hit.toi < orbit.dist) tmpP.sub(tmpT).setLength(Math.max(2.5, hit.toi - 0.4)).add(tmpT);
+    tmpP.set(Math.sin(orbit.az) * ce, Math.sin(orbit.el), Math.cos(orbit.az) * ce).multiplyScalar(dist).add(tmpT);
+    if (inGarage) garage.clampCamera(tmpT, tmpP);
+    else {
+      const hit = pw.raycast(tmpT, tmpP, car.body);   // pull in front of walls (not the car itself)
+      if (hit && hit.toi < orbit.dist) tmpP.sub(tmpT).setLength(Math.max(2.5, hit.toi - 0.4)).add(tmpT);
+    }
     camera.position.copy(tmpP);
     tmpR.subVectors(tmpT, tmpP).cross(tmpD.set(0, 1, 0)).setY(0).normalize();   // camera right
     camera.lookAt(tmpD.copy(tmpT).addScaledVector(tmpR, -orbit.shift));
-    if (camera.fov !== 42) { camera.fov = 42; camera.updateProjectionMatrix(); }
-    // Off-axis studio key light (38 deg around orbit + overhead) sweeps clean clearcoat ribbons across body creases
-    const keyAz = orbit.az + 0.66;
-    showKey.position.set(carPos.x + Math.sin(keyAz) * 4.8, carPos.y + 3.6, carPos.z + Math.cos(keyAz) * 4.8);
-    showKey.target.position.copy(tmpT);
-    showKey.intensity = 95;
-    // Opposite rear-quarter cool rim kicker carves crisp shoulder, roofline, wing, and spoke highlights
-    const rimAz = orbit.az + 2.58;
-    showRim.position.set(carPos.x + Math.sin(rimAz) * 4.3, carPos.y + 2.4, carPos.z + Math.cos(rimAz) * 4.3);
-    showRim.intensity = 42;
+    const fov = inGarage ? 38 : 42;
+    if (camera.fov !== fov) { camera.fov = fov; camera.updateProjectionMatrix(); }
+    showPost.focus.value = tmpP.distanceTo(tmpT);
   };
 
   if (import.meta.env.DEV) {
@@ -1701,9 +1678,15 @@ async function main() {
       remote.update(now, camera);
       if (party && driving()) { const out = remote.outgoing(now, pos, quat, car.body.linvel()); if (out) party.sendPose(out, paintInt()); }
     }
+    // The garage is on screen for every showroom state, except behind the tuner's cover and during the benchmark
+    // (both measure the street).
+    setGarage(inShowroom && !tuning && !bench.active);
+    if (inGarage) {
+      visual.custom.sync(garage.holder.position, IDENT_Q);   // livery mask: the model sits on the turntable, not at the body
+      if (garage.dirtyEnv) { garage.captureEnv(); probe?.fromCube(garage.cube.texture); }
+    }
     if (!driving() || state === 'busy') { placeShowroom(frame, pos); }
     else {
-      showKey.intensity = showRim.intensity = 0;
       if (state === 'spectate') specCamera(frame);
       else if (live) rig.update(frame, pos, quat, carAcc, car.out);
     }
@@ -1738,7 +1721,7 @@ async function main() {
       const hasCasters = ai.mode === 'race' || remote !== null || damage.debrisCount > 0;
       if (hasCasters && ++frameNo % (params.has('se') ? num('se', 2) : PRESETS[post.preset].shadowEvery) === 0) for (const sh of headShadows) sh.needsUpdate = true;
       const tPost = performance.now();
-      post.render();
+      if (inGarage) showPost.render(); else post.render();
       prof.post += performance.now() - tPost;
       // never while the garage is up: the probe's cube render rebuilds ShadowNodes and destroys the sun's shadow map
       if (screenNone() && post.preset !== 'low' && post.preset !== 'medium') probe?.update(pos, visual.root);

@@ -64,6 +64,9 @@ export class CarProbe {
     if (++this.face === 6) { this.filter(); this.face = 0; }
   }
 
+  /** Fill the probe from a ready cube map of the same size (the garage's own capture) instead of rendering the city. */
+  fromCube(cube: THREE.Texture) { this.pmrem.fromCubemap(cube, this.filtered); this.face = 0; }
+
   private begin(pos: THREE.Vector3, hide: THREE.Object3D) {
     this.cube.position.copy(pos);
     this.cube.position.y += this.height;

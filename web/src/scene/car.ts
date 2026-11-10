@@ -502,6 +502,9 @@ export class CarVisual {
     if (wasIri !== ((m.iridescence ?? 0) > 0)) m.needsUpdate = true;
   }
 
+  /** Model-space height of the tyres' lowest point: the garage sets the model down by this much onto its floor. */
+  get groundY() { return this.contactShadow.position.y - 0.014; }
+
   /** Spot intensity from the switch and the damage state. */
   /** The driver's name on the number plate (plate.ts). */
   setPlate(name: string) { applyPlate(this.model, name); }
