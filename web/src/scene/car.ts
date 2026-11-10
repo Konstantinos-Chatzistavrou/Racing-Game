@@ -443,12 +443,16 @@ export class CarVisual {
    */
   private addBlurDisc(node: THREE.Object3D): number {
     const rimBox = new THREE.Box3(), all = new THREE.Box3(), tmp = new THREE.Box3();
+    // Boxes in the wheel node's own space. The transform is the whole chain below the node (quantized glTF meshes
+    // carry their scale on a node between the wheel and the mesh): with the mesh's local matrix alone the tyre
+    // measured 1 m in radius and everything derived from it (contact shadow height, blur disc) was wrong.
+    node.updateWorldMatrix(true, true);
+    const nodeInv = new THREE.Matrix4().copy(node.matrixWorld).invert(), rel = new THREE.Matrix4();
     node.traverse((c) => {
       const m = c as THREE.Mesh;
       if (!m.isMesh || m.name.startsWith('wheel_blur_')) return;
       if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
-      m.updateMatrix();
-      tmp.copy(m.geometry.boundingBox!).applyMatrix4(m.matrix);
+      tmp.copy(m.geometry.boundingBox!).applyMatrix4(rel.multiplyMatrices(nodeInv, m.matrixWorld));
       all.union(tmp);
       if (/rim/i.test(m.name)) rimBox.union(tmp);
     });

@@ -169,7 +169,7 @@ export function floorMaterial(concrete: SurfaceMaps, deck: SurfaceMaps, env: THR
   const n = mix(nC, nD, onDeck);
   const armC = texture(concrete.arm!, stC);
   // roughness: the sealed concrete is glossy where it is worn smooth, duller in the dusty patches; the deck is satin
-  const rough = mix(armC.g.mul(mix(float(0.42), float(0.85), wear2)), float(0.5), onDeck).clamp(0.05, 1) as F;
+  const rough = mix(armC.g.mul(mix(float(0.42), float(0.85), wear2)), float(0.2), onDeck).clamp(0.05, 1) as F;
   const ao = mix(armC.r as F, float(1), onDeck);
 
   const refl = reflector({ resolutionScale: 0.5, generateMipmaps: true, bounces: false });
@@ -190,9 +190,9 @@ export function floorMaterial(concrete: SurfaceMaps, deck: SurfaceMaps, env: THR
   const line = smoothstep(radius + 0.03, radius + 0.055, r).mul(float(1).sub(smoothstep(radius + 0.085, radius + 0.11, r)));
   const halo = float(1).sub(smoothstep(0.0, 0.55, abs(r.sub(radius + 0.07)))).pow(2.5);
   const steel = smoothstep(radius - 0.012, radius + 0.0, r).mul(float(1).sub(smoothstep(radius + 0.11, radius + 0.125, r)));
-  const base = mix(alb.mul(irr).mul(ao), vec3(0.08, 0.085, 0.09).mul(irr).mul(6), steel.mul(float(1).sub(line)));
+  const base = mix(alb.mul(irr).mul(ao), vec3(0.08, 0.085, 0.09).mul(irr).mul(2.4), steel.mul(float(1).sub(line)));
   const out = base.mul(float(1).sub(fres.mul(0.6))).add(spec)
-    .add(vec3(ring.r, ring.g, ring.b).mul(line.mul(9).add(halo.mul(0.055))));
+    .add(vec3(ring.r, ring.g, ring.b).mul(line.mul(7).add(halo.mul(0.028))));
   m.colorNode = vec4(out, 1);
   return {
     material: m, target: refl.target, strength, ring,

@@ -144,7 +144,7 @@ const lineTex = () => canvasTex(64, 512, (x, w, h) => {
 });
 const officeTex = () => canvasTex(1024, 512, (x, w, h) => {
   const g = x.createLinearGradient(0, 0, 0, h);
-  g.addColorStop(0, '#ffd9a0'); g.addColorStop(0.55, '#ffb866'); g.addColorStop(1, '#8a4a1c');
+  g.addColorStop(0, '#f2c184'); g.addColorStop(0.5, '#d98a3c'); g.addColorStop(1, '#5a2c10');
   x.fillStyle = g; x.fillRect(0, 0, w, h);
   // the room behind the glass, out of focus: shelves, a desk lamp, a monitor
   x.filter = 'blur(7px)';
@@ -156,8 +156,8 @@ const officeTex = () => canvasTex(1024, 512, (x, w, h) => {
   x.fillStyle = 'rgba(255,255,240,0.95)'; x.beginPath(); x.arc(250, 330, 26, 0, 7); x.fill();
   x.filter = 'none';
   // blinds
-  x.fillStyle = 'rgba(40,22,10,0.20)';
-  for (let y = 0; y < h; y += 22) x.fillRect(0, y, w, 7);
+  x.fillStyle = 'rgba(30,16,8,0.42)';
+  for (let y = 0; y < h; y += 20) x.fillRect(0, y, w, 9);
   // mullions
   x.fillStyle = '#0c0d10';
   for (let i = 0; i <= 4; i++) x.fillRect(i * (w / 4) - 7, 0, 14, h);
@@ -326,8 +326,8 @@ export async function buildRoom(env: THREE.Texture, lamps: [number, number][] = 
     bake.box(cx, oh / 2, cz, sx, oh, sz);
     const glass = officeTex();
     const glassMat = (rx: number) => { const t = glass.clone(); t.repeat.set(rx, 1); t.wrapS = THREE.RepeatWrapping; t.needsUpdate = true; return t; };
-    lateDecals.push(() => decal(glassMat(1), x1 + 0.01, 1.89, cz, sz - 0.1, 1.98, 'px', 0, 2.6));
-    lateDecals.push(() => decal(glassMat(1), cx, 1.89, z1 + 0.01, sx - 0.1, 1.98, 'pz', 0, 2.6));
+    lateDecals.push(() => decal(glassMat(1), x1 + 0.01, 1.89, cz, sz - 0.1, 1.98, 'px', 0, 1.15));
+    lateDecals.push(() => decal(glassMat(1), cx, 1.89, z1 + 0.01, sx - 0.1, 1.98, 'pz', 0, 1.15));
     bake.point(x1 + 0.9, 1.9, cz, 0xffb866, 9, 7, true);
     bake.point(cx, 1.9, z1 + 0.9, 0xffb866, 9, 7, true);
   }

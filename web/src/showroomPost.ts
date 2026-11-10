@@ -3,24 +3,24 @@
 // (post.ts) and each side keeps its own render scale.
 //
 // The garage is cheap to draw (baked room, no city), so the budget goes into the image:
-//   max    - ambient occlusion, bloom, depth of field, SMAA, vignette + grain, mirror floor at 0.75
+//   max    - ambient occlusion, bloom, depth of field, SMAA, vignette + grain, mirror floor at 0.6
 //   ultra  - ambient occlusion, bloom, SMAA, vignette + grain, mirror floor at 0.6
 //   high   - bloom, SMAA, vignette + grain, mirror floor at 0.5
 //   medium - bloom, FXAA, vignette, mirror floor at 0.4, render scale 0.85
 //   low    - FXAA, vignette, mirror floor at 0.3, render scale 0.7
 // One pipeline per preset, all compiled at load; switching is a pointer change.
 import * as THREE from 'three/webgpu';
-import { dot, float, mix, pass, smoothstep, uniform, uv, vec3 } from 'three/tsl';
+import { convertToTexture, dot, float, mix, pass, smoothstep, uniform, uv, vec3 } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { fxaa } from 'three/addons/tsl/display/FXAANode.js';
 import { ao as gtao } from 'three/addons/tsl/display/GTAONode.js';
-import { dof } from 'three/addons/tsl/display/DepthOfFieldNode.js';
+import { gaussianBlur } from 'three/addons/tsl/display/GaussianBlurNode.js';
 import { makeGrade, toneGrade } from './fx/grade';
 import { PRESET_ORDER, ScaledSMAA, casUpscale, rtt8, type PresetName } from './post';
 
 interface ShowPreset { ao: boolean; bloom: boolean; dof: boolean; aa: 'smaa' | 'fxaa'; grain: boolean; mirror: number; scale: number }
 export const SHOW_PRESETS: Record<PresetName, ShowPreset> = {
-  max: { ao: true, bloom: true, dof: true, aa: 'smaa', grain: true, mirror: 0.75, scale: 1 },
+  max: { ao: true, bloom: true, dof: true, aa: 'smaa', grain: true, mirror: 0.6, scale: 1 },
   ultra: { ao: true, bloom: true, dof: false, aa: 'smaa', grain: true, mirror: 0.6, scale: 1 },
   high: { ao: false, bloom: true, dof: false, aa: 'smaa', grain: true, mirror: 0.5, scale: 1 },
   medium: { ao: false, bloom: true, dof: false, aa: 'fxaa', grain: false, mirror: 0.4, scale: 0.85 },
@@ -37,6 +37,7 @@ export class ShowroomPost {
   private smaas: ScaledSMAA[] = [];
   private blooms: { setResolutionScale(s: number): unknown }[] = [];
   private aos: { resolutionScale: number }[] = [];
+  private dofBlurs: { resolutionScale: number }[] = [];
   private sharpness = uniform(1.0);
   private _scale = 1;
   /** distance from the camera to the car (m): the depth of field focuses there */
@@ -90,8 +91,14 @@ export class ShowroomPost {
         lit = lit.add(b);
       }
       if (pr.dof && q.get('gdof') !== '0') {
-        // focus on the car; the room falls off softly behind and in front of it
-        lit = dof(lit, this.scenePass.getViewZNode(), this.focus, float(Number(q.get('gdofl') ?? 9)), float(Number(q.get('gdofb') ?? 1.6))) as unknown as THREE.Node<'vec4'>;
+        // Depth of field, the cheap way: one half-resolution gaussian of the lit image, mixed in by the distance from
+        // the focus plane (the car). three's DepthOfFieldNode costs ~13 ms at 1080p on the iGPU; this is ~2 ms.
+        const litTex = convertToTexture(lit);
+        const soft = gaussianBlur(litTex, null, 3, { resolutionScale: 0.5 });
+        this.dofBlurs.push(soft as unknown as { resolutionScale: number });
+        const dist = this.scenePass.getViewZNode().negate();
+        const coc = smoothstep(float(Number(q.get('gdofn') ?? 3.2)), float(Number(q.get('gdofl') ?? 11)), dist.sub(this.focus).abs());
+        lit = mix(litTex, soft, coc.mul(0.9)) as unknown as THREE.Node<'vec4'>;
       }
       const toned = rtt8(toneGrade(lit, 'neutral', true, SHOW_GRADE));
       this.scaled.push(toned);
@@ -124,6 +131,7 @@ export class ShowroomPost {
     for (const m of this.smaas) m.scale = s;
     for (const b of this.blooms) b.setResolutionScale(0.25 * s);
     for (const a of this.aos) a.resolutionScale = 0.5 * s;
+    for (const d of this.dofBlurs) d.resolutionScale = 0.5;
     this.sharpness.value = s >= 0.99 ? 1.0 : 0.5;
   }
 
