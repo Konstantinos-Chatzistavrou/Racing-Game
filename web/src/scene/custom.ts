@@ -367,6 +367,19 @@ export class CarCustomizer {
     this.showOptional();
   }
 
+  /** Swap in extra authored parts (hood / rear shells) keyed by their option id. */
+  setExtraParts(map: Record<string, THREE.Object3D>) {
+    for (const [id, g] of Object.entries(map)) {
+      this.bodyParts[id]?.removeFromParent();
+      g.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) { m.material = this.paint ?? this.aeroMat; m.castShadow = false; m.frustumCulled = false; } });
+      g.name = 'extra_' + id;
+      g.visible = false;
+      this.bodyParts[id] = g;
+      this.model.add(g);
+    }
+    this.showOptional();
+  }
+
   /** Apply a full set of choices (cheap: uniforms and visibility only). paintHex: the body colour (aero 'body'). */
   apply(c: Custom, paintHex?: string) {
     this.current = c;
