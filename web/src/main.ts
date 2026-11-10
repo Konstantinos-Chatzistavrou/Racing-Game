@@ -9,6 +9,7 @@
 import * as THREE from 'three/webgpu';
 import { Post, PRESETS, PRESET_ORDER, ScaledClusteredLighting, type PresetName } from './post';
 import { CarProbe } from './fx/carProbe';
+import { createStudioEnv } from './scene/studio';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { CoreCar, CoreRace, OUT, loadCore, type LapInfo, type RawInput } from './physics/core';
 import { CarBody, DT, PhysicsWorld, loadRapier, type CarShape } from './physics/world';
@@ -287,6 +288,32 @@ async function main() {
   const probeEvery = num('probe', isTouch ? 0 : 4);
   const probeIntensity = num('probei', 1.25);
   const probe = webgpu && probeEvery > 0 ? new CarProbe(renderer, scene, pmrem, num('probesize', isTouch ? 48 : 128), probeEvery) : null;
+  // Showroom environment: a bright studio with softboxes for the garage/title (the probe's night-city cube is for
+  // driving). Swapped on the car's own materials only, so the city keeps its own lighting.
+  let studioTex: THREE.Texture | null = null;
+  const showroomEnv = (on: boolean) => {
+    const m = (visual.model.userData as { carMats?: Record<string, THREE.MeshPhysicalMaterial | null> }).carMats;
+    if (!m) return;
+    const mats = [m.paint, m.glass, m.carbon].filter(Boolean) as THREE.MeshPhysicalMaterial[];
+    if (on) {
+      if (!studioTex) studioTex = createStudioEnv(renderer, pmrem, { intensity: 1.15 });
+      for (const mat of mats) {
+        const u = mat.userData as { prevEnv?: THREE.Texture | null };
+        if (!('prevEnv' in u)) u.prevEnv = mat.envMap ?? null;
+        mat.envMap = studioTex;
+        mat.envMapIntensity = Math.max(mat.envMapIntensity ?? 1, 1.5);
+        mat.needsUpdate = true;
+      }
+    } else {
+      for (const mat of mats) {
+        const u = mat.userData as { prevEnv?: THREE.Texture | null };
+        if (!('prevEnv' in u)) continue;
+        mat.envMap = u.prevEnv ?? null;
+        delete u.prevEnv;
+        mat.needsUpdate = true;
+      }
+    }
+  };
   probe?.attach(visual.model, probeIntensity);
   let remote: RemoteCars | null = null;   // other players' cars, while a party session runs
   let party: Party | null = null;         // the multiplayer party we are in (lobby or driving)
@@ -797,11 +824,13 @@ async function main() {
     quit: (to) => quitSession(party ? 'lobby' : to),
     bench: (soak) => void runBench(soak),
     screen: (sc: Screen) => {
+      showroomEnv(sc !== 'none');
       if (sc === 'title' || sc === 'garage' || sc === 'modes' || sc === 'lobby') setState(sc);
       if (sc === 'garage') preloadGarageCars();
     },
     // garage camera presets are relative to the car: 0 = in front, pi/2 = the driver's (left) side, pi = behind
     cam: (az, el, dist) => {
+      if (Number.isNaN(az)) { orbit.holdUntil = 0; orbit.el = 0.22; orbit.dist = 7.6; orbit.drag = false; return; }   // Orbit button: turntable now
       const f = tmpD.set(0, 0, 1).applyQuaternion(quat);
       orbit.az = Math.atan2(f.x, f.z) + az; orbit.el = el; orbit.dist = dist; orbit.drag = false;
       orbit.holdUntil = performance.now() + 15000;   // the turntable waits while you look at that part

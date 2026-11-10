@@ -206,6 +206,20 @@ export class CarCustomizer {
       const panel = shrink(base, spec.kind === 'hood' ? 0.95 : 0.9);
       const mat = this.paint ?? this.aeroMat;
       const g = spec.build({ box: this.box, panel, mat });
+      // A generated shell cannot follow the real nose/tail, so keep each design's add-on pieces (lip, fins,
+      // canards, intake walls) and drop the largest mesh - the shell itself - which read as a wall over the car.
+      if (spec.kind === 'front' || spec.kind === 'rear') {
+        let big: THREE.Mesh | null = null, bv = 0;
+        const bb = new THREE.Box3(), sz = new THREE.Vector3();
+        g.traverse((o) => {
+          const mesh = o as THREE.Mesh;
+          if (!mesh.isMesh) return;
+          bb.setFromObject(mesh); bb.getSize(sz);
+          const v = sz.x * sz.y * sz.z;
+          if (v > bv) { bv = v; big = mesh; }
+        });
+        if (big && bv > 0.02) (big as THREE.Mesh).removeFromParent();
+      }
       g.name = 'body_' + spec.id;
       g.visible = false;
       this.bodyParts[spec.id] = g;

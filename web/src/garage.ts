@@ -85,6 +85,13 @@ export function applyMods(base: any, m: Mods): any {
   return d;
 }
 
+import { PART_METRICS } from './parts-metrics';
+
+/** Measured effect of a part (from its generated geometry), or zeros for stock/unknown ids. */
+export function partEffect(id: string): { df: number; drag: number; kg: number } {
+  return (id && PART_METRICS[id]) || { df: 0, drag: 0, kg: 0 };
+}
+
 export interface Stats { power: number; hp: number; mass: number; grip: number; downforce: number; drag: number; vmax: number; accel: number; ratio: number; pwr: number }
 const statsCache = new WeakMap<object, Stats>();
 /** Numbers for the garage bars, straight from the physics JSON (cached per object). */
@@ -130,19 +137,15 @@ export const RIM_EFFECT: { re: RegExp; kg: number }[] = [
   { re: /^concave/, kg: -0.8 }, { re: /^dish/, kg: -0.4 }, { re: /^lip/, kg: 0.4 }, { re: /^rally/, kg: 1.2 },
 ];
 /** What a splitter / diffuser / skirt does: more downforce, a little drag, a little mass. */
-export function kitEffect(kind: 'splitter' | 'diffuser' | 'skirt', id: string) {
-  if (!id || id === 'stock') return { df: 0, drag: 0, kg: 0 };
-  const n = parseInt(String(id).split('-').pop() ?? '1', 10);
-  const i = Number.isFinite(n) ? Math.max(0, Math.min(9, n)) : 1;
-  if (kind === 'splitter') return { df: 0.010 + i * 0.004, drag: 0.004 + i * 0.002, kg: 0.6 + i * 0.10 };
-  if (kind === 'diffuser') return { df: 0.014 + i * 0.005, drag: 0.005 + i * 0.002, kg: 0.8 + i * 0.12 };
-  return { df: 0.004 + i * 0.0015, drag: 0.002 + i * 0.001, kg: 0.4 + i * 0.06 };
+export function kitEffect(_kind: 'splitter' | 'diffuser' | 'skirt', id: string) {
+  return partEffect(id);
 }
 
 /** One-line "what it does" for a part, shown as the chip's tooltip and in the section hint. */
 export function wingHint(id: string): string {
-  const e = WING_EFFECT.find((x) => x.re.test(id));
-  if (!e) return id === 'none' ? 'No wing: least drag, no downforce' : 'The model\'s own wing';
+  if (id === 'none') return 'No wing: least drag, no downforce';
+  const e = partEffect(id);
+  if (!e.df && !e.drag && !e.kg) return "The model's own wing";
   return '+' + e.df.toFixed(2) + ' m² downforce · +' + e.drag.toFixed(3) + ' drag · +' + e.kg.toFixed(1) + ' kg';
 }
 export function kitHint(kind: 'splitter' | 'diffuser' | 'skirt', id: string): string {
@@ -152,20 +155,13 @@ export function kitHint(kind: 'splitter' | 'diffuser' | 'skirt', id: string): st
 }
 export function rimHint(id: string): string {
   if (!id || id === 'stock') return 'Factory wheels';
-  const e = RIM_EFFECT.find((x) => x.re.test(id));
-  if (!e) return 'Generated design';
-  return (e.kg < 0 ? '' : '+') + e.kg.toFixed(1) + ' kg unsprung' + (e.kg < 0 ? ' (lighter)' : '');
+  const e = partEffect(id);
+  return (e.kg > 0 ? '+' : '') + e.kg.toFixed(1) + ' kg unsprung' + (e.kg < 0 ? ' (lighter)' : '');
 }
 
 /** Body panels: bumpers and fenders add a little drag/mass, a carbon hood takes a little away. */
-export function bodyEffect(kind: 'front' | 'rear' | 'hood' | 'fender', id: string) {
-  if (!id || id === 'stock') return { df: 0, drag: 0, kg: 0 };
-  const n = parseInt(String(id).split('-').pop() ?? '1', 10);
-  const i = Number.isFinite(n) ? Math.max(0, Math.min(6, n)) : 1;
-  if (kind === 'front') return { df: 0.004 + i * 0.002, drag: 0.002 + i * 0.001, kg: 0.8 + i * 0.2 };
-  if (kind === 'rear') return { df: 0.006 + i * 0.002, drag: 0.002 + i * 0.001, kg: 0.8 + i * 0.2 };
-  if (kind === 'hood') return { df: 0, drag: -0.001 * i, kg: -0.9 + i * 0.15 };
-  return { df: 0.002 + i * 0.001, drag: 0.003 + i * 0.002, kg: 0.6 + i * 0.25 };
+export function bodyEffect(_kind: 'front' | 'rear' | 'hood' | 'fender', id: string) {
+  return partEffect(id);
 }
 export function bodyHint(kind: 'front' | 'rear' | 'hood' | 'fender', id: string, name: string): string {
   if (id === 'stock') return 'Stock panel';

@@ -6,7 +6,7 @@
 //       title -> Garage (cars, paint, upgrades only) -> Main Menu, or Continue -> game modes
 import type { Identity } from './identity';
 import { PLATE_MAX, USERNAME_MAX, USERNAME_MIN, usernameError } from './username';
-import { FINISHES, LOOK_PRESETS, MODS, MOD_KEYS, RIM_EFFECT, SWATCHES, WING_EFFECT, applyLookPreset, applyMods, bodyEffect, bodyHint, customOf, kitEffect, kitHint, modsOf, paintOf, rimHint, saveSelection, statsOf, wingHint,
+import { FINISHES, LOOK_PRESETS, MODS, MOD_KEYS, SWATCHES, applyLookPreset, applyMods, bodyEffect, bodyHint, customOf, kitEffect, kitHint, modsOf, paintOf, partEffect, rimHint, saveSelection, statsOf, wingHint,
   type CatalogCar, type Finish, type Mode, type ModKey, type Selection } from './garage';
 import { formatLap } from './hud';
 import { MAX_MEMBERS, cleanCode, type Party, type PartyMode } from './party';
@@ -417,6 +417,7 @@ export class Menu {
           <button class="chip" data-act="cam" data-v="1.57,0.03,5.0">Low</button>
           <button class="chip" data-act="cam" data-v="1.5,0.05,3.4">Wheel</button>
           <button class="chip" data-act="cam" data-v="0.9,0.55,6.8">Top</button>
+          <button class="chip" data-act="cam" data-v="orbit">Orbit</button>
         </div>
       </header>
       <aside class="g-carlist panel"><h3>Your cars (${this.cars.filter((c) => w.owns(c.id)).length}/${this.cars.length})</h3>${cards}
@@ -438,14 +439,12 @@ export class Menu {
     const d = applyMods(this.physics[sel.car] as never, modsOf(sel)) as any;
     const st = statsOf(d);
     const fx = (c: ReturnType<typeof customOf>) => {
-      const w = WING_EFFECT.find((e) => e.re.test(String(c.wing)));
-      const r = RIM_EFFECT.find((e) => e.re.test(String(c.rims)));
-      const parts = [kitEffect('splitter', c.splitter), kitEffect('diffuser', c.diffuser), kitEffect('skirt', c.skirt),
-        bodyEffect('front', c.frontB), bodyEffect('rear', c.rearB), bodyEffect('hood', c.hood), bodyEffect('fender', c.fenders)];
+      const ids = [c.wing, c.splitter, c.diffuser, c.skirt, c.frontB, c.rearB, c.hood, c.fenders, c.rims];
+      const parts = ids.map((id) => partEffect(id));
       return {
-        df: (w ? w.df : 0) + parts.reduce((a, x) => a + x.df, 0),
-        drag: (w ? w.drag : 0) + parts.reduce((a, x) => a + x.drag, 0),
-        kg: (w ? w.kg : 0) + (r ? r.kg : 0) + parts.reduce((a, x) => a + x.kg, 0),
+        df: parts.reduce((a, x) => a + x.df, 0),
+        drag: parts.reduce((a, x) => a + x.drag, 0),
+        kg: parts.reduce((a, x) => a + x.kg, 0),
       };
     };
     const now = fx(parts);
@@ -839,7 +838,7 @@ export class Menu {
       case 'quit': this.lastResults = null; this.hooks.quit('title'); break;
       case 'bench': this.hooks.bench(false); break;
       case 'soak': this.hooks.bench(true); break;
-      case 'cam': { const [az, el, dist] = v.split(',').map(Number); this.hooks.cam?.(az, el, dist); break; }
+      case 'cam': { if (v === 'orbit') { this.hooks.cam?.(NaN, 0, 0); break; } const [az, el, dist] = v.split(',').map(Number); this.hooks.cam?.(az, el, dist); break; }
       // multiplayer
       case 'invite': this.joinCode = this.invite; this.show('lobby'); this.hooks.partyJoin(this.invite); break;
       case 'noinvite': this.invite = ''; this.render(); break;
