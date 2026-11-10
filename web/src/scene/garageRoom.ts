@@ -62,7 +62,7 @@ export function createGarageRoom(scene: THREE.Scene): GarageRoom {
   }
 
   // ---- lights -----------------------------------------------------------------------------------------------
-  const sun = new THREE.DirectionalLight(0xfff1dd, 3.4);
+  const sun = new THREE.DirectionalLight(0xfff1dd, 4.4);
   sun.position.set(6, 16, 7);
   sun.target.position.set(0, 0, 0);
   sun.castShadow = true;
@@ -72,7 +72,10 @@ export function createGarageRoom(scene: THREE.Scene): GarageRoom {
   sun.shadow.bias = -0.0004;
   sun.shadow.mapSize.set(2048, 2048);
   g.add(sun, sun.target);
-  g.add(new THREE.HemisphereLight(0xbcd0ea, 0x3a352e, 1.15));
+  g.add(new THREE.HemisphereLight(0xbcd0ea, 0x3a352e, 1.45));
+  const frontKey = new THREE.PointLight(0xffe9d0, 55, 20, 2);
+  frontKey.position.set(5.5, 2.4, 8.5);   // low front key so the nose and wheels are not in shade
+  g.add(frontKey);
   const warm = new THREE.PointLight(0xffd9a8, 60, 22, 2);
   warm.position.set(-6, 4.2, -4);
   const cool = new THREE.PointLight(0x9fc4ff, 45, 20, 2);

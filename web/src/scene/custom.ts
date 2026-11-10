@@ -91,6 +91,8 @@ export class CarCustomizer {
   private bodyParts: Record<string, THREE.Object3D> = {};
   /** the model's own bumpers and hood, hidden when a generated one is fitted */
   private bodyStock: { front?: THREE.Object3D; rear?: THREE.Object3D; hood?: THREE.Object3D } = {};
+  /** paint clone for imported parts: double-sided, so an inverted-winding export can never read as a black hole */
+  private extraMat?: THREE.Material;
   /** fender flares, by id: four arch lips */
   private fenderParts: Record<string, THREE.Object3D> = {};
   private wheelNodes: THREE.Object3D[] = [];
@@ -358,7 +360,16 @@ export class CarCustomizer {
     const pairs: [string, THREE.Object3D][] = [['front-shell-wide', wide], ['front-shell-track', track]];
     for (const [id, g] of pairs) {
       this.bodyParts[id]?.removeFromParent();
-      g.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) { m.material = this.paint ?? this.aeroMat; m.castShadow = false; m.frustumCulled = false; } });
+      g.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (!m.isMesh) return;
+        // Blender exports can carry inverted/loose normals: recompute them and draw the imported part double-sided
+        if (m.geometry) m.geometry.computeVertexNormals();
+        if (!this.extraMat) { this.extraMat = (this.paint ?? this.aeroMat).clone(); this.extraMat.side = THREE.DoubleSide; }
+        m.material = this.extraMat;
+        m.castShadow = false;
+        m.frustumCulled = false;
+      });
       g.name = 'shell_' + id;
       g.visible = false;
       this.bodyParts[id] = g;
@@ -371,7 +382,16 @@ export class CarCustomizer {
   setExtraParts(map: Record<string, THREE.Object3D>) {
     for (const [id, g] of Object.entries(map)) {
       this.bodyParts[id]?.removeFromParent();
-      g.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) { m.material = this.paint ?? this.aeroMat; m.castShadow = false; m.frustumCulled = false; } });
+      g.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (!m.isMesh) return;
+        // Blender exports can carry inverted/loose normals: recompute them and draw the imported part double-sided
+        if (m.geometry) m.geometry.computeVertexNormals();
+        if (!this.extraMat) { this.extraMat = (this.paint ?? this.aeroMat).clone(); this.extraMat.side = THREE.DoubleSide; }
+        m.material = this.extraMat;
+        m.castShadow = false;
+        m.frustumCulled = false;
+      });
       g.name = 'extra_' + id;
       g.visible = false;
       this.bodyParts[id] = g;
