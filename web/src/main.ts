@@ -11,6 +11,7 @@ import { Post, PRESETS, PRESET_ORDER, ScaledClusteredLighting, type PresetName }
 import { CarProbe } from './fx/carProbe';
 import { Particles } from './scene/damage';
 import { createStudioEnv } from './scene/studio';
+import { createGarageRoom } from './scene/garageRoom';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { CoreCar, CoreRace, OUT, loadCore, type LapInfo, type RawInput } from './physics/core';
 import { CarBody, DT, PhysicsWorld, loadRapier, type CarShape } from './physics/world';
@@ -309,6 +310,15 @@ async function main() {
     'hood-blender': h.scene, 'rear-blender': r.scene, 'hood-dome': hd.scene, 'hood-track': ht.scene,
     'hood-vent-auth': hv.scene, 'front-split-auth': fs2.scene,
   })).catch(() => { /* fitted clones stay */ });
+  // Garage interior: the showroom is a room, not the street. Built procedurally, parked cars cloned from the AI models.
+  const garageRoom = createGarageRoom(scene);
+  garageRoom.setVisible(false);
+  const visualsCastShadows = (on: boolean) => { visual.model.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) { m.castShadow = on; m.receiveShadow = on; } }); };
+  const placeGarage = () => {
+    const t = car.body.translation();
+    garageRoom.group.position.set(t.x, 0, t.z);
+    garageRoom.group.rotation.y = 0;
+  };
   // Tyre smoke: billboards at the rear contact patches, emitted from the core's slip ratio (not a canned effect)
   const tireSmoke = webgpu ? new Particles(180, { additive: false, gravity: 0.25, grow: 1.4, drag: 1.1, style: 'smoke', opacity: 0.15 }) : null;
   if (tireSmoke) tireSmoke.color.setRGB(0.72, 0.72, 0.76);   // grey tyre smoke, not tail-light red
@@ -374,6 +384,24 @@ async function main() {
   const aiCount = Math.max(0, Math.min(5, num('ai', 5)));
   if (aiCount > 0) say('Loading rivals…');
   const ai = await AiTraffic.create(scene, pw, defaultCfg, route.samples, aiCount, params.get('blackcar') === '1', physics.vela_gt ?? physics[catalog[0].id]);
+  try {
+    const parked: THREE.Object3D[] = [];
+    for (const i of [0, 1]) {
+      const src = (ai as unknown as { cars?: { model?: THREE.Object3D }[] }).cars?.[i]?.model;
+      if (!src) continue;
+      const clone = src.clone(true);
+      clone.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        mesh.material = Array.isArray(mesh.material) ? mats.map((x) => x.clone()) : (mats[0] as THREE.Material).clone();
+        const mm = mesh.material as THREE.MeshStandardMaterial;
+        if (mm && mm.color && /paint/i.test(mm.name ?? '')) mm.color.setHex(i ? 0x2a4fd6 : 0xe8e8ea);
+      });
+      parked.push(clone);
+    }
+    garageRoom.park(parked);
+  } catch { /* no parked cars */ }
 
   // Start line = first route sample (core coords: Z-up) -> three (x, z, -y).
   const s0 = nycS0 ?? route.samples[0];
@@ -871,6 +899,15 @@ async function main() {
     bench: (soak) => void runBench(soak),
     screen: (sc: Screen) => {
       showroomEnv(sc !== 'none');
+      if (sc !== 'none') {
+        placeGarage();
+        garageRoom.setVisible(true);
+        renderer.shadowMap.enabled = true;
+        visualsCastShadows(true);
+      } else {
+        garageRoom.setVisible(false);
+        renderer.shadowMap.enabled = false;
+      }
       if (sc === 'garage') { orbit.dist = 5.9; orbit.el = 0.14; }   // Heat's garage camera: closer and lower
       if (sc === 'title' || sc === 'garage' || sc === 'modes' || sc === 'lobby') setState(sc);
       if (sc === 'garage') preloadGarageCars();
