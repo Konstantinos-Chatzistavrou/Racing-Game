@@ -321,6 +321,23 @@ async function main() {
   // driving). Swapped on the car's own materials only, so the city keeps its own lighting.
   let studioTex: THREE.Texture | null = null;
   const showroomEnv = (on: boolean) => {
+    // In the garage the car's own lamps are nearly off (Heat's garage has no headlight blowout): dim every emissive
+    // "light" material and restore it when driving.
+    visual.model.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const mm of mats) {
+        const mat = mm as THREE.MeshStandardMaterial;
+        if (!mat || !mat.emissive) continue;
+        const u = mat.userData as { showroomEmiss?: number; showroomSave?: number };
+        if (!u.showroomEmiss) u.showroomEmiss = 1;
+        const name = (mat.name ?? '') + ' ' + (mesh.name ?? '');
+        if (!/light|drl|lens|beam|tail/i.test(name)) continue;
+        if (on) { if (u.showroomSave === undefined) u.showroomSave = mat.emissiveIntensity ?? 1; mat.emissiveIntensity = (u.showroomSave ?? 1) * 0.06; }
+        else if (u.showroomSave !== undefined) { mat.emissiveIntensity = u.showroomSave; u.showroomSave = undefined; }
+      }
+    });
     const m = (visual.model.userData as { carMats?: Record<string, THREE.MeshPhysicalMaterial | null> }).carMats;
     if (!m) return;
     const mats = [m.paint, m.glass, m.carbon].filter(Boolean) as THREE.MeshPhysicalMaterial[];
@@ -854,6 +871,7 @@ async function main() {
     bench: (soak) => void runBench(soak),
     screen: (sc: Screen) => {
       showroomEnv(sc !== 'none');
+      if (sc === 'garage') { orbit.dist = 5.9; orbit.el = 0.14; }   // Heat's garage camera: closer and lower
       if (sc === 'title' || sc === 'garage' || sc === 'modes' || sc === 'lobby') setState(sc);
       if (sc === 'garage') preloadGarageCars();
     },
