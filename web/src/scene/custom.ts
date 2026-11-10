@@ -202,8 +202,9 @@ export class CarCustomizer {
     };
     for (const spec of BODY_SPECS) {
       if (spec.kind === 'fender') continue;   // flares are built below as arch lips, not shells
+      if (spec.kind === 'hood') continue;     // hood skins do not seat on the bonnet yet; disabled until authored
       const base = spec.kind === 'front' ? pFront : spec.kind === 'rear' ? pRear : spec.kind === 'hood' ? pHood : new THREE.Box3();
-      const panel = shrink(base, spec.kind === 'hood' ? 0.95 : 0.9);
+      const panel = shrink(base, 0.9);
       const mat = this.paint ?? this.aeroMat;
       const g = spec.build({ box: this.box, panel, mat });
       // A generated shell cannot follow the real nose/tail, so keep each design's add-on pieces (lip, fins,

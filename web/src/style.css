@@ -738,3 +738,47 @@ body.touch #cops { position: absolute; top: calc(44px + env(safe-area-inset-top)
 @keyframes enterPulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .enter-msg { animation: none; opacity: 1; } }
 
+
+/* launch control cue */
+#launch { position: fixed; left: 50%; bottom: 20%; transform: translateX(-50%); z-index: 7; pointer-events: none;
+  font: 900 15px/1 "Inter", system-ui, sans-serif; letter-spacing: .28em; color: #3dffa8;
+  text-shadow: 0 0 18px #3dffa880, 0 2px 10px #000; opacity: 0; transition: opacity .12s; }
+#launch:not(:empty) { opacity: 1; }
+
+/* phones: keep the car on screen - slimmer columns, no telemetry strip, no list headings */
+@media (pointer: coarse), (max-width: 1100px) {
+  #launch { font-size: 10px; bottom: 26%; letter-spacing: .2em; }
+  .garage { padding: 3px !important; gap: 4px !important;
+    grid-template-columns: 76px minmax(0, 1fr) 142px 50px !important;
+    grid-template-rows: 34px minmax(0, 1fr) 0px 32px !important; }
+  .g-live { display: none !important; }
+  .g-brand { font-size: 12px !important; }
+  .g-brand span, .g-stats, .g-name i { display: none !important; }
+  .g-name { font-size: 9px !important; }
+  .g-cams .chip { font-size: 7px !important; padding: 3px 5px !important; }
+  .g-carlist { padding: 3px !important; gap: 3px !important; }
+  .g-carlist h3, .g-carlist .more-cars { display: none !important; }
+  .g-carlist .car { padding: 4px 5px !important; }
+  .g-carlist .car-head b { font-size: 9px !important; }
+  .g-rail .rail { padding: 4px 3px !important; }
+  .g-rail .rail b { font-size: 6.5px !important; letter-spacing: .06em !important; }
+  .g-stage { padding: 4px 5px !important; }
+  .g-tabtitle { margin: -4px -5px 3px !important; padding: 4px 5px !important; font-size: 8px !important; }
+  .g-stage .chip { font-size: 7px !important; padding: 4px 5px !important; }
+  .g-stage h3 { font-size: 7px !important; margin: 4px 0 2px !important; }
+  .g-foot .back-btn { font-size: 8px !important; padding: 4px 7px !important; }
+  .g-foot .go { font-size: 10px !important; padding: 5px 10px !important; }
+  #menu .card, #menu .panel { padding: 14px 16px !important; }
+}
+
+
+/* title: keep the car visible to the right of the menu instead of behind two huge cards */
+#menu .title { max-width: 560px; }
+#menu .careers { max-width: 470px; gap: 8px; }
+#menu .ccard { min-width: 0; flex: 1 1 200px; padding: 7px 10px; }
+#menu .title-btns { width: min(430px, 100%); }
+@media (pointer: coarse), (max-width: 1100px) {
+  #menu .title { max-width: 60vw; }
+  #menu .careers { max-width: 60vw; }
+}
+

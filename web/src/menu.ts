@@ -415,7 +415,7 @@ export class Menu {
           <button class="chip" data-act="cam" data-v="2.45,0.16,6.2">R 3/4</button>
           <button class="chip" data-act="cam" data-v="3.14,0.15,6.0">Rear</button>
           <button class="chip" data-act="cam" data-v="1.57,0.03,5.0">Low</button>
-          <button class="chip" data-act="cam" data-v="0.35,0.05,4.2">Nose</button>
+          <button class="chip" data-act="cam" data-v="0,0.05,4.2">Nose</button>
           <button class="chip" data-act="cam" data-v="1.5,0.05,3.4">Wheel</button>
           <button class="chip" data-act="cam" data-v="0.9,0.55,6.8">Top</button>
           <button class="chip" data-act="cam" data-v="orbit">Orbit</button>
@@ -554,7 +554,7 @@ export class Menu {
       `<h3>${kind === 'front' ? 'Front bumper' : kind === 'rear' ? 'Rear bumper' : 'Hood'} <small class="dim">replaces the stock panel</small></h3>` +
       `<div class="chips">${Object.keys(map).map((id) => this.cu(k, id, map[id], (c as unknown as Record<string, string>)[k] === id, bodyHint(kind, id, map[id]))).join('')}</div>`;
     return `<h3>Rear wing <small class="dim">grip in corners, costs top speed</small></h3><div class="chips">${(Object.keys(WINGS) as (keyof typeof WINGS)[]).map((k) => this.cu('wing', k, WINGS[k], c.wing === k, wingHint(k as string))).join('')}</div>
-      ${sec('frontB', FRONT_BUMPERS, 'front')}${sec('rearB', REAR_BUMPERS, 'rear')}${sec('hood', HOODS, 'hood')}`;
+      ${sec('frontB', FRONT_BUMPERS, 'front')}${sec('rearB', REAR_BUMPERS, 'rear')}`;
   }
 
   private gFenders() {
