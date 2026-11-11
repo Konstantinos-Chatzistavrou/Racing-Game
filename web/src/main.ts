@@ -458,6 +458,7 @@ async function main() {
   const aiCount = Math.max(0, Math.min(5, num('ai', 5)));
   if (aiCount > 0) say('Loading rivals…');
   const ai = await AiTraffic.create(scene, pw, defaultCfg, route.samples, aiCount, params.get('blackcar') === '1', physics.vela_gt ?? physics[catalog[0].id]);
+  ai.onWreck = (name) => { hud.toast('RIVAL OUT', `${name} WRECKED`); };
   if (garage) try {
     const parked: THREE.Object3D[] = [];
     for (const i of [0, 1]) {
@@ -1759,12 +1760,13 @@ async function main() {
       if (inShowroom) { car.body.setLinvel({ x: 0, y: Math.min(0, car.body.linvel().y), z: 0 }, true); car.body.setAngvel({ x: 0, y: 0, z: 0 }, true); settledShowroom++; }   // parked for the showroom
       ai.tick(DT, car.body.translation());
       remote?.tick(now - (acc - DT) * 1000, DT);   // other players' bodies at this tick's time
-      if (remote?.colliders.size || obstacles || nyc) { const lv = car.body.linvel(), av = car.body.angvel(); preV.set(lv.x, lv.y, lv.z); preW.set(av.x, av.y, av.z); }
+      if (remote?.colliders.size || obstacles || nyc || ai.mode === 'race') { const lv = car.body.linvel(), av = car.body.angvel(); preV.set(lv.x, lv.y, lv.z); preW.set(av.x, av.y, av.z); }
       const t0 = performance.now();
       pw.world.step();
       if (obstacles) { const h = obstacles.afterStep(car.collider, car.body, core.info.mass, preV, preW); if (h) poleHit(h, true); }
       if (nyc && driving()) { const w = nyc.breaches.check(car.collider, car.body, core.info.mass, preV, preW); if (w) wallHit(w); }
       if (remote?.colliders.size) halveRemoteHits(now - (acc - DT) * 1000);
+      if (ai.mode === 'race') ai.afterStep(car.collider, car.body, preV, preW);   // rivals take their half of a hit (ai.ts)
       stepMs += (performance.now() - t0 - stepMs) * 0.01;   // Rapier cost per 240 Hz step, smoothed
       readBody(physPos, physQuat);
       // car acceleration for the camera spring, from the physics (low-passed ~25 ms)

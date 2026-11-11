@@ -187,6 +187,14 @@ export class Hud {
     if (this.texts.get(id) !== v) { this.texts.set(id, v); $(id).textContent = v; }
   }
 
+  /** A short card in the lap-toast slot ("#Bot2 WRECKED"); `small` is the line above the big one. */
+  toast(small: string, big: string) {
+    const t = $('toast');
+    t.textContent = small;
+    const b = document.createElement('b'); b.textContent = big; t.appendChild(b);
+    t.classList.add('show');
+    this.toastTimer = 2.5;
+  }
   resetLaps() { this.lapsSeen = 0; this.toastTimer = 0; $('toast').classList.remove('show'); this.board(null); }
 
   private boardHtml = '';

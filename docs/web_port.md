@@ -238,3 +238,18 @@ instanced mesh created at startup. Measured (headless drive.mjs `walls` / `wallp
 probe doesn't render); frame time after a breach = before (the old breached facade material was double-sided with discard
 on every facade within 28 m: median 33 -> 45 ms).
 
+## Rivals take hits (2026-11-11)
+
+`ai.ts`: the rivals are still kinematic bodies on a racing lane, but a collision with the player is now shared
+(`AiTraffic.afterStep`, called after `world.step()`): the player keeps half of the velocity change the solver gave them
+(the solver saw an immovable wall), the rival takes the other half as speed along its lane, a slide across it
+(scrubbed off at 7 m/s^2, ended by the road edge), a yaw kick (a shove behind its middle swings the tail out; past
+~35 deg it brakes, gathers the car up and goes again) and damage. Damage is per crash event, on the speed change above
+5 m/s, squared: 18 m/s in one crash wrecks it, an 80 km/h rear-end costs about a third, pushing (under 3 g) costs
+nothing. A damaged rival is up to 30 % slower; a wrecked one rolls to a stop, switches its lights off and stays as an
+obstacle that can still be pushed ("RIVAL OUT" toast). The three fastest rivals close up on a car they cannot pass
+(`push`), skills went up to 0.81-0.95.
+Measured: 84 km/h into a standing rival: player 84 -> 41 km/h, rival shoved 22 m, yaw 0.45 rad, damage 0.36.
+Headlight pool: 60 (was 170), 5.2 m ahead of the nose at 0.4 m (was 7.2 m at 0.85 m), and it fades out as the
+player's car comes under it: a rival following closely no longer floods the car white.
+

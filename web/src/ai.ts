@@ -1,8 +1,10 @@
 // AI rivals: cars that race the player round the city route. Kinematic Rapier bodies
 // (kinematicPositionBased) follow a smoothed racing lane: no tyre model, a fraction of a CoreCar's
-// cost, can't spin out or get stuck, but the player still collides with them (Rapier gives a
-// kinematic body the velocity of its per-tick move, so a crash into one feeds the core's damage
-// model like a wall that moves).
+// cost. The player collides with them (Rapier gives a kinematic body the velocity of its per-tick
+// move), and since 2026-11-11 the hit is SHARED (afterStep): the player keeps half of the velocity
+// change the solver gave them, the rival takes the other half as a shove along and across its lane,
+// a yaw kick (a tap on the rear quarter spins it), and damage. A damaged rival is slower; a wrecked
+// one rolls to a stop where it is and stays there as an obstacle that can still be pushed.
 //
 // Pace comes from the same limits as the core's AIDriver (core/src/ai.cpp), worked out from the
 // default car's physics JSON: cornering v^2 k <= skill * 0.82 mu g, braking skill * 0.85 mu g,
@@ -25,7 +27,15 @@ import { assetUrl, loadGLTF } from './scene/loaders';
 import { drawEarly } from './scene/nyc/breach';
 
 /** strength of a rival's headlight pool on the road (a clustered point light, see create()) */
-const AI_BEAM = 170;
+const AI_BEAM = 60;
+/** the pool sits this far ahead of the nose and this high: low and close, so it lights road, not the car in front */
+const BEAM_AHEAD = 5.2, BEAM_Y = 0.4;
+/**
+ * A rival's speed change (m/s) from one crash that does no damage, and the damage per (m/s above it)^2. One crash
+ * that changes its speed by 18 m/s wrecks it outright (a 130 km/h hit on a standing rival; the cars share the change);
+ * an 80 km/h rear-end costs it about a fifth. Like the player's car (core damage.hpp), bumps never add up.
+ */
+const HIT_FREE = 5, HIT_DMG = 1 / 169;
 
 interface RouteSample { x: number; y: number; z: number; width_left: number; width_right: number }
 
@@ -35,11 +45,11 @@ const PAINTS = [0x15181d, 0x0c1a33, 0xb8bcc2, 0x6b0f12, 0x1f3d2b];   // gunmetal
 /** Rival names and skills (fraction of the car's grip they use). Spread so a decent driver beats some and has to work for the rest. */
 /** The computer drivers, strongest first: #Bot1 .. #Bot5 (username.ts: '#' marks a bot, no player name can have one). */
 export const RIVALS = [
-  { skill: 0.92, line: -1.8 },
-  { skill: 0.89, line: 1.6 },
-  { skill: 0.86, line: -0.6 },
-  { skill: 0.82, line: 0.8 },
-  { skill: 0.78, line: 2.2 },
+  { skill: 0.95, line: -1.8, push: 1 },
+  { skill: 0.92, line: 1.6, push: 0.7 },
+  { skill: 0.89, line: -0.6, push: 0.4 },
+  { skill: 0.85, line: 0.8, push: 0 },
+  { skill: 0.81, line: 2.2, push: 0 },
 ].map((r, i) => ({ ...r, name: botName(i) }));
 const X = new THREE.Vector3(1, 0, 0), UP = new THREE.Vector3(0, 1, 0);
 
@@ -173,6 +183,11 @@ interface AiCar {
   vprof: number[]; aGrip: number;
   spin: number; y: number; yTick: number;
   parked: boolean;
+  /** crash state: sideways slide (m/s, + = right), yaw off the lane heading and its rate (rad, rad/s), damage 0..1, out of the race */
+  latV: number; yawOff: number; yawRate: number; dmg: number; wrecked: boolean;
+  /** how hard this driver leans on a car it cannot pass (0 = waits behind, 1 = bumper to bumper) */
+  push: number;
+  collider: RAPIER.Collider;
   prevPos: THREE.Vector3; prevQuat: THREE.Quaternion;
   pos: THREE.Vector3; quat: THREE.Quaternion;
 }
@@ -267,8 +282,8 @@ export class AiTraffic {
       // point lights go through the clustered path and cost only where their pool reaches.
       let light: THREE.PointLight | null = null;
       if (!black) {
-        light = new THREE.PointLight(0xfff3e0, AI_BEAM, 15, 2);
-        light.position.set(0, 0.85, 7.2);
+        light = new THREE.PointLight(0xfff3e0, AI_BEAM, 12, 2);
+        light.position.set(0, BEAM_Y, cb.size_m[2] / 2 + BEAM_AHEAD);
         root.add(light);
       }
       const body = pw.world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased());
@@ -277,7 +292,7 @@ export class AiTraffic {
       // car climbed it and rolled over. No bounce either: the AI car is immovable.
       const [sx, , sz] = cb.size_m, [cx, , cz] = cb.centre_in_model_m;
       const top = 1.0, bottom = 0.15;
-      pw.world.createCollider(RAPIER.ColliderDesc.cuboid(sx / 2, (top - bottom) / 2, sz / 2).setTranslation(cx, (top + bottom) / 2, cz)
+      const collider = pw.world.createCollider(RAPIER.ColliderDesc.cuboid(sx / 2, (top - bottom) / 2, sz / 2).setTranslation(cx, (top + bottom) / 2, cz)
         .setFriction(0.3).setRestitution(0).setCollisionGroups(GROUP_CAR), body);
       const aLat = rival.skill * 0.82 * lim.mu * G, aBrake = rival.skill * 0.85 * lim.muX * G;
       const car: AiCar = {
@@ -285,6 +300,7 @@ export class AiTraffic {
         s: 0, v: 0, lat: rival.line, latTarget: rival.line, line: rival.line,
         vprof: ai.lane.profile(aLat, aBrake, 75), aGrip: rival.skill * 0.6 * lim.muX * G,   // driven wheels carry ~60 % of the weight
         spin: 0, y: 0, yTick: 0, parked: false,
+        latV: 0, yawOff: 0, yawRate: 0, dmg: 0, wrecked: false, push: rival.push, collider,
         prevPos: new THREE.Vector3(), prevQuat: new THREE.Quaternion(), pos: new THREE.Vector3(), quat: new THREE.Quaternion(),
       };
       (car as AiCar & { lim: CarLimits }).lim = lim;
@@ -332,6 +348,7 @@ export class AiTraffic {
     this.player.set(0, 0, 0); this.playerV = 0;
     for (const [i, c] of this.cars.entries()) {
       c.v = 0; c.parked = false; c.spin = 0;
+      c.latV = c.yawOff = c.yawRate = c.dmg = 0; c.wrecked = false;
       if (this.mode === 'race') {
         const g = this.grid[i] ?? { s: 40 + 10 * i, lat: c.line };
         c.s = this.lane.wrap(g.s); c.lat = c.latTarget = g.lat;
@@ -395,7 +412,7 @@ export class AiTraffic {
     // flat on the road: heading only (yaw), never pitch or roll. Own vectors: f, x and up must not share storage.
     const f = this.lane.at(c.s + 2.5, c.lat, this.of).sub(this.lane.at(c.s - 2.5, c.lat, this.b)).setY(0).normalize();
     if (c.v > 0.5 && latRate) f.applyAxisAngle(UP, -Math.atan2(latRate, c.v));
-    c.quat.setFromAxisAngle(UP, Math.atan2(f.x, f.z));
+    c.quat.setFromAxisAngle(UP, Math.atan2(f.x, f.z) - c.yawOff);
   }
 
   /** Arc length of a point near the lane: projection on the 2 m segment around a hint. */
@@ -411,6 +428,8 @@ export class AiTraffic {
   /** One physics tick (before world.step()). player = the player's chassis position. */
   tick(dt: number, player: { x: number; y: number; z: number }) {
     if (this.mode === 'off') return;
+    this.tickNo++;
+    this.dt = dt;
     this.playerV = this.player.lengthSq() === 0 ? 0 : Math.hypot(player.x - this.player.x, player.z - this.player.z) / dt;
     this.player.set(player.x, player.y, player.z);
     this.playerS = this.sOf(player, this.playerS);
@@ -419,13 +438,25 @@ export class AiTraffic {
       [{ car: null, p: this.player, v: this.playerV, lat: this.latOf(this.player, this.playerS) }, ...this.cars.map((o) => ({ car: o, p: o.pos, v: o.v, lat: o.lat }))];
     for (const c of this.cars) {
       c.prevPos.copy(c.pos); c.prevQuat.copy(c.quat);
-      if (c.parked || this.held) { c.body.setNextKinematicTranslation(c.pos); c.body.setNextKinematicRotation(c.quat); continue; }
+      // headlight pool: fades out as the player's car comes under it (a rival close behind used to flood the car white)
+      if (c.light) {
+        const fw = this.a.set(0, 0, 1).applyQuaternion(c.quat);
+        const lx = c.pos.x + fw.x * (BEAM_AHEAD + 2.2) - player.x, lz = c.pos.z + fw.z * (BEAM_AHEAD + 2.2) - player.z;
+        const k = Math.min(1, Math.max(0, (Math.hypot(lx, lz) - 2.5) / 4.5));
+        c.light.intensity = c.wrecked ? 0 : AI_BEAM * k * k * (3 - 2 * k);
+      }
+      const still = c.v < 0.05 && Math.abs(c.latV) < 0.05 && Math.abs(c.yawRate) < 0.02;
+      if (this.held || ((c.parked || c.wrecked) && still)) { c.body.setNextKinematicTranslation(c.pos); c.body.setNextKinematicRotation(c.quat); continue; }
       const i = this.lane.idx(c.s);
-      let target = c.vprof[(i + 1) % this.lane.n];
+      // out of the race (parked for a test, or wrecked): no driver, it only rolls to a stop from whatever hit it
+      const driven = !c.parked && !c.wrecked;
+      // spun round (more than ~35 deg off the road): brake to a stop, gather it up, then go again
+      const spun = Math.abs(c.yawOff) > 0.6;
+      let target = driven && !spun ? c.vprof[(i + 1) % this.lane.n] * (1 - 0.3 * Math.min(1, c.dmg)) : 0;
       // mild catch-up: a rival far ahead of the player eases off, one far behind pushes (up to 5 %)
       let gap = c.s - this.playerS;
       if (gap > L / 2) gap -= L; else if (gap < -L / 2) gap += L;
-      target *= 1 - 0.05 * Math.max(-1, Math.min(1, gap / 250));
+      target *= 1 - 0.07 * Math.max(-1, Math.min(1, gap / 250));
       // traffic in front: the player or another rival, inside the car's own track
       const fwd = this.a.set(0, 0, 1).applyQuaternion(c.quat);
       const look = 14 + c.v * 0.9;
@@ -444,17 +475,39 @@ export class AiTraffic {
           const goRight = right <= room.right && (bLat <= c.lat || left < -room.left);
           c.latTarget = goRight ? right : left >= -room.left ? left : right;
         }
-        if (Math.abs(c.lat - bLat) < 2.3) target = Math.min(target, Math.max(0, bV + (bF - 8) * 0.8));
+        // stuck behind it: the patient drivers hold 8 m, the pushy ones close right up and lean on its bumper
+        if (Math.abs(c.lat - bLat) < 2.3) target = Math.min(target, Math.max(0, bV + c.push * 1.5 + (bF - (8 - 3.2 * c.push)) * 0.8));
       } else c.latTarget += (c.line - c.latTarget) * Math.min(1, dt * 0.4);
       c.latTarget = Math.max(-room.left, Math.min(room.right, c.latTarget));
       // longitudinal: grip / power / drag limited acceleration, braking to the profile
       const lim = (c as AiCar & { lim: CarLimits }).lim;
       const drag = (0.5 * 1.2 * lim.dragArea * c.v * c.v) / lim.mass;
       const acc = Math.min(c.aGrip, lim.power / (lim.mass * Math.max(3, c.v))) - drag;
-      c.v = target > c.v ? Math.min(target, c.v + acc * dt) : Math.max(target, c.v - 11 * dt);
-      // lateral: at most 2.5 m/s and never sharper than the speed allows
-      const maxLat = Math.min(2.5, 0.25 + c.v * 0.12) * dt;
-      const dl = Math.max(-maxLat, Math.min(maxLat, c.latTarget - c.lat));
+      // a car with no driver (wrecked, parked) only rolls out; a driven one brakes
+      c.v = target > c.v ? Math.min(target, c.v + acc * dt) : Math.max(target, c.v - (driven ? 11 : 3.5) * dt);
+      // lateral: at most 2.5 m/s and never sharper than the speed allows; no steering while it slides or has no driver
+      const sliding = Math.abs(c.latV) > 0.4 || spun || !driven;
+      const maxLat = sliding ? 0 : Math.min(2.5, 0.25 + c.v * 0.12) * dt;
+      let dl = Math.max(-maxLat, Math.min(maxLat, c.latTarget - c.lat));
+      const steerRate = dl / dt;   // the heading leans into a lane change, not into a crash slide
+      // crash motion: the sideways slide scrubs off on the tyres (7 m/s^2); the kerb or wall ends it and costs speed
+      if (c.latV !== 0) {
+        dl += c.latV * dt;
+        c.latV -= Math.sign(c.latV) * Math.min(Math.abs(c.latV), 7 * dt);
+        const edge = c.lat + dl > room.right + 0.6 ? room.right + 0.6 : c.lat + dl < -room.left - 0.6 ? -room.left - 0.6 : null;
+        if (edge !== null) {
+          const hit = Math.abs(c.latV);
+          this.damage(c, hit);
+          dl = edge - c.lat; c.latV = 0; c.v *= 0.7;
+        }
+      }
+      if (c.yawRate !== 0 || c.yawOff !== 0) {
+        c.yawOff += c.yawRate * dt;
+        c.yawRate *= Math.exp(-2.2 * dt);
+        // the driver (or the tyres, once it has stopped sliding) pulls the car straight again
+        if (driven || c.v < 1) c.yawOff -= c.yawOff * Math.min(1, (spun ? 0.9 : 2.4) * dt);
+        if (Math.abs(c.yawOff) < 0.002 && Math.abs(c.yawRate) < 0.002) c.yawOff = c.yawRate = 0;
+      }
       c.lat += dl;
       c.s = this.lane.wrap(c.s + c.v * dt);
       c.spin += (c.v * dt) / WHEEL_R;
@@ -467,10 +520,62 @@ export class AiTraffic {
         if (y !== null) c.y = y;
       }
       c.pos.y = c.y;
-      this.orient(c, dl / dt);
+      this.orient(c, steerRate);
       c.body.setNextKinematicTranslation(c.pos);
       c.body.setNextKinematicRotation(c.quat);
     }
+  }
+
+  /** dv: this tick's part of a crash. A crash arrives over several ticks: damage is charged on the event's running total. */
+  private damage(c: AiCar, dv: number) {
+    const ev = c as AiCar & { evDv?: number; evTick?: number };
+    if (ev.evTick === undefined || this.tickNo - ev.evTick > 36) ev.evDv = 0;   // 0.15 s apart = a new crash
+    ev.evTick = this.tickNo;
+    const f = (x: number) => Math.max(0, x - HIT_FREE) ** 2 * HIT_DMG;
+    const before = ev.evDv ?? 0;
+    ev.evDv = before + dv;
+    c.dmg = Math.min(1, c.dmg + f(ev.evDv) - f(before));
+    if (c.dmg >= 1 && !c.wrecked) { c.wrecked = true; this.onWreck(c.name); }
+  }
+  /** a rival has just been wrecked (HUD / audio hook) */
+  onWreck: (name: string) => void = () => {};
+  private tmpV = new THREE.Vector3();
+  private tickNo = 0;
+  private dt = 1 / 240;
+
+  /**
+   * After world.step(): share the player's collisions with rivals. The rival's body is kinematic, so the solver
+   * treated it as an immovable wall and gave the player the whole velocity change. Two cars of about the same mass
+   * split it: the player gets half of it back, the rival takes the other half (opposite direction) as a shove along
+   * its lane, a slide across it, a yaw kick and damage. Returns true when a rival was touched this tick.
+   */
+  afterStep(playerCollider: RAPIER.Collider, playerBody: RAPIER.RigidBody, preV: THREE.Vector3, preW: THREE.Vector3): boolean {
+    if (this.mode === 'off') return false;
+    let hit: AiCar | null = null;
+    for (const c of this.cars) {
+      let touching = false;
+      this.pw.world.contactPair(playerCollider, c.collider, (m) => { if (m.numContacts() > 0) touching = true; });
+      if (touching) { hit = c; break; }
+    }
+    if (!hit) return false;
+    const c = hit, lv = playerBody.linvel(), av = playerBody.angvel();
+    const dvx = lv.x - preV.x, dvz = lv.z - preV.z, dv = Math.hypot(dvx, dvz);
+    if (dv < 0.02) return true;   // resting against it
+    playerBody.setLinvel({ x: (preV.x + lv.x) / 2, y: lv.y, z: (preV.z + lv.z) / 2 }, true);
+    playerBody.setAngvel({ x: (preW.x + av.x) / 2, y: (preW.y + av.y) / 2, z: (preW.z + av.z) / 2 }, true);
+    // the rival's half, in its own frame (forward along its heading, right across it)
+    const i = this.lane.idx(c.s), right = this.lane.right[i];
+    const fwd = this.tmpV.set(0, 0, 1).applyQuaternion(c.quat);
+    const rx = -dvx / 2, rz = -dvz / 2;
+    const along = rx * fwd.x + rz * fwd.z, across = rx * right.x + rz * right.z;
+    c.v = Math.max(0, c.v + along);
+    c.latV += across;
+    // where the player is along the rival's length: a shove behind its middle swings the tail out (the nose turns the other way)
+    const p = playerBody.translation(), lever = Math.max(-1, Math.min(1, ((p.x - c.pos.x) * fwd.x + (p.z - c.pos.z) * fwd.z) / 2.2));
+    c.yawRate += across * lever * 0.55;
+    // pushing is not crashing (same rule as the core: under 3 g of contact force nothing breaks)
+    if (dv / 2 > 3 * G * this.dt) this.damage(c, dv / 2);
+    return true;
   }
 
   private latOf(p: { x: number; z: number }, s: number) {
