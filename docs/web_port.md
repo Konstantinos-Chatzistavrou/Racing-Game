@@ -99,6 +99,7 @@ calibrate with no hysteresis. Each resize costs a 300-700 ms hitch, so the windo
 skipped. The HUD shows the scale; `?scale=x` pins it.
 Test: `drive.mjs <url> <out> mobile` emulates a 915x412 phone with multi-touch (gas + steer).
 Real-phone frame rates are NOT measured yet (emulation runs on this laptop's GPU).
+Weak phones (Mali-G57 class and below, or no WebGPU) start in **potato mode**: see docs/performance.md, "Potato".
 
 ## Presentation ("AAA feel")
 - Camera (`web/src/camera.ts`): spring-damper on the camera's offset RELATIVE to the car

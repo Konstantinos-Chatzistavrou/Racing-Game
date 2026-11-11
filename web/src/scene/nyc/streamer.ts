@@ -107,6 +107,8 @@ export interface NycOptions {
   surfaces: { asphalt: number; pavement: number; wall: number };
   base?: string; nearLoad?: number; nearKeep?: number; farLoad?: number; farKeep?: number; colLoad?: number; colKeep?: number;
   receiveShadow?: boolean; debug?: boolean; budgetMs?: number; fogDensity?: number;
+  /** share of the street trees drawn (and solid), 0..1: potato mode halves them (they are most of its triangles) */
+  treeDensity?: number;
   onProgress?: (f: number) => void;
 }
 
@@ -140,7 +142,7 @@ export class NycStreamer {
   constructor(private scene: THREE.Scene, private renderer: THREE.WebGPURenderer, private pw: PhysicsWorld, private camera: THREE.Camera, opts: NycOptions) {
     this.o = {
       base: '/assets/nyc/tiles/', nearLoad: 380, nearKeep: 460, farLoad: 1000, farKeep: 1150, colLoad: 260, colKeep: 330,
-      receiveShadow: true, debug: false, budgetMs: 2.5, fogDensity: 0.0024, ...opts,
+      receiveShadow: true, debug: false, budgetMs: 2.5, fogDensity: 0.0024, treeDensity: 1, ...opts,
     };
     this.atm = applyNycAtmosphere(this.scene, this.renderer, { fogDensity: this.o.fogDensity });
     this.breaches = new Breaches(this.scene, this.pw, {
@@ -203,6 +205,7 @@ export class NycStreamer {
       loadNycMaterials(), createNycProps(this.scene, this.camera),
     ]);
     this.index = idx; this.mats = mats; this.props = props;
+    if (props instanceof NycProps) props.treeDensity = this.o.treeDensity;
     this.o.onProgress?.(0.2);
     console.info(`nyc: ${Object.keys(idx.tiles).length} tiles, materials ${mats.source}, props ${props ? 'real' : 'none'}`);
     for (const [key, t] of Object.entries(idx.tiles)) {

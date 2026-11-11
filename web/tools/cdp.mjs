@@ -8,6 +8,8 @@
 //   node tools/cdp.mjs nav "<url>" | reload                                          navigate / reload, wait until ready
 //   node tools/cdp.mjs stop                                                          close the browser
 //
+//   CPU_THROTTLE=4 node tools/cdp.mjs file probe.js                                  the same with a slowed main thread
+//
 // One game at a time (CDP_PORT, default 9344). No window is shown. Stop it when done: it renders the whole time.
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -81,6 +83,8 @@ if (cmd === 'start') {
 } else {
   const c = await connect();
   await c.send('Runtime.enable');
+  // CPU_THROTTLE=4: a 4x slower main thread for this command only (the override ends with the connection)
+  if (process.env.CPU_THROTTLE) await c.send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.CPU_THROTTLE) });
   try {
     if (cmd === 'eval') console.log(await c.evaluate(arg));
     else if (cmd === 'file') console.log(await c.evaluate(fs.readFileSync(arg, 'utf8')));

@@ -321,3 +321,55 @@ as much as drawn ones: only fewer submitted instances help), the reflection prob
 
 Open levers, in order: merge the player car's static meshes (no car on screen = 60 fps on low: 3.2 ms of CPU),
 distance-limited tree instances per preset (needs per-tile add/remove of the tree sets), FSR1 EASU for the upscale.
+
+## Potato: a boot mode below `low` for weak phones (2026-11-11)
+
+Asked for: the game must load and hold 30 fps on phones of the Helio G99 class (Mali-G57 MC2: roughly a sixth of the
+laptop's iGPU, and a main thread about 3.5x slower). `low` cannot get there by lowering resolution: on the laptop its
+frame is mostly fixed cost (GPU 3.5 ms + 5.9 ms per megapixel in the potato configuration; about a million triangles and
+five compiled post pipelines before that).
+
+Potato is decided at BOOT (`main.ts`, `potato`), because what it saves cannot be switched later without recompiling
+every shader. Leaving or entering it from Settings reloads the page.
+
+| what | normal phone boot | potato |
+|---|---|---|
+| post pipelines built and warmed | 5 (GTAO, SSR, SMAA, bloom...) | 1: scene pass tone-mapped straight to the canvas |
+| canvas | up to 2x CSS px | 1x CSS px |
+| render budget | 0.72 MP tuned | 0.22 MP fixed |
+| shadow maps | headlight map | none (`renderer.shadowMap.enabled = false`: no shadow code in any shader) |
+| near / far city ring | 380 / 560 m | 300 / 420 m, fog density 0.0024 -> 0.0045, camera far 560 |
+| street trees | all | 40 % (position hash: the same trees every visit, drawn and solid) |
+| street lights alive, reach | 16, x0.66 (low) | 8, x0.55 |
+| light cluster grid | 60 x 34 x 24 | 30 x 17 x 12 (`ScaledClusteredLighting` grid argument) |
+| garage | props + mirror | no props (18 models and their textures never load), mirror at 0.3 |
+| auto-tuner | on | off (pinned) |
+
+How a phone gets there: Settings -> Graphics -> Potato; `?quality=potato`; the GPU's name (`WEAK_GPU` in `main.ts`,
+read from a throwaway WebGL context: Mali-4xx / T / G31 / G51 / G52 / G57 / G68 / G71 / G72, Adreno 3xx-5xx and
+60x / 61x, PowerVR); 3 GB of RAM or less; or the tuner: at the resolution floor, still under the target on `low`, or
+under 60 % of it on any preset, it stores `nr.potato.v1` and reloads. Three driving windows under 22 fps on `low`
+store the flag for the next start. Choosing Auto clears the flag.
+
+No WebGPU: a phone now starts in potato on WebGL 2 instead of stopping at the "WebGPU is not available" message
+(same picture, checked); a desktop keeps the message and gets a link that does the same.
+
+Measured in headless Chrome on the laptop, 915 x 412 (phone viewport, 1x canvas for both, so `low` is flattered: a real
+phone gives it a 2x canvas):
+
+| | low | potato |
+|---|---|---|
+| triangles at the spawn | 979k | 365k |
+| GPU, parked at the spawn | 9.9 ms | 4.5 ms |
+| light-cluster compute pass | 1.75 ms | 0.1 ms |
+| pipelines compiled at load | 339 | 284 |
+| load to the title, 4x CPU throttle | 72 s | 36 s |
+| benchmark drive, 4x CPU throttle, uncapped | 34.2 fps, p95 39 ms, script 24.4 ms | 38-40 fps, p95 33-36 ms, script 21-22 ms |
+
+NOT measured: any real phone. The numbers above are the laptop with a throttled main thread; a Mali's cost split
+(fill and vertex binning) is different. Draw calls did not move (162: the player's car alone is 106), so on a phone
+that is submission-bound the next lever is still merging the car's static meshes.
+
+Tried, not kept: no image-based reflections on potato (scene.environment = null): -15 % per pixel, and the picture
+goes dull. `DRAW_SCALE` does nothing on the NYC map (it belongs to the old city's props).
+

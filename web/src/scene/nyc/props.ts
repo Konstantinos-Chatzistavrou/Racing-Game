@@ -554,6 +554,8 @@ export class NycProps {
   rangeScale = 1;
   /** how many of the pooled street lights may be lit at once (preset knob) */
   lightCap = 99;
+  /** share of a tile's trees that exist at all (drawn and solid), picked by a position hash: the same trees every visit */
+  treeDensity = 1;
   private camPos = new THREE.Vector3();
   /** Poles and trees are solid Rapier colliders (obstacles.ts): no proximity break here. */
   solidPoles = false;
@@ -796,7 +798,8 @@ export class NycProps {
     this.pools.instanceMatrix.needsUpdate = true;
 
     // trees come from the tile data only (OSM street trees + the generator's), each drawn as its census species
-    const treeRows = (d.tree ?? []).filter((r) => !this.isInsideAnyBuilding(r[0], r[1]));
+    const keepTree = (x: number, y: number) => this.treeDensity >= 1 || Math.abs(Math.sin(x * 39.3468 + y * 11.135) * 24634.6345) % 1 < this.treeDensity;
+    const treeRows = (d.tree ?? []).filter((r) => keepTree(r[0], r[1]) && !this.isInsideAnyBuilding(r[0], r[1]));
     const trees: { set: string; slot: number; x: number; y: number; z: number; scale: number }[] = [];
     for (const sp of TREE_SPECIES) {
       const rows = treeRows.filter((r) => speciesOf(r[0], r[1]) === sp.id), set = `tree_${sp.id}`;

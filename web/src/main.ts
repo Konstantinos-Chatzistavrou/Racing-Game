@@ -1,13 +1,13 @@
 // Night Run (web build): three.js WebGPU renderer + Rapier rigid bodies + the rs_core physics
 // compiled to WebAssembly. WebGPU required. URL options: ?scale=0.75 (pins the render resolution; default adaptive),
-// ?quality=high|medium|low (pins the post/render preset; default adaptive), ?webgl=1 (debug only),
+// ?quality=max|ultra|high|medium|low|potato (pins the post/render preset; default adaptive), ?webgl=1 (debug only),
 // ?bloom=0, ?aa=0, ?shadows=0, ?lights=12 (WebGL 2 light pool size), ?party=CODE (invite: join that multiplayer party, see party.ts),
 // ?peer=host:port (own PeerJS server), ?ai=0..5 (race rivals, default 5), ?blackcar=1 (AI cars matte black, lights off: night lighting test),
 // ?menu=0 (skip the title and garage: straight into a free run, for the test tools).
 // Flow: loading -> title (graphics tuned once behind a cover) -> Play -> game modes: Race (you + 5 AI rivals) / Free Roam (just you) /
 // Multiplayer (party lobby). The garage (title -> Garage) is cars, paint and upgrades only: back to the title, or Continue -> game modes.
 import * as THREE from 'three/webgpu';
-import { Post, PRESETS, PRESET_ORDER, ScaledClusteredLighting, type PresetName } from './post';
+import { Post, PRESETS, PRESET_ORDER, ScaledClusteredLighting, usePotatoOnly, type PresetName } from './post';
 import { CarProbe } from './fx/carProbe';
 import { Particles } from './scene/damage';
 import { Garage } from './scene/garage';
@@ -59,6 +59,24 @@ import { autoCap, benchClose, benchProgress, benchResults, measureRefresh, recom
 
 const params = new URLSearchParams(location.search);
 const num = (k: string, d: number) => (params.has(k) ? Number(params.get(k)) : d);
+/**
+ * The GPU's name as the driver reports it ("Mali-G57 MC2", "Adreno (TM) 610"). WebGPU's adapter info hides it in
+ * Chrome; a throwaway WebGL context does not. '' when the browser masks it.
+ */
+function gpuName(): string {
+  try {
+    const gl = document.createElement('canvas').getContext('webgl');
+    const ext = gl?.getExtension('WEBGL_debug_renderer_info');
+    const name = gl && ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) ?? '') : '';
+    gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    return name;
+  } catch { return ''; }
+}
+/**
+ * Phone GPUs that get potato mode by name: Mali-G57 (Helio G99, Dimensity 700/6020) and everything at or below it -
+ * Mali-4xx / T-series, G31, G51, G52, G68, G71, G72; Adreno 3xx-5xx and 60x / 61x; every PowerVR.
+ */
+const WEAK_GPU = /Mali-(4\d\d|T\d{3}|G31|G51|G52|G57|G68|G71|G72)\b|Adreno \(TM\) ([345]\d\d|6[01]\d)\b|PowerVR/i;
 const loading = document.getElementById('loading')!;
 /**
  * First screen is a click-for-fullscreen gate, not the loading bar: the game boots behind it, and the click is the
@@ -92,17 +110,28 @@ const say = (s: string, pct?: number) => {
 async function main() {
   const refreshP = measureRefresh();   // runs while the renderer and assets load
   // --- renderer -------------------------------------------------------------------------------
-  // WebGPU is required (clustered lighting, compute). WebGL 2 only on explicit request, for debugging.
-  const forceWebGL = params.get('webgl') === '1';
+  // WebGPU is what the game is built for (clustered lighting, compute). Without it: a phone starts in potato mode on
+  // WebGL 2 (same picture as potato on WebGPU, measured); a desktop gets the instructions and a link to do the same.
+  // ?webgl=1 forces WebGL 2 for debugging.
+  const isTouch = params.has('touch') ? params.get('touch') !== '0' : wantsTouch();
+  let forceWebGL = params.get('webgl') === '1';
+  let noWebGPU = false;
   if (!forceWebGL) {
     const adapter = await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' }).catch(() => null);
     if (!adapter) {
-      loading.innerHTML = `<div style="max-width:560px;text-align:left;letter-spacing:0;text-transform:none;line-height:1.6">
-        <b style="color:#f4f1ea">WebGPU is not available in this browser.</b><br>
-        Chrome on Linux: open <code>chrome://flags</code>, enable <b>Unsafe WebGPU Support</b> and <b>Vulkan</b>, then relaunch.<br>
-        Check with <code>chrome://gpu</code> → "WebGPU: Hardware accelerated".</div>`;
-      if (import.meta.env.DEV) fetch('/__telemetry', { method: 'POST', body: 'NO WEBGPU ADAPTER - stopped' }).catch(() => {});
-      return;
+      const gl2 = !!document.createElement('canvas').getContext('webgl2');
+      if (isTouch && gl2) { forceWebGL = true; noWebGPU = true; }
+      else {
+        const u = new URL(location.href);
+        u.searchParams.set('webgl', '1'); u.searchParams.set('quality', 'potato');
+        loading.innerHTML = `<div style="max-width:560px;text-align:left;letter-spacing:0;text-transform:none;line-height:1.6">
+          <b style="color:#f4f1ea">WebGPU is not available in this browser.</b><br>
+          Chrome on Linux: open <code>chrome://flags</code>, enable <b>Unsafe WebGPU Support</b> and <b>Vulkan</b>, then relaunch.<br>
+          Check with <code>chrome://gpu</code> → "WebGPU: Hardware accelerated".
+          ${gl2 ? `<br><a href="${u.pathname + u.search}" style="color:#ff2d6a">Start anyway in potato mode (WebGL 2, lowest graphics)</a>` : ''}</div>`;
+        if (import.meta.env.DEV) fetch('/__telemetry', { method: 'POST', body: 'NO WEBGPU ADAPTER - stopped' }).catch(() => {});
+        return;
+      }
     }
   }
   const canvas = document.getElementById('view') as HTMLCanvasElement;
@@ -113,22 +142,36 @@ async function main() {
   // Graphics: 'auto' tunes resolution + preset behind a cover in the title menu and steps down preset/scale
   // if high-speed driving drops FPS; high/medium/low are fixed. ?scale / ?quality (test tools) pin on top of that.
   // ?touch=1 / ?touch=0 forces the phone path (the headless harness reports a fine pointer, the real phone a coarse one)
-  const isTouch = params.has('touch') ? params.get('touch') !== '0' : wantsTouch();
   // Phones: the canvas follows the panel (up to 2x CSS px) and `scale` picks the pixels actually rendered, sharpened up to
   // the panel in post.ts. A 1x canvas (915 x 412 on a 2.6x phone) was stretched by the browser: every texture looked unloaded.
-  const baseRatio = Math.min(devicePixelRatio, isTouch ? 2 : 1);
   const GFX_KEY = 'nr.gfx.v4';
-  const GFX_SCALE = { max: 1, ultra: 1, high: 1, medium: 0.85, low: 0.7 } as const;   // phones (their canvas is tuned separately)
+  let gfx: Gfx = 'auto';
+  try { const g = localStorage.getItem(GFX_KEY); if (g === 'max' || g === 'ultra' || g === 'high' || g === 'medium' || g === 'low' || g === 'potato') gfx = g; } catch { /* storage blocked */ }
+  /**
+   * POTATO: a boot mode for phones a Mali-G57 (Helio G99) class GPU or slower, below `low`. Decided here, before
+   * anything is built, because most of what it saves cannot be switched later without recompiling every shader:
+   * one tone-mapped pass instead of five post pipelines, no shadow maps, a 1x canvas, short city rings behind thicker
+   * fog, 8 street lights, no garage props. It is entered by choice (Settings / ?quality=potato), by the GPU's name,
+   * by 3 GB of RAM or less, or by the flag the tuner sets when `low` at its smallest resolution still misses the target.
+   */
+  const POTATO_KEY = 'nr.potato.v1';
+  let potatoFlag = false;
+  try { potatoFlag = localStorage.getItem(POTATO_KEY) === '1'; } catch { /* storage blocked */ }
+  const gpu = isTouch ? gpuName() : '';
+  const weakDevice = isTouch && (WEAK_GPU.test(gpu) || ((navigator as { deviceMemory?: number }).deviceMemory ?? 8) <= 3);
+  const qParam = params.get('quality');
+  const potato = noWebGPU || qParam === 'potato' || (!qParam && (gfx === 'potato' || (gfx === 'auto' && (weakDevice || potatoFlag))));
+  if (potato) usePotatoOnly();
+  const baseRatio = Math.min(devicePixelRatio, potato ? 1 : isTouch ? 2 : 1);
+  const GFX_SCALE = { max: 1, ultra: 1, high: 1, medium: 0.85, low: 0.7, potato: 0.7 } as const;   // phones (their canvas is tuned separately)
   /**
    * Desktop: every preset renders a fixed PIXEL budget, whatever the window size, and the last pass sharpens it up to
    * the canvas (post.ts). Measured on the i3 iGPU the street costs about 6.5 ms + 27 ms per 2 megapixels before any
    * effect, so resolution is the one lever that moves a tier: 0.5 MP is the 45-60 fps picture, 1 MP the 30 fps one.
    * A window smaller than the budget simply renders 1:1.
    */
-  const PRESET_MP: Record<PresetName, number> = { max: 0.8e6, ultra: 0.88e6, high: 1.0e6, medium: 0.62e6, low: 0.5e6 };
-  let gfx: Gfx = 'auto';
-  try { const g = localStorage.getItem(GFX_KEY); if (g === 'max' || g === 'ultra' || g === 'high' || g === 'medium' || g === 'low') gfx = g; } catch { /* storage blocked */ }
-  let adaptive = gfx === 'auto' && !params.has('scale');
+  const PRESET_MP: Record<PresetName, number> = { max: 0.8e6, ultra: 0.88e6, high: 1.0e6, medium: 0.62e6, low: 0.5e6, potato: 0.22e6 };
+  let adaptive = gfx === 'auto' && !params.has('scale') && !potato;
   const maxScale = 1;
   const targetPixels = isTouch ? 0.72e6 : 0.9e6;
   const MIN_RENDER = isTouch ? 0.35 : 0.45;   // lowest render scale (a 2x phone canvas at 0.5 was the old 1x picture)
@@ -136,29 +179,29 @@ async function main() {
   let SCALE_KEY = `nr.scale.v5.${innerWidth}x${innerHeight}`;
   let stored = NaN;
   try { stored = Number(localStorage.getItem(SCALE_KEY) ?? NaN); } catch { /* storage blocked */ }
-  const presetScale = (p: PresetName) => isTouch ? Math.min(GFX_SCALE[p], guessScale())
+  const presetScale = (p: PresetName) => isTouch && p !== 'potato' ? Math.min(GFX_SCALE[p], guessScale())
     : Math.min(maxScale, Math.max(MIN_RENDER, Math.round(Math.sqrt(PRESET_MP[p] / (innerWidth * innerHeight * baseRatio ** 2)) * 20) / 20));
   const scalePinned = params.has('scale');
-  let scale = scalePinned ? num('scale', 1) : gfx !== 'auto' ? presetScale(gfx) : stored >= MIN_RENDER && stored <= maxScale ? stored : guessScale();
+  let scale = scalePinned ? num('scale', 1) : potato ? presetScale('potato') : gfx !== 'auto' ? presetScale(gfx) : stored >= MIN_RENDER && stored <= maxScale ? stored : guessScale();
   renderer.setPixelRatio(baseRatio);
   renderer.setSize(innerWidth, innerHeight);
   // Quality preset (post.ts PRESETS), lowered by the adaptive system BEFORE the scale; stored like it.
   const defaultPreset: PresetName = isTouch ? 'medium' : 'ultra';
   let PRESET_KEY = `nr.preset.v5.${innerWidth}x${innerHeight}`;
-  let presetPinned = PRESET_ORDER.includes(params.get('quality') as PresetName) || gfx !== 'auto';
+  let presetPinned = PRESET_ORDER.includes(params.get('quality') as PresetName) || gfx !== 'auto' || potato;
   let storedPreset: string | null = null;
   try { storedPreset = localStorage.getItem(PRESET_KEY); } catch { /* storage blocked */ }
   let presetIdx = Math.max(0, PRESET_ORDER.indexOf((PRESET_ORDER.includes(params.get('quality') as PresetName) ? params.get('quality') : gfx !== 'auto' ? gfx : storedPreset ?? defaultPreset) as PresetName));
   if (!isTouch && !scalePinned) scale = presetScale(PRESET_ORDER[presetIdx]);   // desktop: always the preset's budget (a stored scale is a phone thing)
   renderer.toneMapping = THREE.AgXToneMapping;
   renderer.toneMappingExposure = 1.1;
-  renderer.shadowMap.enabled = params.get('shadows') !== '0';
+  renderer.shadowMap.enabled = params.get('shadows') !== '0' && !potato;   // potato: no shadow pass, no shadow code in any shader
   renderer.shadowMap.type = THREE.PCFShadowMap;
   await renderer.init();
   initLoaders(renderer);   // shared glTF decoders (meshopt, KTX2), scene/loaders.ts
   const webgpu = !!(renderer.backend as { isWebGPUBackend?: boolean }).isWebGPUBackend;
   const backend = webgpu ? 'WebGPU' : 'WebGL 2';
-  if (webgpu) renderer.lighting = new ScaledClusteredLighting(512);   // needs compute shaders; grid follows the render scale
+  if (webgpu) renderer.lighting = potato ? new ScaledClusteredLighting(96, 32, 12, 32, [960, 544]) : new ScaledClusteredLighting(512);   // needs compute shaders; grid follows the render scale
 
   const scene = new THREE.Scene();
   // Night: very dark but never pure black. The hemisphere fill is the floor of the picture
@@ -255,17 +298,20 @@ async function main() {
   const nyc = useNyc ? new NycStreamer(scene, renderer, pw, camera, {
     surfaces: core.info.surfaces,
     debug: params.get('nycdebug') === '1',
-    fogDensity: num('fog', 0.0024),
+    fogDensity: num('fog', potato ? 0.0045 : 0.0024),
     // Phones: the far ring is skyline only and the fog eats most of it anyway, but every far tile is a draw and the
     // phone is draw-submission bound (docs/performance.md "Where the CPU goes"), so it stops at 560 m there. The
     // near ring is what the player actually drives through. ?far= overrides both for tests.
-    farLoad: num('far', isTouch ? 560 : 1000),
-    farKeep: num('farkeep', isTouch ? 660 : 1150),
+    // Potato: both rings pulled in (every tile is draws and triangles a Mali-G57 cannot afford) and the fog thickened
+    // so the edge is not seen: at 0.0045 the 420 m ring edge is at 3 % visibility.
+    farLoad: num('far', potato ? 420 : isTouch ? 560 : 1000),
+    farKeep: num('farkeep', potato ? 500 : isTouch ? 660 : 1150),
+    ...(potato ? { nearLoad: num('near', 300), nearKeep: num('nearkeep', 380), treeDensity: num('trees', 0.4) } : {}),
     onProgress: (f) => say(`Loading the city… ${Math.round(f * 100)}%`, 20 + f * 55),
   }) : null;
   if (nyc) {
     await nyc.ready();
-    camera.far = 1600;
+    camera.far = potato ? 560 : 1600;
     camera.updateProjectionMatrix();
   }
   const nycS0 = nyc ? nyc.spawnPoint() : null;
@@ -289,7 +335,7 @@ async function main() {
   const hz = await refreshP;
   // Desktop uncapped (the cap only delays a ready frame); phones capped at 30 - uncapped there just burns the power
   // budget, heats the SoC and throttles down to the 20s, which reads as "laggy". ?cap=0 uncaps, ?cap=45 changes it.
-  const capFps = num('cap', isTouch ? 30 : 0);
+  const capFps = num('cap', isTouch || potato ? 30 : 0);
   const capInterval = capFps > 0 ? 1000 / capFps : 0;
   const loadedCar = await carLoadP;
   let visualCfg = loadedCar.cfg;
@@ -302,13 +348,13 @@ async function main() {
   // neon signs, and skyscrapers glide across clearcoat paint & glass in real time (?probe=0 disables).
   // Off on phones: one cube face is a whole extra scene render (the full draw list), so even one every 30 frames landed
   // as a visible hitch about once a second while driving. ?probe=N turns it on for an experiment.
-  const probeEvery = num('probe', isTouch ? 0 : 4);
+  const probeEvery = num('probe', isTouch || potato ? 0 : 4);
   const probeIntensity = num('probei', 1.25);
   const probeSize = num('probesize', isTouch ? 48 : 256);
   const probe = webgpu && probeEvery > 0 ? new CarProbe(renderer, scene, pmrem, probeSize, probeEvery) : null;
   // The garage: its own scene (scene/garage). Built while the car loads; its cube matches the probe's so the probe
   // can prefilter the room into the texture the car's materials already sample (no material ever changes).
-  const garageP = Garage.create(renderer, pmrem, probe ? probeSize : 128);
+  const garageP = Garage.create(renderer, pmrem, probe ? probeSize : potato ? 64 : 128);
   // Blender-authored replacement shells (vela_front_wide / vela_front_track): swapped in when they arrive
   void Promise.all([
     loadGLTF(assetUrl('cars/v3/vela_front_wide.glb')),
@@ -602,7 +648,7 @@ async function main() {
   input.onGarage = () => { if (driving()) quitSession(party ? 'lobby' : 'title'); };
 
   // --- post-processing ------------------------------------------------------------------------
-  const DRAW_SCALE: Record<PresetName, number> = { max: 1, ultra: 0.9, high: 0.9, medium: 0.78, low: 0.62 };
+  const DRAW_SCALE: Record<PresetName, number> = { max: 1, ultra: 0.9, high: 0.9, medium: 0.78, low: 0.62, potato: 0.42 };
   const post = new Post(renderer, scene, camera, { bloom: params.get('bloom') !== '0', aa: params.get('aa') !== '0', scale, preset: PRESET_ORDER[presetIdx] });
   // The showroom's own pipeline on the garage scene. Phones keep their tuned pixel budget there too.
   const showPost = new ShowroomPost(renderer, garage.scene, camera, PRESET_ORDER[presetIdx]);
@@ -637,12 +683,12 @@ async function main() {
     }
     dimLamps(on);
   };
-  const NEAR_TREES: Record<PresetName, number> = { max: 80, ultra: 80, high: 70, medium: 45, low: 28 };   // photoreal tree range, m
+  const NEAR_TREES: Record<PresetName, number> = { max: 80, ultra: 80, high: 70, medium: 45, low: 28, potato: 14 };   // photoreal tree range, m
   // Street-light reach (clustered point lights): about half the per-pixel cost of the street is these lights, and
   // 0.7 x their authored range gives most of it back; below that nothing more is saved (measured).
-  const LIGHT_RANGE: Record<PresetName, number> = { max: 0.9, ultra: 0.8, high: 0.74, medium: 0.7, low: 0.66 };
+  const LIGHT_RANGE: Record<PresetName, number> = { max: 0.9, ultra: 0.8, high: 0.74, medium: 0.7, low: 0.66, potato: 0.55 };
   /** street lights alive at once (the nearest ones): fewer lights, smaller cluster lists */
-  const LIGHT_CAP: Record<PresetName, number> = { max: 36, ultra: 32, high: 28, medium: 22, low: 16 };
+  const LIGHT_CAP: Record<PresetName, number> = { max: 36, ultra: 32, high: 28, medium: 22, low: 16, potato: 8 };
   post.onPreset = (p) => {
     city.setBundled(true); city.props.drawScale = driving() ? DRAW_SCALE[p] : Math.min(0.45, DRAW_SCALE[p]);
     const sp = nyc?.streetProps; if (sp) { sp.nearR = NEAR_TREES[p]; sp.rangeScale = LIGHT_RANGE[p]; sp.lightCap = LIGHT_CAP[p]; }
@@ -705,7 +751,7 @@ async function main() {
     await showPost.warmup();
     setGarage(false, false);
   }
-  void garage.loadProps().catch(() => { /* the room works without its dressing */ });
+  if (!potato) void garage.loadProps().catch(() => { /* the room works without its dressing */ });   // potato: 18 models and their textures stay off the phone
   ai.setMode('off');
   city.props.warmup(false);
   nyc?.breaches.warmup(false);
@@ -749,7 +795,23 @@ async function main() {
    * decide anything; once the streamer is dry the same screen reads 24.6 / 27.3 / 31.1 fps at scale 1.0 / 0.8 / 0.6.
    */
   const citySettled = () => { const s = nyc?.stats(); return !s || (s.loading === 0 && s.queued === 0); };
-  let driveWinTime = 0, driveFrames = 0;
+  let driveWinTime = 0, driveFrames = 0, lowDrive = 0;
+  /**
+   * A phone at the resolution floor that still misses the target on `low` - or misses it by 40 % on any preset - needs
+   * potato: a different boot (one pipeline, no shadows, short rings), so the flag is stored and the page reloads behind
+   * the tuning cover.
+   */
+  const needsPotato = (fps: number) => isTouch && !potato && !presetPinned && scale <= RES_FLOOR + 1e-6
+    // on `low` already, or so far under the target that the effects between here and `low` (bloom, FXAA) cannot close it
+    && (presetIdx === PRESET_ORDER.length - 1 || fps < TUNE_TARGET * 0.6);
+  /** false when the flag cannot be stored (storage blocked): reloading then would tune and reload forever */
+  const goPotato = () => {
+    try { localStorage.setItem(POTATO_KEY, '1'); if (localStorage.getItem(POTATO_KEY) !== '1') return false; } catch { return false; }
+    location.reload();
+    return true;
+  };
+  const POTATO_NOTE = noWebGPU ? 'Potato mode on WebGL 2: this browser has no WebGPU, which every other preset needs.'
+    : 'Potato mode: the lightest picture, for low-end phones. Pick another preset to leave it (the game reloads).';
   const startScale = () => guessScale();
   /** `resize`: also move to the preset's own pixel budget (desktop; a render-target resize, so never while driving). */
   const setPreset = (i: number, resize = true) => {
@@ -806,7 +868,13 @@ async function main() {
   };
   const applyGfx = (g: Gfx) => {
     gfx = g;
-    try { localStorage.setItem(GFX_KEY, g); } catch { /* storage blocked */ }
+    try {
+      localStorage.setItem(GFX_KEY, g);
+      if (g === 'auto') localStorage.removeItem(POTATO_KEY);   // Auto measures again (a weak GPU by name still boots potato)
+    } catch { /* storage blocked */ }
+    // Into or out of potato: the pipelines, shadow maps and city rings of the other side were never built. Reload.
+    if (noWebGPU) { menu.setTuning(false, POTATO_NOTE); return; }   // nothing else can run here
+    if (potato !== (g === 'potato')) { menu.setTuning(true); location.reload(); return; }
     if (g === 'auto') { adaptive = true; presetPinned = false; startTuning(true); return; }
     adaptive = false; presetPinned = true;
     tuning = false;
@@ -1558,7 +1626,7 @@ async function main() {
     setState('title');
     menu.show('title');
     if (adaptive) startTuning(false);
-    else menu.setTuning(false, params.has('scale') || PRESET_ORDER.includes(params.get('quality') as PresetName) ? 'Graphics pinned by the URL' : `Graphics fixed: ${gfx}`);
+    else menu.setTuning(false, potato ? POTATO_NOTE : params.has('scale') || PRESET_ORDER.includes(params.get('quality') as PresetName) ? 'Graphics pinned by the URL' : `Graphics fixed: ${gfx}`);
     visual.setPaint(paintOf(sel, catalog), sel.finish);
   }
   setExtra();
@@ -1766,6 +1834,9 @@ async function main() {
           } else if (dfps < 25 && !presetPinned && presetIdx < PRESET_ORDER.length - 1) {
             setPreset(presetIdx + 1, false); setExtra();
           }
+          // a phone that cannot hold 22 fps on `low` for three windows in a row starts in potato next time (no reload mid-drive)
+          lowDrive = isTouch && !potato && !presetPinned && presetIdx === PRESET_ORDER.length - 1 && dfps < 22 ? lowDrive + 1 : 0;
+          if (lowDrive >= 3) { try { localStorage.setItem(POTATO_KEY, '1'); } catch { /* storage blocked */ } }
         }
       } else if (state !== 'race') { driveWinTime = 0; driveFrames = 0; }
       if (bench.active) {
@@ -1839,11 +1910,13 @@ async function main() {
       // docs/performance.md is fill-bound: 25.6 -> 31.0 fps from scale 1.0 to 0.8).
       if (warm) { tuneStart = now; }   // the timeout clock runs on measurable windows only
       else if (low && lowStreak >= 2 && isTouch && scale > RES_FLOOR + 1e-6) { applyScale(scale - STEP); wentDown = true; lowStreak = 0; p50s.length = 0; }
+      else if (low && lowStreak >= 2 && needsPotato(fps) && goPotato()) return;
       else if (low && lowStreak >= 2 && !presetPinned && presetIdx < PRESET_ORDER.length - 1) { setPreset(presetIdx + 1); wentDown = true; lowStreak = 0; p50s.length = 0; }
       else if (low && lowStreak >= 2 && scale > MIN_SCALE + 1e-6) { applyScale(scale - STEP); wentDown = true; lowStreak = 0; }
       else if (high && isTouch && upSteps > 0 && scale < maxScale - 1e-6) { applyScale(scale + STEP); upSteps--; }
       // done when two windows in a row sit in the band (the frame holds the cap) or when time is up
       okStreak = !warm && !low && !high ? okStreak + 1 : 0;
+      if (low && now - tuneStart > TUNE_TIMEOUT && !warm && needsPotato(fps) && goPotato()) return;
       if (okStreak >= 2 || (now - tuneStart > TUNE_TIMEOUT && !warm)) finishTuning();
       else { winStart = now + 1000; setExtra(); }   // let the resize hitch pass before measuring again
     }

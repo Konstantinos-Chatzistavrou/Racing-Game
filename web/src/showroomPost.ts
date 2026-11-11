@@ -25,6 +25,7 @@ export const SHOW_PRESETS: Record<PresetName, ShowPreset> = {
   high: { ao: false, bloom: true, dof: false, aa: 'smaa', grain: true, mirror: 0.5, scale: 1 },
   medium: { ao: false, bloom: true, dof: false, aa: 'fxaa', grain: false, mirror: 0.4, scale: 0.85 },
   low: { ao: false, bloom: false, dof: false, aa: 'fxaa', grain: false, mirror: 0.3, scale: 0.7 },
+  potato: { ao: false, bloom: false, dof: false, aa: 'fxaa', grain: false, mirror: 0.3, scale: 0.7 },
 };
 
 /** The garage's own grade: an interior at night - a little contrast, cool shadows, warm practicals, restrained. */

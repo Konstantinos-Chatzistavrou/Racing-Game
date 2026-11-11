@@ -23,7 +23,7 @@ HEADLESS=1 node tools/drive.mjs "<url>" <outdir> <scenario>
 - **Page API**: `window.__game` = `{ car, core, scene, renderer, camera, post, ai, input, visual, nyc, damage,
   audio, rig, heat, cops, menu(), stats(), texStats(), setHeat(), THREE }`.
 - **URL params** (in `web/src/main.ts`): `?menu=0` skips the front end; `?cap=N` frame cap (default 30 on touch,
-  0 = uncapped on desktop); `?quality=max|ultra|high|medium|low`; `?scale=0..1`; `?touch=1|0` force the phone
+  0 = uncapped on desktop); `?quality=max|ultra|high|medium|low|potato` (potato = boot mode for weak phones, docs/performance.md); `?scale=0..1`; `?touch=1|0` force the phone
   path; `?gate=1` forces the click-for-fullscreen gate (`0` skips it; automation skips it by default);
   `?look=natural|underground|heat` grade (fx/grade.ts); `?probe=N` car-reflection-probe face interval (0 off);
   `?far=N` far-ring metres (default 1000, phones 560); `?target=N` auto-tuner fps target (default 30);

@@ -25,7 +25,7 @@ import { CURVES, GRADE, LOOKS, applyLook, filmGrain, toneGrade, type CurveName }
 import { DepthFx } from './fx/depthFx';
 import { ClusteredLighting } from 'three/addons/lighting/ClusteredLighting.js';
 
-export type PresetName = 'max' | 'ultra' | 'high' | 'medium' | 'low';
+export type PresetName = 'max' | 'ultra' | 'high' | 'medium' | 'low' | 'potato';
 export interface Preset {
   aa: 'smaa' | 'fxaa' | 'traa' | 'none';
   /** half-resolution GTAO (ultra only; uses its own MRT scene pass, see fx/gtaoTraa.ts) */
@@ -42,6 +42,8 @@ export interface Preset {
   ssr?: boolean;
   /** optional bloom overrides (defaults in BLOOM): a preset is where the halo is biased toward emitters */
   bloomStrength?: number; bloomRadius?: number; bloomThreshold?: number; bloomKnee?: number;
+  /** no intermediate targets: tone curve in the output pass, bilinear upscale (potato) */
+  direct?: boolean;
 }
 // Ordered best -> cheapest. The GPU cost differences are small but real on the iGPU (measured with
 // timestamp queries, see docs/web_port.md): SMAA = 3 passes, FXAA = 1, bloom = ~11 small passes.
@@ -53,6 +55,9 @@ export const PRESETS: Record<PresetName, Preset> = {
   high: { aa: 'smaa', bloom: 0.25, shadowEvery: 3, grade: 'full', grain: true, bloomStrength: 0.38, bloomRadius: 0.52, bloomThreshold: 1.50 },
   medium: { aa: 'fxaa', bloom: 0.25, shadowEvery: 3, grade: 'full', grain: false, bloomStrength: 0.32, bloomRadius: 0.5, bloomThreshold: 1.40 },
   low: { aa: 'none', bloom: 0, shadowEvery: 4, grade: 'tone', grain: false },
+  // Weak phones (Mali-G57 class): the scene pass is tone-mapped straight to the canvas, one fullscreen pass in all.
+  // Everything else that makes it cheap is decided at boot in main.ts (no shadows, short rings, 1x canvas).
+  potato: { aa: 'none', bloom: 0, shadowEvery: 4, grade: 'tone', grain: false, direct: true },
 };
 /** final-image look defaults (fx/grade.ts); ?tm=agx|aces|neutral|uchimura, ?grade=0 for A/B */
 const DEFAULT_CURVE: CurveName = 'neutral';
@@ -63,7 +68,14 @@ const DEFAULT_CURVE: CurveName = 'neutral';
 // if the signs feel dim, lower ?bt= (or raise the signs' emissive in the city materials). Presets tune the numbers
 // above; ?bs= ?br= ?bt= ?bk= override all of them for an A/B.
 const BLOOM = { strength: 0.62, radius: 0.58, threshold: 1.45, knee: 0.55 };
+/**
+ * The presets THIS session builds pipelines for, best -> cheapest. Normally the five below; a potato boot (main.ts)
+ * replaces the list with ['potato'] before anything is built, so a weak phone compiles one small pipeline instead of
+ * five (GTAO, SSR, SMAA and bloom never reach its shader compiler). Leaving potato needs a reload.
+ */
 export const PRESET_ORDER: PresetName[] = ['max', 'ultra', 'high', 'medium', 'low'];
+export const ALL_PRESETS: PresetName[] = ['max', 'ultra', 'high', 'medium', 'low', 'potato'];
+export function usePotatoOnly() { PRESET_ORDER.length = 0; PRESET_ORDER.push('potato'); }
 
 export interface PostOptions { bloom: boolean; aa: boolean; scale: number; preset: PresetName }
 
@@ -98,6 +110,14 @@ const FIXED_GRID = [1920, 1088] as const;   // drawing-buffer size the cluster g
 export class ScaledClusteredLighting extends ClusteredLighting {
   private plain = new WeakMap<object, THREE.LightsNode>();
   /**
+   * `grid`: the drawing-buffer size the clusters are laid out for (tiles of `tileSize` px). The compute pass that
+   * sorts lights into clusters costs per cluster, every frame, whatever the picture: 60 x 34 x 24 clusters by default
+   * (1.2-1.8 ms on the i3 iGPU). Potato passes a 30 x 17 x 12 grid: an eighth of that, with coarser light lists.
+   */
+  constructor(maxLights = 1024, tileSize = 32, zSlices = 24, maxLightsPerCluster = 64, private grid: readonly [number, number] = FIXED_GRID) {
+    super(maxLights, tileSize, zSlices, maxLightsPerCluster);
+  }
+  /**
    * A scene flagged `userData.plainLights` (the garage) gets an ordinary forward LightsNode: it has two lights, and
    * clusters are built for one camera - its mirror and cube renders would look lights up in the wrong tiles.
    */
@@ -131,7 +151,7 @@ export class ScaledClusteredLighting extends ClusteredLighting {
     // One grid for every canvas size: tiles are found from screenUV, so the grid need not follow the drawing buffer,
     // and rebuilding it recompiles every lit material (measured: 4 s frozen when going fullscreen). 60 x 34 tiles
     // (a 1080p layout; tiles stretch a little on other aspects and sizes, the light lists stay exact).
-    node.updateProgram = () => { if (node._bufferSize === null || node._bufferSize === undefined) node.create(FIXED_GRID[0], FIXED_GRID[1]); };
+    node.updateProgram = () => { if (node._bufferSize === null || node._bufferSize === undefined) node.create(this.grid[0], this.grid[1]); };
     node.setSize = () => node;
     return node as unknown as ReturnType<ClusteredLighting['createNode']>;
   }
@@ -200,6 +220,12 @@ export class Post {
     for (const name of PRESET_ORDER) {
       const pr = PRESETS[name];
       const p = new THREE.RenderPipeline(renderer);
+      if (pr.direct) {
+        p.outputColorTransform = false;
+        p.outputNode = toneGrade(color, curve, false);
+        this.pipelines.set(name, p);
+        continue;
+      }
       const fx = pr.ao && pr.ssr && ssrOn
         ? (this.maxFx ??= new DepthFx(this.scenePass, camera, { resScale: 0.75, quality: 0.3, maxDistance: 85, intensity: 0.72, withAo: aoOn, carPos: this.carPos }))
         : null;

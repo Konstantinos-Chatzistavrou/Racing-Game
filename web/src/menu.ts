@@ -33,7 +33,7 @@ const GTABS: { id: string; label: string; cam: string }[] = [
   { id: 'perf', label: 'Tune', cam: '0.8,0.17,6.5' },
 ];
 
-export type Gfx = 'auto' | 'max' | 'ultra' | 'high' | 'medium' | 'low';
+export type Gfx = 'auto' | 'max' | 'ultra' | 'high' | 'medium' | 'low' | 'potato';
 export type Screen = 'none' | 'title' | 'garage' | 'modes' | 'lobby' | 'pause' | 'results' | 'busy' | 'controls' | 'settings' | 'shop' | 'profile';
 /** One line of the race standings. fin: finish time (s) or -1; d: distance covered (m); dnf: out of the race. */
 export interface Standing { name: string; you: boolean; fin: number; d: number; best: number; ai: boolean; dnf?: boolean; why?: string }
@@ -297,7 +297,7 @@ export class Menu {
       <div class="chips">${chip('realism', '1', 'Full Realism', this.sel.realism)}${chip('realism', '0', 'Respawns', !this.sel.realism)}</div>
       <div class="dim note">${this.sel.realism ? RULES.realism : RULES.respawn}</div>
       <h3>Graphics</h3>
-      <div class="chips">${g('auto', 'Auto')}${g('max', 'Max')}${g('ultra', 'Ultra')}${g('high', 'High')}${g('medium', 'Medium')}${g('low', 'Low')}</div>
+      <div class="chips">${g('auto', 'Auto')}${g('max', 'Max')}${g('ultra', 'Ultra')}${g('high', 'High')}${g('medium', 'Medium')}${g('low', 'Low')}${g('potato', 'Potato')}</div>
       <div class="dim note">${esc(this.gfxNote || 'Auto tunes resolution and effects for this device once.')}</div>
       <h3>Performance tests</h3>
       <div class="chips"><button class="small" data-act="bench">⏱ Benchmark</button><button class="small" data-act="soak">🔥 Soak Test</button></div>`;
