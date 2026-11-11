@@ -4,7 +4,7 @@
 //   POST /v1/look   { car, look }  save one car's look (paint parts and colours; validated, shared by both careers)
 //   GET  /v1/username?u=NAME       is that username free (and valid)?  (no account needed)
 //   POST /v1/username { username } claim / change the account's username (unique; a change once per 30 days)
-//   GET  /v1/friends               friends (online, party), incoming and outgoing requests
+//   GET  /v1/friends               friends (online, party, last seen), incoming and outgoing requests
 //   POST /v1/friends { username, action: 'add' | 'accept' | 'remove' }   (remove also declines / cancels)
 //   POST /v1/presence { party }    heartbeat while the game is open (friends see online + party)
 //   POST /v1/buy    { kind, id, stage }   buy a car / upgrade stage / driver gear (level + credits checked here)
@@ -133,7 +133,8 @@ async function route(req: Request, env: Env): Promise<Response> {
     for (const r of rows.results) {
       if (r.state === 'friends') {
         const online = !!r.seen && now - r.seen < ONLINE_MS;
-        friends.push({ username: r.username, level: levelOf(r.xp).level, online, party: online ? r.party : null });
+        // seenAgo: ms since the last heartbeat, measured on the server's clock (null = never seen): "last seen 5 min ago"
+        friends.push({ username: r.username, level: levelOf(r.xp).level, online, party: online ? r.party : null, seenAgo: r.seen ? Math.max(0, now - r.seen) : null });
       } else if (r.a === acct.id) outgoing.push(r.username);
       else incoming.push(r.username);
     }

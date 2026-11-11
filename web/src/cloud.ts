@@ -18,7 +18,8 @@ const KEY = 'nr.cloud.v1';
 const envUrl = (import.meta as unknown as { env?: Record<string, string | boolean | undefined> }).env ?? {};
 const BASE = String(envUrl.VITE_CLOUD_URL ?? (envUrl.DEV ? 'http://127.0.0.1:8787' : '')).replace(/\/$/, '');
 
-export interface Friend { username: string; level: number; online: boolean; party: string | null }
+/** seenAgo: ms since the friend's last heartbeat when the list was fetched (null = never; absent on an older server) */
+export interface Friend { username: string; level: number; online: boolean; party: string | null; seenAgo?: number | null }
 export interface Friends { friends: Friend[]; incoming: string[]; outgoing: string[] }
 
 export class Cloud {

@@ -4,7 +4,7 @@
 //
 // Flow: title -> Play -> game modes (Race / Free Roam / Multiplayer)
 //       title -> Garage (cars, paint, upgrades only) -> Main Menu, or Continue -> game modes
-import type { Identity } from './identity';
+import { agoText, type Identity } from './identity';
 import { PLATE_MAX, USERNAME_MAX, USERNAME_MIN, usernameError } from './username';
 import { FINISHES, LOOK_PRESETS, MODS, MOD_KEYS, SWATCHES, applyLookPreset, applyMods, bodyEffect, bodyHint, customOf, kitEffect, kitHint, modsOf, paintOf, partEffect, rimHint, saveSelection, statsOf, wingHint,
   type CatalogCar, type Finish, type Mode, type ModKey, type Selection } from './garage';
@@ -13,7 +13,7 @@ import { MAX_MEMBERS, cleanCode, type Party, type PartyMode } from './party';
 import type { ControlsUi } from './controls-menu';
 import { PRESET_INFO, applyPreset, matchPreset, type AssistSettings, type Preset } from './assists';
 import { fmt, fmtXp, type Career, type MpCareer, type SpCareer } from './career';
-import type { Cloud } from './cloud';
+import type { Cloud, Friend } from './cloud';
 import type { RankedResult } from './ranked';
 import { levelOf } from './progression';
 import type { Loader } from './loading';
@@ -320,7 +320,7 @@ export class Menu {
   private careerCard(k: 'sp' | 'mp') {
     const c = k === 'sp' ? this.sp : this.mp, L = levelOf(c.xp);
     const pct = L.need ? Math.round((L.into / L.need) * 100) : 100;
-    const extra = k === 'mp' ? (this.mp.ready ? ` · <span class="credits">${fmt(c.credits)}</span>` : ` · <span class="dim">${esc(this.mp.note || 'offline')}</span>`) : '';
+    const extra = k === 'mp' ? (this.mp.ready ? ` · <span class="credits">${fmt(c.credits)}</span>` : ` · <span class="dim">${esc(this.mp.note || 'Offline')}</span>`) : '';
     return `<div class="ccard"><span class="dim">${k === 'sp' ? 'SINGLE PLAYER' : 'ONLINE'}</span><b>Level ${L.level}</b>${extra}
       <div class="xpbar"><i style="width:${pct}%"></i></div><small class="dim">${L.need ? `${fmtXp(L.into)} / ${fmtXp(L.need)}` : 'Max level'}</small></div>`;
   }
@@ -953,10 +953,11 @@ export class Menu {
     const draft = this.unameDraft ?? this.sel.name;
     const status = !online ? 'Saved on this device. The online service is not set up for this build, so the name cannot be reserved yet.'
       : id.claimed ? '✓ Reserved for you on the online service.' : id.note || 'Not confirmed by the online service yet.';
-    const friend = (x: { username: string; level: number; online: boolean; party: string | null }) => `<div class="member">
+    const seen = (x: Friend) => (typeof x.seenAgo === 'number' ? `Offline · last seen ${agoText(x.seenAgo + Math.max(0, Date.now() - id.friendsAt))}` : 'Offline');
+    const friend = (x: Friend) => `<div class="member">
         <span class="avatar"><i class="dot ${x.online ? 'on' : ''}"></i></span>
         <div class="mtext"><div class="mname"><b>${esc(x.username)}</b><span class="pill">Lv ${x.level}</span></div>
-        <span class="dim">${x.online ? (x.party ? `online · in party ${esc(x.party)}` : 'online') : 'offline'}</span></div>
+        <span class="dim">${x.online ? (x.party ? `Online · in party ${esc(x.party)}` : 'Online') : seen(x)}</span></div>
         ${x.party && !this.party ? `<button class="small primary" data-act="friend-join" data-v="${esc(x.party)}">Join</button>` : ''}
         <button class="small" data-act="friend-remove" data-v="${esc(x.username)}" title="Remove friend">✕</button>
       </div>`;

@@ -18,6 +18,8 @@ export class Identity {
   note = '';
   friends: Friends = { friends: [], incoming: [], outgoing: [] };
   friendsNote = '';
+  /** when the friends list was fetched (ms): "last seen" ages from here */
+  friendsAt = 0;
   onChange = () => {};
   private heartbeat = 0;
 
@@ -77,7 +79,7 @@ export class Identity {
 
   async loadFriends() {
     if (!this.cloud.available || !this.cloud.id) { this.friendsNote = this.cloud.available ? '' : 'Friends need the online service, which is not set up for this build.'; return; }
-    try { this.friends = await this.cloud.friends(); this.friendsNote = ''; }
+    try { this.friends = await this.cloud.friends(); this.friendsAt = Date.now(); this.friendsNote = ''; }
     catch (e) { this.friendsNote = `Online service unreachable: ${(e as Error).message}`; }
     this.onChange();
   }
@@ -100,4 +102,17 @@ export class Identity {
     beat();
     return beat;
   }
+}
+
+/** "just now", "5 min ago", "3 h ago", "yesterday", "12 days ago", then a date. */
+export function agoText(ms: number, now = Date.now()): string {
+  const min = Math.floor(ms / 60_000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min} min ago`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h} h ago`;
+  const d = Math.floor(h / 24);
+  if (d === 1) return 'yesterday';
+  if (d < 30) return `${d} days ago`;
+  return new Date(now - ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
