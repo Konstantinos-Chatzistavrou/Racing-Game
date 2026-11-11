@@ -36,3 +36,26 @@ Far-field skyline beyond ~1.5 km: `hlod_{jx}_{jy}.glb` (4x4 tiles merged, silhou
 visible at any time: <= 400 draw calls, <= 500k triangles, ground+bld LOD0 per tile <= 60k tris / ~250 KB after meshopt, far.glb <= 40 KB, whole island <= ~300 MB
 (hosted outside git: Cloudflare R2 / Vercel blob later; web/public/assets/nyc/ is gitignored except a small Midtown sample if needed).
 Attribution: OpenStreetMap contributors (ODbL), NYC Open Data (public domain) in CREDITS.md and the in-game credits line.
+
+## Buildings off the road, and tile versions (2026-11-11)
+
+Reported: buildings in the middle of a street, some invisible until hit, some that can be driven through.
+
+- On slow phones this was the starved streamer (docs/performance.md, "Slow phones"): a tile's meshes and colliders were
+  committed from one queue that stopped under 20 fps, so one could exist without the other.
+- In the data: `tools/nyc/check_colliders.py` (new) tests every collider box against the asphalt as drawn. Before:
+  **218 of 5000 boxes** reached more than 0.5 m into the road, the worst covering 6,400 m2 of it. Two causes: 188 of the
+  3691 footprints themselves overlapped the drawn carriageway (30,500 m2: towers over a street, lots wider than their
+  kerb, ramps under a building), and a rectangle that fits a wedge-shaped lot to 80 % still pokes a corner into a
+  diagonal avenue.
+- `buildings.py`: `off_the_road()` cuts the drawn asphalt (`asphalt()`, the same surface ground.py draws, 220 m beyond
+  the tile) out of every footprint before the mesh and the colliders are made; `colliders()` keeps splitting a
+  rectangle that reaches onto the road and shrinks the last one clear. After the rebuild of the 86 tiles:
+  **0 of 6158 boxes** on the road. `check_road_clear.py` (street furniture) was already 0 of 19,162.
+- Tile versions: `build_index.py` writes `version` (a hash of every tile file) into index.json; the streamer fetches
+  the index with `cache: 'no-cache'` and appends `?v=` to every tile URL. vercel.json now gives the year-long
+  `immutable` lifetime only to the hashed bundle files directly under /assets; assets in sub-folders revalidate after
+  an hour. Before this a rebuilt tile kept its name and a returning player would have kept the old one for a year.
+- Still open: outside the 8 x 11 real tiles the city is the procedural grid of infiniteNyc.ts (the "square
+  buildings"); its streets do not line up with the real ones at the seam. The race route lies entirely inside the real tiles.
+

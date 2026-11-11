@@ -12,6 +12,18 @@ ROUTE_OUT = os.path.join(ROOT, "web", "public", "data", "tracks", "nyc_route.jso
 TILE = 256.0
 
 
+def tiles_version():
+    import hashlib
+    h = hashlib.sha1()
+    for fn in sorted(os.listdir(TILES_DIR)):
+        if fn == "index.json" or fn.startswith("_"):
+            continue
+        h.update(fn.encode())
+        with open(os.path.join(TILES_DIR, fn), "rb") as f:
+            h.update(f.read())
+    return h.hexdigest()[:10]
+
+
 def build_index():
     tiles = {}
     keys = set()
@@ -99,6 +111,9 @@ def build_index():
         "origin_latlon": [40.7580, -73.9855],
         "spawn": spawn,
         "tiles": tiles,
+        # content hash of every tile file: the game appends it to each tile URL (?v=), because /assets is served with a
+        # long cache lifetime and a rebuilt tile under the same name would never reach a returning player
+        "version": tiles_version(),
     }
     out_p = os.path.join(TILES_DIR, "index.json")
     with open(out_p, "w") as f:

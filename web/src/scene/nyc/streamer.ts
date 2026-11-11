@@ -203,10 +203,12 @@ export class NycStreamer {
   private async init() {
     this.o.onProgress?.(0.08);
     const [idx, mats, props] = await Promise.all([
-      fetch(this.o.base + 'index.json').then((r) => { if (!r.ok) throw new Error(`NYC tiles missing (${r.status} ${this.o.base}index.json): run python3 tools/nyc/stub_tiles.py or build_tiles.py`); return r.json() as Promise<IndexJson>; }),
+      // revalidated on every start: the index names the tile set's version (see url())
+      fetch(this.o.base + 'index.json', { cache: 'no-cache' }).then((r) => { if (!r.ok) throw new Error(`NYC tiles missing (${r.status} ${this.o.base}index.json): run python3 tools/nyc/stub_tiles.py or build_tiles.py`); return r.json() as Promise<IndexJson>; }),
       loadNycMaterials(), createNycProps(this.scene, this.camera),
     ]);
     this.index = idx; this.mats = mats; this.props = props;
+    this.ver = (idx as { version?: string }).version ? `?v=${(idx as { version?: string }).version}` : '';
     if (props instanceof NycProps) props.treeDensity = this.o.treeDensity;
     this.o.onProgress?.(0.2);
     console.info(`nyc: ${Object.keys(idx.tiles).length} tiles, materials ${mats.source}, props ${props ? 'real' : 'none'}`);
@@ -355,7 +357,10 @@ export class NycStreamer {
   }
 
   // ---- loading ------------------------------------------------------------------------------------------------------------------------
-  private url(t: Tile, ext: string) { return `${this.o.base}${t.key}.${ext}`; }
+  /** `?v=` = the tile set's content hash (index.json `version`, tools/nyc/build_index.py): a rebuilt tile is a new URL,
+   *  so the long cache lifetime of /assets can never serve a returning player the old one. */
+  private url(t: Tile, ext: string) { return `${this.o.base}${t.key}.${ext}${this.ver}`; }
+  private ver = '';
 
   private startLoad(t: Tile, kind: 'near' | 'far' | 'col') {
     const id = t.key + ':' + kind;

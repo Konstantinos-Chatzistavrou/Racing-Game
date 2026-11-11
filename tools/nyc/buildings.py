@@ -440,11 +440,28 @@ def add_roof_stuff(R, roof, h, z0, kind, era, area, rng, tint, detail, lm):
             cylinder(R, pt[0], pt[1], z0 + 2.2, r, 3.0, wood, n=9, cone_to=1.2)
 
 
-def colliders(poly, h, depth=0):
-    """Oriented boxes covering a footprint: one min-area rectangle if it fits well, else cut across the long axis and recurse."""
+def colliders(poly, h, depth=0, road=None):
+    """Oriented boxes covering a footprint: one min-area rectangle if it fits well, else cut across the long axis and recurse.
+    `road` (the drawn asphalt): a rectangle is also split while its corners reach onto it - a wedge-shaped lot on a diagonal
+    avenue fits its rectangle to 80 % and still pokes a corner metres into the carriageway (an invisible wall); at the last
+    level the box is shrunk about its centre until it is clear."""
     yaw, L, W, c = mrr_info(poly)
     one = [dict(cx=round(c[0], 2), cy=round(c[1], 2), z0=0.0, z1=round(h, 2), hx=round(L / 2, 2), hy=round(W / 2, 2), yaw=round(yaw, 4))]
-    if poly.area / max(L * W, 1e-6) >= 0.8 or poly.area < 60 or depth >= 3:
+    on_road = 0.0
+    if road is not None and not road.is_empty:
+        rect = poly.minimum_rotated_rectangle
+        if rect.intersects(road):
+            on_road = rect.intersection(road).area
+    last = depth >= (5 if on_road > 0.5 else 3)
+    if on_road > 0.5 and (last or poly.area < 60):
+        ux, uy = math.cos(yaw), math.sin(yaw)
+        for k in (0.92, 0.84, 0.76, 0.68, 0.6, 0.5, 0.4):
+            hx, hy = L / 2 * k, W / 2 * k
+            r = Polygon([(c[0] + x * ux - y * uy, c[1] + x * uy + y * ux) for x, y in ((-hx, -hy), (hx, -hy), (hx, hy), (-hx, hy))])
+            if r.intersection(road).area <= 0.5:
+                return [dict(one[0], hx=round(hx, 2), hy=round(hy, 2))]
+        return []
+    if (poly.area / max(L * W, 1e-6) >= 0.8 and on_road <= 0.5) or poly.area < 60 or last:
         return one
     ux, uy = math.cos(yaw), math.sin(yaw)
     out = []
@@ -455,8 +472,8 @@ def colliders(poly, h, depth=0):
                    for lx, ly in ((-L / 4 - 0.5, -W / 2 - 2), (L / 4 + 0.5, -W / 2 - 2), (L / 4 + 0.5, W / 2 + 2), (-L / 4 - 0.5, W / 2 + 2))]
         for q in parts(poly.intersection(Polygon(corners))):
             if q.area >= 8:
-                out += colliders(q, h, depth + 1)
-    return out or one
+                out += colliders(q, h, depth + 1, road)
+    return out or ([] if on_road > 0.5 else one)
 
 
 # ----------------------------------------------------------------------------------------------------------------- tiles
@@ -468,7 +485,7 @@ def init_world():
     global _W, _BUCKETS
     if _W is not None:
         return
-    _W = tl.World(layers=("buildings", "roads"))
+    _W = tl.World(layers=("buildings", "roads", "areas"))
     _BUCKETS = {}
     # drawn carriageways (same widths as ground.py): low structures lying mostly on a road are left out (a racing map
     # cannot have a 4 m block across a street; e.g. a viaduct footprint at 639,-692 that was 100 % road)
@@ -485,15 +502,51 @@ def init_world():
         _BUCKETS.setdefault(tl.tile_of(c.x, c.y), []).append(i)
 
 
+_ASPHALT = {}
+
+
+def asphalt(ix, iy, margin=220):
+    """The asphalt exactly as ground.py draws it around a tile (props.Tile.drawn_road with a wider margin: a building is
+    emitted whole by the tile of its centroid and may reach well into the next one)."""
+    if (ix, iy) not in _ASPHALT:
+        from props import road_poly, DRIVE
+        from ground import road_surface
+        from shapely.geometry import box as sbox
+        x0, y0, x1, y1 = tl.tile_bounds(ix, iy)
+        B = sbox(x0 - margin, y0 - margin, x1 + margin, y1 + margin)
+        dp = [road_poly(r, g) for r, g in _W.query("roads", B.bounds, 40) if r["hw"] in DRIVE and not r["tunnel"]]
+        pl = [(g.buffer(0) if not g.is_valid else g) for a, g in _W.query("areas", B.bounds, 2) if a["kind"] == "parking"]
+        A = road_surface(dp, pl, B)
+        _ASPHALT[(ix, iy)] = A if A.is_empty else A.buffer(0.1)
+    return _ASPHALT[(ix, iy)]
+
+
+def off_the_road(p, A):
+    """A footprint with the drawn carriageway cut out of it. 188 of the 3691 Midtown footprints overlapped the asphalt
+    (30,500 m2 in all: towers over a street, lots drawn wider than their kerb, ramps under a building): the mesh stood in
+    the road and so did its collider. What is left keeps only pieces a building can be: >= 12 m2 and not a sliver."""
+    if A.is_empty or not p.intersects(A):
+        return [p]
+    cut = p.difference(A)
+    if p.area - cut.area < 0.5:
+        return [p]
+    return [q for q in clean_polygons(cut) if q.area >= 12.0 and q.buffer(-0.7).area > 1.0]
+
+
 def tile_buildings(ix, iy):
-    """[(item, polygon, part)] owned by this tile: centroid inside, whole footprint. Multi-part geometries become several buildings."""
+    """[(item, polygon, part)] owned by this tile: centroid inside, whole footprint with the drawn road cut out of it
+    (off_the_road). Multi-part geometries become several buildings."""
     out = []
+    A = asphalt(ix, iy)
     for i in _BUCKETS.get((ix, iy), []):
         item = _W.items["buildings"][i]
         if item["h"] < 2.5:
             continue
-        for j, p in enumerate(clean_polygons(_W.geoms["buildings"][i])):
-            out.append((item, p, j))
+        j = 0
+        for p in clean_polygons(_W.geoms["buildings"][i]):
+            for q in off_the_road(p, A):
+                out.append((item, q, j))
+                j += 1
     return out
 
 
@@ -521,12 +574,13 @@ def build_tile(ix, iy, outdir, compress=True):
     far_path = os.path.join(outdir, f"{name}.far.glb")
     res["far_tris"] = Fa["facade"].tris + Fa["roof"].tris
     res["far_bytes"] = tl.write_glb(far_path, [m for m in (Fa["facade"].mesh(True), Fa["roof"].mesh(False)) if m], (ix, iy), name + "_far")
-    # colliders: tiny neighbours merged into one box when they touch
+    # colliders: tiny neighbours merged into one box when they touch; none may reach onto the drawn road
     cols = []
+    A = asphalt(ix, iy)
     small = [(p, float(it["h"])) for it, p, j in bl if p.area < 70]
     for it, p, j in bl:
         if p.area >= 70:
-            cols += colliders(p, float(it["h"]))
+            cols += colliders(p, float(it["h"]), 0, A)
     used = [False] * len(small)
     for a in range(len(small)):
         if used[a]:
@@ -537,7 +591,7 @@ def build_tile(ix, iy, outdir, compress=True):
                 grp.append(b); used[b] = True
         u = shapely.union_all([small[g][0].buffer(0.3) for g in grp]).buffer(-0.3)
         for q in parts(u):
-            cols += colliders(q, max(small[g][1] for g in grp))
+            cols += colliders(q, max(small[g][1] for g in grp), 0, A)
     with open(os.path.join(outdir, f"{name}.col.json"), "w") as f:
         json.dump({"buildings": cols, "ground": 0}, f, separators=(",", ":"))
     res.update(colliders=len(cols), n=len(bl), landmarks=[lm["name"] for lm in lms.values()])
