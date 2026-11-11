@@ -277,6 +277,12 @@ export class Post {
     this.setScale(opts.scale);
   }
 
+  /**
+   * The render target the street is really drawn into. Pipelines are keyed by their target's formats, so a precompile
+   * (renderer.compileAsync) must run with THIS target set or it builds pipelines nothing ever uses (main.ts compileFor).
+   */
+  get sceneTarget(): THREE.RenderTarget { return this.scenePass.renderTarget as THREE.RenderTarget; }
+
   get scale() { return this._scale; }
 
   /** Render scale of everything before the upscale. Resizes render targets: only at the allowed points. */

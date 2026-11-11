@@ -373,3 +373,50 @@ that is submission-bound the next lever is still merging the car's static meshes
 Tried, not kept: no image-based reflections on potato (scene.environment = null): -15 % per pixel, and the picture
 goes dull. `DRAW_SCALE` does nothing on the NYC map (it belongs to the old city's props).
 
+## Slow phones: falling through the map, and the five-minute load (2026-11-11)
+
+Reported from Helio G99 class phones: about five minutes to load, then 12 fps on `low`, and the car drops through the
+street or drives through buildings a block or two from the start.
+
+**Falling through the map** was the streamer, not physics. `NycStreamer.update` paused all tile commits for two frames
+after any frame longer than 50 ms (`SLOW_DT`), meant for a hitch. A device that runs under 20 fps all the time is
+"hitching" on every frame, so after the first ring nothing was ever committed again: no street meshes and no colliders.
+Reproduced with a 14x CPU throttle (potato, straight down the avenue at 0.75 throttle):
+
+| | fps | after 30 s | commit queue | colliders | lowest car y |
+|---|---|---|---|---|---|
+| before | 9.2 | 1097 m | 154 jobs waiting | 0 | **-789 m** |
+| after | 7.7 | 1044 m, 234 km/h | 0 | 552 | 0.47 m (on the road) |
+
+Changes (`scene/nyc/streamer.ts`): a hitch is now a frame 1.6x longer than the device's own average; collider jobs are
+drained first every frame and never paused; the commit budget is a share of the frame (10 %, 2.5-12 ms) instead of a
+fixed 2.5 ms; `groundReady(x, z)` builds a tile's fetched colliders at once and `main.ts` holds the simulation with a
+"LOADING THE STREET…" chip while the tile under the car has none (slow network, a reset onto an unloaded tile).
+The same bug is the likely source of "buildings that only appear when you crash into them" and "buildings you can
+drive through" on those phones: colliders and meshes of a tile were committed from the same starved queue.
+
+**Load time.** `__loadLog` (console) now lists every start-up stage with its time and the render pipelines it
+compiled; `?pipelog=1` fills `__pipeLog` with the object and render target behind each new pipeline. Findings:
+
+- `renderer.compileAsync` compiles for whatever render target is current. At boot that was the environment
+  prefilter's leftover target, so every street material was compiled for a target nothing draws to and again on the
+  first real frame: in potato 136 of 220 pipelines were never used. `compileFor(scene, target)` in `main.ts` sets the
+  scene pass's own target first (`Post.sceneTarget`, `ShowroomPost.sceneTarget`).
+- Potato skips the precompile altogether: it generated every shader a second time on the main thread.
+- Potato has no garage room (88 pipelines, 15 textures, a mirror pass for a backdrop): its title and garage menus show
+  the car parked on the street. Its environment map is generated (`fx/nightEnv.ts`) instead of captured from the
+  street. Its rivals are compiled at the first race start, behind "Getting ready…". The optional car parts load after
+  the game is on screen.
+
+| start to title, laptop, 4x CPU throttle | pipelines | time |
+|---|---|---|
+| normal boot, before | 339 | 72 s |
+| normal boot, now | 222 | 71 s |
+| potato, first version | 284 | 36 s |
+| potato, now | 88 | 11.4 s |
+
+The laptop compiles a pipeline in the GPU process almost for free, so its times show the script side only; on a Mali
+each pipeline also costs driver time, which is why the pipeline column matters more than the seconds. Downloads for a
+potato start: 15.2 MB uncompressed in 183 requests (the 6.3 MB script is 2.3 MB gzipped), down from 18.7 MB.
+NOT measured: a real phone.
+

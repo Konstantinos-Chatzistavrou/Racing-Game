@@ -38,6 +38,8 @@ export class Hud {
   canRecover = true;
   /** full realism: 'ROLLED OVER · OUT IN 3 s' etc. ('' none) */
   outWarn = '';
+  /** the simulation is held while the street under the car is still loading (slow phones, slow networks) */
+  holdWarn = '';
   fps = 60;
   /** the frame cap in fps (0 = uncapped), so a 33 ms interval reads as the cap working, not as a slow frame */
   cap = 0;
@@ -151,6 +153,7 @@ export class Hud {
       if (t > 720 && !(dmg && (dmg.brakesFailed || dmg.brakes < 0.97))) chips.push(`<div class="chip ${mu < 0.75 ? 'red' : ''}">${ICON_BRAKE}BRAKES ${mu < 0.95 ? 'FADING' : 'HOT'} ${Math.round(t / 10) * 10}°C</div>`);
     }
     if (this.outWarn) chips.push(`<div class="chip">${this.outWarn}</div>`);
+    if (this.holdWarn) chips.push(`<div class="chip">${this.holdWarn}</div>`);
     if (dmg) {
       if (dmg.fire > 0) chips.push(`<div class="chip red">${ICON_FIRE}ENGINE FIRE</div>`);
       else if (dmg.smoulder > 0) chips.push(`<div class="chip">${ICON_FIRE}ENGINE OVERHEATING</div>`);

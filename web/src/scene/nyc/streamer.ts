@@ -125,6 +125,8 @@ export class NycStreamer {
   private readyP: Promise<void>;
   private spawn!: NycSpawn;
   private queue: { tile: Tile; kind: 'near' | 'far' | 'col'; gen: number; cost: number; run: () => void }[] = [];
+  /** this device's usual frame time (s), so a hitch can be told from a slow device */
+  private dtAvg = 1 / 60;
   private inflight = { near: 0, far: 0, col: 0 };
   private pending = new Set<string>();   // "key:kind" being loaded
   private frustum = new THREE.Frustum(); private pv = new THREE.Matrix4();
@@ -603,6 +605,42 @@ export class NycStreamer {
 
   // ---- per frame ----------------------------------------------------------------------------------------------------------------------
   /** Run queued jobs until the time budget is spent (always at least one). Returns ms used. */
+  /** Collider jobs only, in order (a tile's ground box, its building batches, its "done" mark), ahead of everything else. */
+  private drainCol(budget: number) {
+    const t0 = performance.now();
+    let n = 0;
+    for (let i = 0; i < this.queue.length;) {
+      const j = this.queue[i];
+      if (j.kind !== 'col') { i++; continue; }
+      if (n > 0 && performance.now() - t0 + j.cost > budget) break;
+      this.queue.splice(i, 1);
+      if (j.gen >= 0 && j.tile.gen[j.kind] !== j.gen) continue;
+      j.run();
+      n++;
+    }
+    return performance.now() - t0;
+  }
+
+  /**
+   * Is there ground to drive on at (x, z)? False while that tile's colliders are still on their way. Anything of them
+   * already fetched is built at once (no budget: a few ms now beats a car falling through the street). main.ts holds
+   * the car while this is false.
+   */
+  groundReady(x: number, z: number): boolean {
+    const t = this.tiles.get(`${Math.floor(x / TILE)}_${Math.floor(-z / TILE)}`);
+    if (!t || !(t.has.col || t.has.ground) || t.col === 3) return true;
+    if (t.col === 0 && !this.retryLater(t, 'col', performance.now())) this.startLoad(t, 'col');
+    if (t.col === 2) {
+      for (let i = 0; i < this.queue.length;) {
+        const j = this.queue[i];
+        if (j.kind !== 'col' || j.tile !== t) { i++; continue; }
+        this.queue.splice(i, 1);
+        if (j.gen < 0 || t.gen.col === j.gen) j.run();
+      }
+    }
+    return (t.col as number) === 3;
+  }
+
   private drain(budget: number) {
     const t0 = performance.now();
     let n = 0;
@@ -645,10 +683,16 @@ export class NycStreamer {
     // selection at ~10 Hz (or after 20 m of motion)
     this.sinceSelect += dt;
     if (this.sinceSelect > 0.1) { this.sinceSelect = 0; this.select(carPos); }
-    // commits: paused after a slow frame
-    if (dt > SLOW_DT) this.pause = 2;
-    let used = 0;
-    if (this.pause > 0) this.pause--; else used = this.drain(this.o.budgetMs);
+    // Commits pause after a HITCH: a frame much longer than this device's usual one. It used to be any frame over
+    // SLOW_DT, so a phone that runs at 12 fps all the time (every frame "slow") never committed a tile again after the
+    // first ring: no streets, no colliders, and the car fell through the map a block from the spawn.
+    if (dt > SLOW_DT && dt > this.dtAvg * 1.6) this.pause = 2;
+    this.dtAvg += (Math.min(dt, 0.25) - this.dtAvg) * 0.1;
+    // Colliders first, every frame, never paused: they are cheap (boxes) and missing ones are the worst failure.
+    let used = this.drainCol(4);
+    // The rest gets a share of the frame, not a fixed 2.5 ms: at 12 fps that is 8 ms a frame, the same loading per
+    // second of driving as a fast machine gets.
+    if (this.pause > 0) this.pause--; else used += this.drain(Math.max(this.o.budgetMs, Math.min(12, dt * 100)));
     this.updateVisibility();
     this.props?.update(dt, carPos, carVel, onImpact);
     this.breaches.update(dt, this.camera);

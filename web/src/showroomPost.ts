@@ -136,7 +136,9 @@ export class ShowroomPost {
     this.sharpness.value = s >= 0.99 ? 1.0 : 0.5;
   }
 
-  render() { this.pipelines.get(this.preset)!.render(); }
+/** the target the garage is really drawn into (see Post.sceneTarget) */
+  get sceneTarget(): THREE.RenderTarget { return this.scenePass.renderTarget as THREE.RenderTarget; }
+    render() { this.pipelines.get(this.preset)!.render(); }
 
   /** Every preset once (pipelines compiled behind the loading screen). */
   async warmup() {
