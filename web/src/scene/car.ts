@@ -10,6 +10,7 @@ import { assetUrl, loadGLTF } from './loaders';
 import type { DamageVisualConfig } from './damage';
 import { FINISHES, type Finish } from '../garage';
 import { CarCustomizer, installAero, installLivery } from './custom';
+import { exactBox } from './parts/fit';
 import { Driver } from './driver';
 
 export interface CarVisualConfig extends DamageVisualConfig {
@@ -380,6 +381,7 @@ export class CarVisual {
     for (const name of [n.fl, n.fr, n.rl, n.rr]) {
       const node = model.getObjectByName(name)!;
       const caliper = model.getObjectByName(name.replace('wheel', 'caliper'));
+      this.recentreWheel(node);
       const radius = this.addBlurDisc(node);
       this.wheels.push({
         node,
@@ -431,7 +433,7 @@ export class CarVisual {
       this.headlights.push(s);
     }
     const mats = model.userData.carMats as { paint: THREE.MeshPhysicalMaterial | null; glass: THREE.MeshPhysicalMaterial | null; carbon: THREE.MeshPhysicalMaterial | null };
-    this.custom = new CarCustomizer(model, mats.paint, mats.glass, mats.carbon, this.headlights);
+    this.custom = new CarCustomizer(model, mats.paint, mats.glass, mats.carbon, this.headlights, this.wheels.map((w) => w.node));
     this.driver = new Driver(new THREE.Vector3(...(cfg.driver_seat_m ?? [0.36, 0.25, -0.3])));
     this.driver.root.scale.setScalar(cfg.driver_scale ?? 0.93);
     model.add(this.driver.root);
@@ -443,21 +445,39 @@ export class CarVisual {
    * outer rim lip, and inner brake caliper/rotor stay sharp while alloy spokes blur naturally at speed.
    * Returns measured outer tyre radius (m).
    */
+  /**
+   * A wheel node must sit at its hub, in the model's own space: the game steers and spins the node about its origin.
+   * A node authored with its origin elsewhere is re-pivoted (the node moves to the hub, its children move back by the
+   * same amount); nothing changes on screen.
+   */
+  private recentreWheel(node: THREE.Object3D) {
+    // First: the node hangs directly under the model. Everything below places a wheel in MODEL space (hub position
+    // from the physics, steer about the model's Y, spin about its X). The K-Concept's wheels hang under a node turned
+    // -90 deg about X (a Z-up export): their "y" was the model's -z, so the car measured its ground 1.8 m too low and
+    // stood that far above the garage floor.
+    if (node.parent && node.parent !== this.model) { this.model.updateWorldMatrix(true, true); this.model.attach(node); }
+    node.updateWorldMatrix(true, true);
+    const b = exactBox(node, new THREE.Matrix4().copy(node.matrixWorld).invert(), (m) => m.name.startsWith('wheel_blur_'));
+    if (b.isEmpty()) return;
+    const c = b.getCenter(new THREE.Vector3());
+    if (c.length() < 0.02) return;
+    for (const ch of node.children) ch.position.sub(c);
+    node.position.add(c.clone().multiply(node.scale).applyQuaternion(node.quaternion));
+    node.updateMatrixWorld(true);
+  }
+
   private addBlurDisc(node: THREE.Object3D): number {
     const rimBox = new THREE.Box3(), all = new THREE.Box3(), tmp = new THREE.Box3();
     // Boxes in the wheel node's own space. The transform is the whole chain below the node (quantized glTF meshes
     // carry their scale on a node between the wheel and the mesh): with the mesh's local matrix alone the tyre
     // measured 1 m in radius and everything derived from it (contact shadow height, blur disc) was wrong.
     node.updateWorldMatrix(true, true);
-    const nodeInv = new THREE.Matrix4().copy(node.matrixWorld).invert(), rel = new THREE.Matrix4();
-    node.traverse((c) => {
-      const m = c as THREE.Mesh;
-      if (!m.isMesh || m.name.startsWith('wheel_blur_')) return;
-      if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
-      tmp.copy(m.geometry.boundingBox!).applyMatrix4(rel.multiplyMatrices(nodeInv, m.matrixWorld));
-      all.union(tmp);
-      if (/rim/i.test(m.name)) rimBox.union(tmp);
-    });
+    // exact vertex extents (exactBox): a tyre mesh modelled at an angle inflates a transformed bounding box
+    const nodeInv = new THREE.Matrix4().copy(node.matrixWorld).invert();
+    const isRim = (m: THREE.Object3D) => { for (let o: THREE.Object3D | null = m; o && o !== node; o = o.parent) if (/rim/i.test(o.name)) return true; return false; };
+    all.copy(exactBox(node, nodeInv, (m) => m.name.startsWith('wheel_blur_')));
+    rimBox.copy(exactBox(node, nodeInv, (m) => m.name.startsWith('wheel_blur_') || !isRim(m)));
+    void tmp;
     const box = rimBox.isEmpty() ? all : rimBox;
     const tyreRadius = all.isEmpty() ? 0.335 : Math.max(all.max.y - all.min.y, all.max.z - all.min.z) / 2;
     if (box.isEmpty()) return tyreRadius;

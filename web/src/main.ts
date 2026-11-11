@@ -395,27 +395,23 @@ async function main() {
   /** resolves when the game is on screen: potato loads the optional car parts after it, not alongside the city */
   const readyP = new Promise<void>((r) => { readyDone = r; });
   const partsGate = potato ? readyP : Promise.resolve();
-  // Blender-authored replacement shells (vela_front_wide / vela_front_track): swapped in when they arrive
-  void partsGate.then(() => Promise.all([
-    loadGLTF(assetUrl('cars/v3/vela_front_wide.glb')),
-    loadGLTF(assetUrl('cars/v3/vela_front_track.glb')),
-  ])).then(([w, t]) => visual.custom.setShells(w.scene, t.scene)).catch(() => { /* keep the derived shells */ });
-  void partsGate.then(() => Promise.all([
-    loadGLTF(assetUrl('cars/v3/vela_hood_domed.glb')),
-    loadGLTF(assetUrl('cars/v3/vela_rear_wide.glb')),
-    loadGLTF(assetUrl('cars/v3/vela_hood_dome.glb')),
-    loadGLTF(assetUrl('cars/v3/vela_hood_track.glb')),
-    loadGLTF(assetUrl('cars/v3/vela_hood_vent_auth.glb')),
-    loadGLTF(assetUrl('cars/v3/vela_front_split_auth.glb')),
-  ])).then(([h, r, hd, ht, hv, fs2]) => visual.custom.setExtraParts({
-    'hood-blender': h.scene, 'rear-blender': r.scene, 'hood-dome': hd.scene, 'hood-track': ht.scene,
-    'hood-vent-auth': hv.scene, 'front-split-auth': fs2.scene,
-  })).catch(() => { /* fitted clones stay */ });
-  // parts modelled in Blender (shrink-wrapped onto the car's real surface)
-  void partsGate.then(() => Promise.all([
-    loadGLTF(assetUrl('cars/v3/vela_front_bumper_pro.glb')),
-    loadGLTF(assetUrl('cars/v3/vela_hood_pro.glb')),
-  ])).then(([b, h2]) => visual.custom.setExtraParts({ 'front-bumper-pro': b.scene, 'hood-pro': h2.scene })).catch(() => { /* authored parts stay */ });
+  // Panels authored in Blender for the Vela GT (cut from its own bumpers and bonnet): loaded once, and fitted to a
+  // Vela only. They used to be put on whichever car the game started with, where they sat in the Vela's coordinates.
+  const authoredP = partsGate.then(() => Promise.all([
+    'vela_front_wide', 'vela_front_track', 'vela_hood_domed', 'vela_rear_wide', 'vela_hood_dome', 'vela_hood_track',
+    'vela_hood_vent_auth', 'vela_front_split_auth', 'vela_front_bumper_pro', 'vela_hood_pro',
+  ].map((n) => loadGLTF(assetUrl(`cars/v3/${n}.glb`)).then((g) => g.scene).catch(() => null))));
+  const fitAuthored = (v: CarVisual, path: string) => {
+    if (path !== DEFAULT_VISUAL) return;
+    void authoredP.then(([wide, track, domed, rearWide, dome, hoodTrack, vent, split, bumperPro, hoodPro]) => {
+      if (wide && track) v.custom.setShells(wide.clone(true), track.clone(true));
+      const extra: Record<string, THREE.Object3D> = {};
+      for (const [id, g] of [['hood-blender', domed], ['rear-blender', rearWide], ['hood-dome', dome], ['hood-track', hoodTrack],
+        ['hood-vent-auth', vent], ['front-split-auth', split], ['front-bumper-pro', bumperPro], ['hood-pro', hoodPro]] as [string, THREE.Object3D | null][]) if (g) extra[id] = g.clone(true);
+      v.custom.setExtraParts(extra);
+    });
+  };
+  fitAuthored(visual, visualPath);
   const screenNone = () => menu.screen === 'none';
   // Tyre smoke: billboards at the rear contact patches, emitted from the core's slip ratio (not a canned effect)
   const tireSmoke = webgpu ? new Particles(180, { additive: false, gravity: 0.25, grow: 1.4, drag: 1.1, style: 'smoke', opacity: 0.15 }) : null;
@@ -1119,6 +1115,7 @@ async function main() {
   menu.loader = loader;
   menu.sp = sp;
   menu.mp = mp;
+  menu.fits = (id) => visual.custom.hasBody(id);
   menu.layLowCost = sp.kind === 'sp' ? 300 : -1;   // reputation is the SP wallet; the online career has no spend path yet
   try { const cam = localStorage.getItem('nr.cam'); if (cam) menu.camMode = cam; } catch { /* blocked */ }
   const rerender = () => { if (['title', 'shop', 'garage', 'lobby', 'results', 'settings', 'profile'].includes(menu.screen)) menu.render(); };
@@ -1371,6 +1368,7 @@ async function main() {
       scene.remove(visual.root);
       damage.dispose();
       visualPath = path; visualCfg = cfg; visual = next; shape = shapeOf(cfg);
+      fitAuthored(next, path);
       visual.setPlate(sel.name);
       drawEarly(visual.model);
       carSwapped = true;

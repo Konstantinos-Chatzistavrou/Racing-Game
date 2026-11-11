@@ -558,11 +558,14 @@ export class Menu {
       ${owned.length < SKINS.length ? '<button class="small more-cars" data-act="shop-gear">🛒 More helmets &amp; suits in the Shop</button>' : ''}`;
   }
   /** Body: the big shapes - rear wing, bumpers, hood (generated panels replace the stock ones). */
+  /** does the car in the garage have this bumper / hood option? (main.ts: the customiser knows) */
+  fits: (id: string) => boolean = () => true;
   private gBody() {
     const c = customOf(this.sel);
     const sec = (k: 'frontB' | 'rearB' | 'hood', map: Record<string, string>, kind: 'front' | 'rear' | 'hood') =>
       `<h3>${kind === 'front' ? 'Front bumper' : kind === 'rear' ? 'Rear bumper' : 'Hood'} <small class="dim">replaces the stock panel</small></h3>` +
-      `<div class="chips">${Object.keys(map).map((id) => this.cu(k, id, map[id], (c as unknown as Record<string, string>)[k] === id, bodyHint(kind, id, map[id]))).join('')}</div>`;
+      // only the panels this car really has (a panel is a reshaped copy of the car's own, or one authored for it)
+      `<div class="chips">${Object.keys(map).filter((id) => id === 'stock' || this.fits(id)).map((id) => this.cu(k, id, map[id], (c as unknown as Record<string, string>)[k] === id, bodyHint(kind, id, map[id]))).join('')}</div>`;
     return `<h3>Rear wing <small class="dim">grip in corners, costs top speed</small></h3><div class="chips">${(Object.keys(WINGS) as (keyof typeof WINGS)[]).map((k) => this.cu('wing', k, WINGS[k], c.wing === k, wingHint(k as string))).join('')}</div>
       ${sec('frontB', FRONT_BUMPERS, 'front')}${sec('rearB', REAR_BUMPERS, 'rear')}${sec('hood', HOODS, 'hood')}`;
   }

@@ -15,29 +15,40 @@ Written 2026-11-10 so any later session can continue without rediscovering it. C
   telemetry strip, hover previews (`hoverPart`), part hints; CSS tail of `web/src/style.css` holds the garage shell
   (Heat-style frame, compact breakpoint at `(pointer: coarse), (max-width: 1100px)`).
 
-## Generated parts
+## Generated parts (rebuilt 2026-11-11: fitted to the body, not to its box)
 
-| module | count | contract |
+The first generation placed slabs relative to the car's bounding box (`aero.ts`, `body.ts`, deleted): a splitter was a
+plate 0.22 m ahead of the box, a flare a torus at the Vela's wheelbase, a "vented hood" a board over the nose, rims as
+big as the tyre. On every car they floated or cut through the body.
+
+| module | what | contract |
 |---|---|---|
-| `scene/parts/wings.ts` | 30 | `WingSpec.build({box, wb, mat})` |
-| `scene/parts/aero.ts` | 30 | `AeroSpec.build({box, mat})`, kind splitter/diffuser/skirt |
-| `scene/parts/rims.ts` | 30 | `RimSpec.build({radius, width, mat})`, axle +z |
-| `scene/parts/body.ts` | 24 | `BodySpec.build({box, panel, mat})`, kind front/rear/hood/fender (fenders unused) |
+| `scene/parts/fit.ts` | `BodyFit`: the car's outlines, sampled once from its vertices (model space) | `nose(x)`, `tail(x)` -> {z, y underside}; `sill(z, side)` -> {x, y}; `shoulder(z, side)`, `corner(z, side)`; `deckAt(x, z)`; `wingBase()`; `wheels` (hub, radius), `ground` |
+| `scene/parts/fit.ts` | `fittedSplitter`, `fittedDiffuser`, `fittedSkirt`, `fittedFlares` | thin sections swept along those outlines (`ribbon`, `plate`); designs = parameter tables `SPLITTERS_FIT`, `DIFFUSERS_FIT`, `SKIRTS_FIT`, `FLARES_FIT`, keyed by the old ids |
+| `scene/parts/fit.ts` | `reshaped(model, stockPanel, mat, move)` | a float, model-space copy of one of the car's own panels with its vertices moved |
+| `scene/parts/wings.ts` | 30 wings | `WingSpec.build({box, wb, mat})`; `wb` is now `fit.wingBase()` (the tail deck), not the stock wing's box |
+| `scene/parts/rims.ts` | 30 rims | `RimSpec.build({radius, width, mat})`, sized from the wheel's own rim meshes (else 70 % of the tyre) |
 
-- `web/scripts/metrics.mjs` builds every spec in Node and writes `web/src/parts-metrics.ts`
-  (downforce/drag/mass from bbox areas/volumes). Re-run after changing any design: `cd web && node scripts/metrics.mjs`.
-  `garage.ts` `partEffect(id)` reads it; fitted shells/hoods have authored values in `partEffect`.
-- Visibility: wings/kits/body/rims each registered into maps on the customizer; stock part hidden when a non-stock
-  option is picked (`stockWing`, `rimMeshes`, `stockPanels.splitter/skirt`, `bodyStock.front/rear/hood`).
-
-## Fitting trick (the reliable one)
-
-Generated boxes do not follow the car, so real panels are **cloned from the model's own nodes and reshaped**:
-- node names in the GLB: `bumper_front`, `bumper_rear`, `hood`, `splitter`, `skirt_L/R`, `wheel_FL/FR/RL/RR`.
-- `shellOf` / `fitOf` in `custom.ts`: `stock.clone(true)`, clone each mesh geometry, displace positions
-  (widen x, push z), `computeVertexNormals()`, paint material, add to model, hide stock when selected.
-- model space: **+x left, +y up, +z front**; rear = `min.z`; hood vent around `z ~ 1.2`.
-- rims: parented to the wheel nodes, rim builder axle is +z so rotate `y = ±90°`, radius 0.34, width 0.22.
+- A splitter is one flat blade touching the lowest point of the bumper's underside, following its outline; a diffuser
+  the same at the tail, between the rear tyres, with strakes that stop 3.5 cm above the ground; a skirt runs between
+  the arches along the sill; a flare is a lip around `wheel radius + 5.5 cm`, standing out from the body side there.
+- Bumpers and hoods are ALWAYS the car's own panel, copied and reshaped (`custom.ts`, tables `FRONTS`, `REARS`,
+  `HOODS_FIT`): the edge that meets the fenders does not move. Each mesh keeps its own material (a bumper's grille is
+  not paint). A car without a `bumper_front` / `bumper_rear` / `hood` node has no such options: the garage lists only
+  what `CarCustomizer.hasBody(id)` returns (`menu.fits`), and the stock panel is hidden only for a part that exists.
+- The Vela's Blender-authored panels (`assets/cars/v3/vela_*.glb`) are fitted to a Vela only (`main.ts fitAuthored`),
+  also after a car swap. They used to be put on whichever car the game started with.
+- Traps met: the models are quantized (integer positions under a scaled node), so editing a cloned panel in place
+  moved vertices in integer units and left normals no shader could light (the old shells rendered black); a bounding
+  box pushed through a rotated matrix overstates a wheel (`exactBox` iterates vertices); a wheel node must hang
+  directly under the model and sit at its hub (`car.ts recentreWheel`): the K-Concept's wheels hung under a node
+  turned -90 deg and the car stood 1.8 m above the garage floor.
+- Cost on the laptop: `BodyFit` 22 ms for a 313k-vertex car; 16-22 reshaped panels, ~22k triangles, hidden until chosen.
+- `web/scripts/metrics.mjs` measures wings and rims only now; the fitted parts keep their entries in `parts-metrics.ts`.
+- node names used: `bumper_front`, `bumper_rear`, `hood`, `wing` / `wing_assembly`; wheels come from the visual
+  config's `wheel_nodes`. Model space: **+x left, +y up, +z front**.
+- Check a car: scratch harness `cap.sh <car id>` pattern (garage, four looks x three views -> one contact sheet);
+  all four cars were checked this way on 2026-11-11.
 - fitted ids: `front-shell-wide/track`, `rear-shell-wide/deep`, `hood-fit-smooth/bulge/vent/carbon` (these are
   values in `FRONT_BUMPERS`/`REAR_BUMPERS`/`HOODS`). Blender-authored replacements `vela_front_wide/track.glb` are
   loaded in `main.ts` and swapped in via `CarCustomizer.setShells`; the derived clones stay as fallback.
